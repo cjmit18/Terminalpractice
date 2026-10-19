@@ -1,0 +1,6 @@
+{
+  "name": "Terminus CertSim - LPI Linux & CompTIA Windows PBQ Simulator",
+  "description": "Interactive terminal simulations and exam lab modules for LPI Linux certifications and CompTIA Windows Performance-Based Questions with live Active Directory, Group Policy, PowerShell, and network troubleshooting.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
