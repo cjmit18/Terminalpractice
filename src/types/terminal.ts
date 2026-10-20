@@ -34,6 +34,11 @@ export interface HistoryItem {
   output: string;
   errorOutput?: string;
   isError?: boolean;
+  /**
+   * Learning note from the engine result's `explanation` field: which permission check failed
+   * and why. Shown separately from the real terminal output.
+   */
+  explanation?: string;
   timestamp: string;
   cwd: string;
   shell: TerminalShell;
@@ -145,4 +150,6 @@ export interface SystemState {
   diskpartSelectedDisk: number | null;
   diskpartSelectedPartition: number | null;
   envVars: { [key: string]: string };
+  /** Lines entered in this bash session, oldest first. Maintained by the Linux engine for `history`. */
+  commandHistory?: string[];
 }

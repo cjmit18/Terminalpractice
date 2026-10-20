@@ -1,7 +1,10 @@
 import { FileNode, SystemState } from '../../types/terminal';
 import { StageResult } from '../chain';
 import { CommandRegistry } from '../registry';
-import { getNodeAtPath, normalizePath, getUserGroups, toOctalField } from '../filesystem';
+import {
+  getNodeAtPath, normalizePath, getUserGroups, toOctalField, AccessCheck, canReadNode, canWriteNode,
+  canDeleteNode, checkAccess, findTraversalDenial, describeIdentity,
+} from '../filesystem';
 
 export type LinuxResult = StageResult;
 
@@ -43,6 +46,57 @@ export class LinuxContext {
   /** Looks up a node by (absolute) path. */
   node(absPath: string): FileNode | null {
     return getNodeAtPath(this.fs, absPath, false);
+  }
+
+  /**
+   * Explanations recorded by the permission helpers below. When a handler's stderr reports
+   * "Permission denied" / "Operation not permitted", the engine attaches them to the result.
+   */
+  readonly denials: string[] = [];
+
+  /** Script nesting level (0 for a line typed at the prompt). */
+  depth = 0;
+
+  private record(check: AccessCheck): AccessCheck {
+    if (!check.ok && check.explanation && !this.denials.includes(check.explanation)) {
+      this.denials.push(check.explanation);
+    }
+    return check;
+  }
+
+  /** Records an explanation for a denial the handler detected itself. */
+  deny(explanation: string): void {
+    if (!this.isRoot && !this.denials.includes(explanation)) this.denials.push(explanation);
+  }
+
+  canRead(absPath: string): AccessCheck {
+    return this.record(canReadNode(this.fs, absPath, this.user, this.groups, false));
+  }
+
+  canWrite(absPath: string): AccessCheck {
+    return this.record(canWriteNode(this.fs, absPath, this.user, this.groups, false));
+  }
+
+  canDelete(absPath: string): AccessCheck {
+    return this.record(canDeleteNode(this.fs, absPath, this.user, this.groups, false));
+  }
+
+  /** r/w/x on a node already looked up (e.g. x to enter a directory, r to list it). */
+  access(node: FileNode, absPath: string, mode: 'r' | 'w' | 'x', purpose?: string): AccessCheck {
+    return this.record(checkAccess(node, absPath, this.user, this.groups, mode, purpose));
+  }
+
+  /** x on every directory leading to absPath (not the last component). */
+  traverse(absPath: string): AccessCheck {
+    const blocked = findTraversalDenial(this.fs, absPath, this.user, this.groups);
+    if (!blocked) return { ok: true };
+    return this.access(blocked.node, blocked.path, 'x',
+      `To reach ${absPath} you need execute (x) on every directory along the path, but ${blocked.path}`);
+  }
+
+  /** Explanation for commands that only root may run at all. */
+  needsRoot(what: string): string {
+    return `${describeIdentity(this.user, this.groups)} ${what} requires root privileges; run it with sudo.`;
   }
 
   /** Mode for a newly created regular file: 666 minus the umask (e.g. 644 with umask 022). */

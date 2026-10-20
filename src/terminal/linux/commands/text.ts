@@ -1,4 +1,4 @@
-import { canReadNode } from '../../filesystem';
+
 import { LinuxContext, LinuxResult, linuxCommands } from '../context';
 
 // Text processing: echo, head, tail, grep, awk, sed, sort, uniq, wc
@@ -32,7 +32,7 @@ function headOrTail(which: 'head' | 'tail') {
       const targetPath = ctx.resolve(filename);
       const node = ctx.node(targetPath);
       if (!node || node.type !== 'file') return ctx.fail(`${which}: cannot open '${filename}'`);
-      const readCheck = canReadNode(ctx.fs, targetPath, ctx.user, ctx.groups, false);
+      const readCheck = ctx.canRead(targetPath);
       if (!readCheck.ok) return ctx.fail(`${which}: cannot open '${filename}': ${readCheck.error || 'Permission denied'}`);
       content = node.content || '';
     }
@@ -62,7 +62,7 @@ function grep(ctx: LinuxContext): LinuxResult {
     const targetPath = ctx.resolve(fileArg);
     const node = ctx.node(targetPath);
     if (!node || node.type !== 'file') return ctx.fail(`grep: ${fileArg}: No such file or directory`, 2);
-    const check = canReadNode(ctx.fs, targetPath, ctx.user, ctx.groups, false);
+    const check = ctx.canRead(targetPath);
     if (!check.ok) return ctx.fail(`grep: ${fileArg}: ${check.error || 'Permission denied'}`, 2);
     content = node.content || '';
   }

@@ -1,4 +1,4 @@
-import { createNode, removeNode, canReadNode, canWriteNode, canDeleteNode, checkNodePermission, fileSize, writeFileContent } from '../../filesystem';
+import { createNode, removeNode, fileSize, writeFileContent } from '../../filesystem';
 import { LinuxContext, LinuxResult, linuxCommands } from '../context';
 
 // Navigation and file management: pwd, cd, ls, cat, mkdir, touch, rm, tee
@@ -11,9 +11,9 @@ function cd(ctx: LinuxContext): LinuxResult {
   const target = ctx.args[0] || '~';
   const resolved = ctx.resolve(target);
   const node = ctx.node(resolved);
-  if (!node) return ctx.fail(`cd: ${target}: No such file or directory`);
-  if (node.type !== 'directory') return ctx.fail(`cd: ${target}: Not a directory`);
-  if (!ctx.isRoot && !checkNodePermission(node, ctx.user, ctx.groups, 'x')) {
+  if (!node) return ctx.fail(`bash: cd: ${target}: No such file or directory`);
+  if (node.type !== 'directory') return ctx.fail(`bash: cd: ${target}: Not a directory`);
+  if (!ctx.traverse(resolved).ok || !ctx.access(node, resolved, 'x', `To enter ${resolved} you need execute (x) on it, but it`).ok) {
     return ctx.fail(`bash: cd: ${target}: Permission denied`);
   }
   ctx.cwd = resolved;
@@ -29,6 +29,7 @@ function ls(ctx: LinuxContext): LinuxResult {
   const resolved = ctx.resolve(targetPath);
   const node = ctx.node(resolved);
 
+  if (!ctx.traverse(resolved).ok) return ctx.fail(`ls: cannot access '${targetPath}': Permission denied`, 2);
   if (!node) {
     return ctx.fail(`ls: cannot access '${targetPath}': No such file or directory`, 2);
   }
@@ -38,7 +39,7 @@ function ls(ctx: LinuxContext): LinuxResult {
     return ctx.ok(showLong ? `d${bits} 2 ${node.owner} ${node.group} 4096 Oct 19 10:00 ${targetPath}` : targetPath);
   }
 
-  if (node.type === 'directory' && !ctx.isRoot && !checkNodePermission(node, ctx.user, ctx.groups, 'r')) {
+  if (node.type === 'directory' && !ctx.access(node, resolved, 'r', `Listing ${resolved} needs read (r) on it, but it`).ok) {
     return ctx.fail(`ls: cannot open directory '${targetPath}': Permission denied`, 2);
   }
 
@@ -84,7 +85,7 @@ function cat(ctx: LinuxContext): LinuxResult {
     const node = ctx.node(targetPath);
     if (!node) return ctx.fail(`cat: ${arg}: No such file or directory`);
     if (node.type === 'directory') return ctx.fail(`cat: ${arg}: Is a directory`);
-    const readCheck = canReadNode(ctx.fs, targetPath, ctx.user, ctx.groups, false);
+    const readCheck = ctx.canRead(targetPath);
     if (!readCheck.ok) return ctx.fail(`cat: ${arg}: ${readCheck.error || 'Permission denied'}`);
     outputs.push(node.content || '');
   }
@@ -105,7 +106,7 @@ function mkdir(ctx: LinuxContext): LinuxResult {
     const chain = parents ? parts.map((_, i) => '/' + parts.slice(0, i + 1).join('/')) : [targetPath];
     for (const p of chain) {
       if (ctx.node(p)) continue;
-      const check = canWriteNode(ctx.fs, p, ctx.user, ctx.groups, false);
+      const check = ctx.canWrite(p);
       if (!check.ok) return ctx.fail(`mkdir: cannot create directory '${d}': ${check.error || 'Permission denied'}`);
       createNode(ctx.fs, p, 'directory', '', false, ctx.user, ctx.group, ctx.dirMode());
     }
@@ -118,7 +119,7 @@ function touch(ctx: LinuxContext): LinuxResult {
   if (files.length === 0) return ctx.fail('touch: missing file operand');
   for (const f of files) {
     const targetPath = ctx.resolve(f);
-    const check = canWriteNode(ctx.fs, targetPath, ctx.user, ctx.groups, false);
+    const check = ctx.canWrite(targetPath);
     if (!check.ok) return ctx.fail(`touch: cannot touch '${f}': ${check.error || 'Permission denied'}`);
     const existing = ctx.node(targetPath);
     if (existing) {
@@ -148,7 +149,7 @@ function rm(ctx: LinuxContext): LinuxResult {
       return ctx.fail(`rm: cannot remove '${t}': No such file or directory`);
     }
     if (node.type === 'directory' && !recursive) return ctx.fail(`rm: cannot remove '${t}': Is a directory`);
-    const check = canDeleteNode(ctx.fs, targetPath, ctx.user, ctx.groups, false);
+    const check = ctx.canDelete(targetPath);
     if (!check.ok) return ctx.fail(`rm: cannot remove '${t}': ${check.error || 'Permission denied'}`);
     removeNode(ctx.fs, targetPath, false);
   }
@@ -161,7 +162,7 @@ function tee(ctx: LinuxContext): LinuxResult {
   const files = ctx.args.filter(a => !a.startsWith('-'));
   for (const f of files) {
     const targetPath = ctx.resolve(f);
-    const check = canWriteNode(ctx.fs, targetPath, ctx.user, ctx.groups, false);
+    const check = ctx.canWrite(targetPath);
     if (!check.ok) return ctx.result(stdin, `tee: ${f}: ${check.error || 'Permission denied'}`, 1);
     const existing = ctx.node(targetPath);
     if (existing && existing.type === 'file') {

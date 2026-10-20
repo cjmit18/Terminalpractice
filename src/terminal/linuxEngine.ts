@@ -1,9 +1,13 @@
 import { FileNode, SystemState } from '../types/terminal';
-import { cloneFileSystem, getNodeAtPath, normalizePath, createNode, canWriteNode, getUserGroups, writeFileContent } from './filesystem';
+import {
+  cloneFileSystem, getNodeAtPath, normalizePath, createNode, canWriteNode, getUserGroups, writeFileContent,
+  describeIdentity,
+} from './filesystem';
 import { parsePipelinedLine, splitChainedCommandLine, ParsedCommand } from './parser';
 import { runChain, StageResult } from './chain';
 import { cloneState } from './state';
 import { LinuxContext, linuxCommands, newFileMode } from './linux/context';
+import { runScriptFile, isScriptPath, setLineRunner } from './linux/scripts';
 import './linux/commands/files';
 import './linux/commands/text';
 import './linux/commands/users';
@@ -11,6 +15,9 @@ import './linux/commands/system';
 import './linux/commands/network';
 
 export interface LinuxExecutionResult extends StageResult {}
+
+/** Most commands a session remembers for `history` (bash's default HISTSIZE). */
+const HISTORY_LIMIT = 500;
 
 export function executeLinuxLine(
   rawInput: string,
@@ -22,7 +29,18 @@ export function executeLinuxLine(
   if (!line) {
     return { stdout: '', stderr: '', exitCode: 0, newCwd: cwd, newFs: fs, newState: state };
   }
-  return runChain(splitChainedCommandLine(line, 'bash'), cwd, fs, state, executeLinuxPipeline);
+  // Like bash, the line enters history before it runs, so `history` lists itself
+  const recorded: SystemState = {
+    ...state,
+    commandHistory: [...(state.commandHistory ?? []), line].slice(-HISTORY_LIMIT),
+  };
+  return runLinuxLine(line, cwd, fs, recorded, 0);
+}
+
+/** Runs a line without recording it in history (used for scripts and `bash -c`). */
+export function runLinuxLine(line: string, cwd: string, fs: FileNode, state: SystemState, depth: number): LinuxExecutionResult {
+  return runChain(splitChainedCommandLine(line, 'bash'), cwd, fs, state,
+    (stage, c, f, s) => executeLinuxPipeline(stage, c, f, s, depth));
 }
 
 /** Shell-level (non-sudo) identity used for redirects: the shell opens files, not the command. */
@@ -33,82 +51,135 @@ function shellIdentity(fs: FileNode, state: SystemState) {
   return { user, group, groups: getUserGroups(fs, user, group) };
 }
 
+const DEV_NULL = '/dev/null';
+
+interface OpenedRedirect {
+  path: string | null; // null: discard (/dev/null)
+  append: boolean;
+}
+
+/**
+ * Opens a redirect target the way bash does before running the command: checks write
+ * permission, creates the file if needed and truncates it for `>`.
+ */
+function openRedirect(
+  target: string,
+  type: '>' | '>>',
+  cwd: string,
+  fs: FileNode,
+  state: SystemState
+): { opened?: OpenedRedirect; error?: string; explanation?: string } {
+  const path = normalizePath(target, cwd, false);
+  if (path === DEV_NULL) return { opened: { path: null, append: false } };
+  const id = shellIdentity(fs, state);
+  const existing = getNodeAtPath(fs, path, false);
+  if (existing && existing.type === 'directory') return { error: `bash: ${target}: Is a directory` };
+  const check = canWriteNode(fs, path, id.user, id.groups, false);
+  if (!check.ok) return { error: `bash: ${target}: ${check.error || 'Permission denied'}`, explanation: check.explanation };
+  if (existing) {
+    if (type === '>') writeFileContent(existing, '');
+  } else {
+    createNode(fs, path, 'file', '', false, id.user, id.group, newFileMode(state));
+  }
+  return { opened: { path, append: true } };
+}
+
+function writeRedirect(fs: FileNode, target: OpenedRedirect, content: string): void {
+  if (!target.path) return;
+  const node = getNodeAtPath(fs, target.path, false);
+  if (node && node.type === 'file') writeFileContent(node, content, target.append);
+}
+
+/**
+ * Runs a pipeline. As in bash, every stage runs even if an earlier one failed; each stage's
+ * stderr goes to the terminal (unless redirected) and the exit code is the last stage's.
+ */
 function executeLinuxPipeline(
   pipelineStr: string,
   cwd: string,
   fs: FileNode,
-  state: SystemState
+  state: SystemState,
+  depth: number
 ): LinuxExecutionResult {
   const stages = parsePipelinedLine(pipelineStr);
-  let currentInput = '';
+  let input = '';
   let activeFs = cloneFileSystem(fs);
   let activeState = cloneState(state);
   let currentCwd = cwd;
   let exitCode = 0;
-  let stderr = '';
+  const errors: string[] = [];
+  const notes: string[] = [];
 
-  const result = (stdout: string, err: string, code: number): LinuxExecutionResult => ({
-    stdout, stderr: err, exitCode: code, newCwd: currentCwd, newFs: activeFs, newState: activeState,
-  });
+  for (const stage of stages) {
+    let stdoutTarget: OpenedRedirect | undefined;
+    let stderrTarget: OpenedRedirect | undefined;
+    let res: StageResult;
 
-  for (let i = 0; i < stages.length; i++) {
-    const stage = stages[i];
-    const isLast = i === stages.length - 1;
+    const redirectError = (() => {
+      const er = stage.stderrRedirect;
+      if (er && er.type !== 'merge') {
+        const o = openRedirect(er.target, er.type, currentCwd, activeFs, activeState);
+        if (!o.opened) return o;
+        stderrTarget = o.opened;
+      }
+      if (stage.redirect) {
+        const o = openRedirect(stage.redirect.target, stage.redirect.type, currentCwd, activeFs, activeState);
+        if (!o.opened) return o;
+        stdoutTarget = o.opened;
+      }
+      return null;
+    })();
 
-    const res = runLinuxCommand(stage, currentCwd, activeFs, activeState, currentInput);
+    if (redirectError) {
+      // The shell could not open a redirect, so the command never runs
+      res = { stdout: '', stderr: redirectError.error!, exitCode: 1, newCwd: currentCwd, newFs: activeFs, newState: activeState };
+      if (redirectError.explanation) res.explanation = redirectError.explanation;
+    } else {
+      res = runLinuxCommand(stage, currentCwd, activeFs, activeState, input, depth);
+    }
     currentCwd = res.newCwd;
     activeFs = res.newFs;
     activeState = res.newState;
     exitCode = res.exitCode;
-    stderr = res.stderr;
 
-    // Stage stderr redirection (2>, 2>>, 2>&1, 2>/dev/null)
-    if (stage.stderrRedirect) {
-      if (stage.stderrRedirect.type === 'merge') {
-        if (res.stderr) res.stdout = (res.stdout ? res.stdout + '\n' : '') + res.stderr;
-      } else if (stage.stderrRedirect.target !== '/dev/null') {
-        const id = shellIdentity(activeFs, activeState);
-        const errTargetPath = normalizePath(stage.stderrRedirect.target, currentCwd, false);
-        const checkErr = canWriteNode(activeFs, errTargetPath, id.user, id.groups, false);
-        if (!checkErr.ok) {
-          return result('', `bash: ${stage.stderrRedirect.target}: ${checkErr.error || 'Permission denied'}`, 1);
-        }
-        const existingErr = getNodeAtPath(activeFs, errTargetPath, false);
-        if (existingErr && existingErr.type === 'file') {
-          writeFileContent(existingErr, res.stderr, stage.stderrRedirect.type === '>>');
-        } else {
-          createNode(activeFs, errTargetPath, 'file', res.stderr, false, id.user, id.group, newFileMode(activeState));
-        }
-      }
-      res.stderr = '';
-      stderr = '';
+    let out = res.stdout;
+    let err = res.stderr;
+    let note = res.explanation;
+    if (stage.stderrRedirect?.type === 'merge') {
+      // 2>&1: stderr follows stdout (to the terminal, the pipe, or a > file)
+      out = [out, err].filter(Boolean).join('\n');
+      err = '';
+    } else if (stderrTarget) {
+      writeRedirect(activeFs, stderrTarget, err);
+      err = '';
+      note = undefined; // the learner never sees the message, so no note either
     }
-
-    // An intermediate command that failed with an error message aborts the pipeline
-    if (exitCode !== 0 && res.stderr) return result('', res.stderr, exitCode);
-
-    currentInput = res.stdout;
-
-    if (isLast && stage.redirect) {
-      const targetPath = normalizePath(stage.redirect.target, currentCwd, false);
-      const id = shellIdentity(activeFs, activeState);
-      const check = canWriteNode(activeFs, targetPath, id.user, id.groups, false);
-      if (!check.ok) return result('', `bash: ${stage.redirect.target}: ${check.error || 'Permission denied'}`, 1);
-
-      const existing = getNodeAtPath(activeFs, targetPath, false);
-      if (existing && existing.type === 'file') {
-        writeFileContent(existing, currentInput, stage.redirect.type === '>>');
-      } else {
-        createNode(activeFs, targetPath, 'file', currentInput, false, id.user, id.group, newFileMode(activeState));
-      }
-      return result('', stderr, 0);
+    if (stdoutTarget) {
+      writeRedirect(activeFs, stdoutTarget, out);
+      out = '';
     }
+    if (err) errors.push(err);
+    if (note && !notes.includes(note)) notes.push(note);
+    input = out;
   }
 
-  return result(currentInput, stderr, exitCode);
+  const result: LinuxExecutionResult = {
+    stdout: input,
+    stderr: errors.join('\n'),
+    exitCode,
+    newCwd: currentCwd,
+    newFs: activeFs,
+    newState: activeState,
+  };
+  if (notes.length) result.explanation = notes.join('\n');
+  return result;
 }
 
+setLineRunner(runLinuxLine);
+
 const SUDO_USAGE = 'usage: sudo -h | -K | -k | -V\nusage: sudo -v [-AknS] [-g group] [-h host] [-p prompt] [-u user]\nusage: sudo -l [-AknS] [-g group] [-h host] [-p prompt] [-U user] [-u user] [command]';
+const SUDO_GROUPS = ['sudo', 'wheel', 'admin'];
+const DENIAL = /Permission denied|Operation not permitted/;
 
 /** Resolves sudo, then dispatches one parsed command to its registered handler. */
 function runLinuxCommand(
@@ -116,21 +187,64 @@ function runLinuxCommand(
   cwd: string,
   fs: FileNode,
   state: SystemState,
-  stdin: string
+  stdin: string,
+  depth: number
 ): StageResult {
   let { name, args } = cmd;
+  let runState = cloneState(state);
   let isSudo = false;
+  let asUserState = false;
+
   if (name === 'sudo') {
-    if (args.length === 0) {
-      return { stdout: SUDO_USAGE, stderr: '', exitCode: 1, newCwd: cwd, newFs: fs, newState: state };
+    const plain = new LinuxContext('sudo', args, stdin, cwd, fs, runState, false);
+    if (!plain.isRoot && !plain.groups.some(g => SUDO_GROUPS.includes(g))) {
+      return plain.fail(
+        `${plain.user} is not in the sudoers file.  This incident will be reported.`, 1,
+        `${describeIdentity(plain.user, plain.groups)} sudo only lets members of the 'sudo' group (configured in /etc/sudoers) run commands as root.`
+      );
     }
-    isSudo = true;
+    // sudo -u USER runs as that user instead of root
+    let asUser: string | null = null;
+    while (args[0]?.startsWith('-')) {
+      if (args[0] === '-u' && args[1]) {
+        asUser = args[1];
+        args = args.slice(2);
+      } else if (args[0] === '-i' || args[0] === '-s') {
+        args = ['su', ...args.slice(1)];
+      } else {
+        args = args.slice(1);
+      }
+    }
+    if (args.length === 0) return plain.result(SUDO_USAGE, '', 1);
     name = args[0];
     args = args.slice(1);
+    if (asUser && asUser !== 'root') {
+      runState = { ...runState, currentUser: asUser, currentGroup: asUser, isRootOrAdmin: false };
+      asUserState = true;
+    } else {
+      isSudo = true;
+    }
   }
 
-  const ctx = new LinuxContext(name, args, stdin, cwd, fs, cloneState(state), isSudo);
-  const handler = linuxCommands.get(name);
-  if (!handler) return ctx.fail(`bash: ${name}: command not found`, 127);
-  return handler(ctx);
+  const ctx = new LinuxContext(name, args, stdin, cwd, fs, runState, isSudo);
+  ctx.depth = depth;
+  if (!name) return ctx.ok(); // a bare redirect such as "> file"
+
+  let res: StageResult;
+  if (isScriptPath(name)) {
+    res = runScriptFile(ctx, name, true);
+  } else {
+    const handler = linuxCommands.get(name);
+    if (!handler) return ctx.fail(`bash: ${name}: command not found`, 127);
+    res = handler(ctx);
+  }
+
+  if (asUserState) {
+    // sudo -u only changes who runs this one command
+    res = { ...res, newState: { ...res.newState, currentUser: state.currentUser, currentGroup: state.currentGroup, isRootOrAdmin: state.isRootOrAdmin } };
+  }
+  if (!res.explanation && !ctx.isRoot && ctx.denials.length && DENIAL.test(res.stderr)) {
+    res = { ...res, explanation: ctx.denials.join('\n') };
+  }
+  return res;
 }

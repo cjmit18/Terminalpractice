@@ -910,3 +910,4 @@ test('Review 8: ls -l on a file you cannot read shows its details', () => {
 
 // Engine test suites split by area (run through this entry point, see package.json "test")
 import './engineState.test.ts';
+import './explanations.test.ts';

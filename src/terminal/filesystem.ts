@@ -154,6 +154,107 @@ export function checkNodePermission(
 }
 
 /**
+ * Result of a permission check. On denial, `error` is the errno text the command prints
+ * ("Permission denied", "Operation not permitted", ...) and `explanation` is one plain
+ * sentence for learners saying which check failed and why.
+ */
+export interface AccessCheck {
+  ok: boolean;
+  error?: string;
+  explanation?: string;
+}
+
+type PermMode = 'r' | 'w' | 'x';
+
+const PERM_NAME: Record<PermMode, string> = { r: 'read (r)', w: 'write (w)', x: 'execute (x)' };
+
+/** "drwx------ (700)" style rendering of a node's mode. */
+export function describeMode(node: FileNode): string {
+  const type = node.type === 'directory' ? 'd' : '-';
+  return `${type}${node.permissions.slice(-9)} (${modeBits(node).toString(8).padStart(3, '0')})`;
+}
+
+/** "You are 'student' (groups: student, adm, sudo)." */
+export function describeIdentity(user: string, groups: string[]): string {
+  return `You are '${user}' (groups: ${groups.join(', ')}).`;
+}
+
+/**
+ * Which permission triplet applies to the user (owner, group or other) and a phrase saying why.
+ * Like the kernel, only the first matching class is used, even if a later one would allow more.
+ */
+function permissionClass(node: FileNode, user: string, groups: string[]): { bits: string; phrase: string } {
+  const p = node.permissions.slice(-9);
+  if (user === node.owner) {
+    return { bits: p.slice(0, 3), phrase: 'you are its owner, so the owner bits' };
+  }
+  if (groups.includes(node.group)) {
+    return { bits: p.slice(3, 6), phrase: `you are not its owner but you are in group '${node.group}', so the group bits` };
+  }
+  return { bits: p.slice(6, 9), phrase: `you are not its owner and not in group '${node.group}', so the 'other' bits` };
+}
+
+/**
+ * One-sentence explanation of a failed r/w/x check on `node`.
+ * `purpose` (optional) leads the sentence, e.g. "To create /root/x you need write (w) on its directory /root, which".
+ */
+export function explainNodeDenial(
+  node: FileNode,
+  path: string,
+  user: string,
+  groups: string[],
+  mode: PermMode,
+  purpose?: string
+): string {
+  const { bits, phrase } = permissionClass(node, user, groups);
+  const subject = purpose
+    ? `${purpose} is owned by ${node.owner}:${node.group} with mode ${describeMode(node)}`
+    : `${path} is owned by ${node.owner}:${node.group} with mode ${describeMode(node)}`;
+  return `${describeIdentity(user, groups)} ${subject}; ${phrase} (${bits}) apply, and they do not include ${PERM_NAME[mode]}.`;
+}
+
+/**
+ * Finds the first directory on the way to `path` that the user cannot search (x).
+ * The final path component itself is not checked. Returns null when the path is traversable
+ * (or when an intermediate directory is missing, which callers report as "No such file").
+ */
+export function findTraversalDenial(
+  root: FileNode,
+  path: string,
+  user: string,
+  group: string | string[]
+): { path: string; node: FileNode } | null {
+  if (user === 'root') return null;
+  const parts = path.split('/').filter(Boolean);
+  let current: FileNode = root;
+  if (!checkNodePermission(current, user, group, 'x')) return { path: '/', node: current };
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (!current.children || !current.children[parts[i]]) return null;
+    current = current.children[parts[i]];
+    if (current.type === 'directory' && !checkNodePermission(current, user, group, 'x')) {
+      return { path: '/' + parts.slice(0, i + 1).join('/'), node: current };
+    }
+  }
+  return null;
+}
+
+const asGroups = (group: string | string[]) => (Array.isArray(group) ? group : [group]);
+
+function traversalDenied(root: FileNode, path: string, user: string, group: string | string[]): AccessCheck | null {
+  const blocked = findTraversalDenial(root, path, user, group);
+  if (!blocked) return null;
+  const groups = asGroups(group);
+  return {
+    ok: false,
+    error: 'Permission denied',
+    explanation: explainNodeDenial(blocked.node, blocked.path, user, groups, 'x',
+      `To reach ${path} you need execute (x) on every directory along the path, but ${blocked.path}`),
+  };
+}
+
+const parentOf = (path: string) => '/' + path.split('/').filter(Boolean).slice(0, -1).join('/');
+
+/**
  * Checks if a path can be traversed (x permission on all parent directories)
  */
 export function checkPathTraversal(
@@ -163,24 +264,26 @@ export function checkPathTraversal(
   group: string | string[],
   isWindows = false
 ): boolean {
-  if (isWindows || user === 'root') return true;
+  if (isWindows) return true;
+  return findTraversalDenial(root, path, user, group) === null;
+}
 
-  const parts = path.split('/').filter(Boolean);
-  let current: FileNode = root;
-
-  // Root directory traversal
-  if (!checkNodePermission(current, user, group, 'x')) return false;
-
-  for (let i = 0; i < parts.length - 1; i++) {
-    const seg = parts[i];
-    if (!current.children || !current.children[seg]) return true; // caller reports "No such file or directory"
-    current = current.children[seg];
-    if (current.type === 'directory' && !checkNodePermission(current, user, group, 'x')) {
-      return false;
-    }
-  }
-
-  return true;
+/**
+ * Checks one permission on a node the caller already found, with an explanation on denial.
+ * `purpose` is passed to explainNodeDenial (see there).
+ */
+export function checkAccess(
+  node: FileNode,
+  path: string,
+  user: string,
+  group: string | string[],
+  mode: PermMode,
+  purpose?: string
+): AccessCheck {
+  if (checkNodePermission(node, user, group, mode)) return { ok: true };
+  const check: AccessCheck = { ok: false, error: 'Permission denied' };
+  if (user !== 'root') check.explanation = explainNodeDenial(node, path, user, asGroups(group), mode, purpose);
+  return check;
 }
 
 /**
@@ -406,21 +509,18 @@ export function canReadNode(
   user: string,
   group: string | string[],
   isWindows = false
-): { ok: boolean; error?: string } {
+): AccessCheck {
   if (isWindows || user === 'root') return { ok: true };
-  if (!checkPathTraversal(root, path, user, group, isWindows)) {
-    return { ok: false, error: 'Permission denied' };
-  }
+  const blocked = traversalDenied(root, path, user, group);
+  if (blocked) return blocked;
   const node = getNodeAtPath(root, path, isWindows);
   if (!node) return { ok: false, error: 'No such file or directory' };
-  if (!checkNodePermission(node, user, group, 'r')) {
-    return { ok: false, error: 'Permission denied' };
-  }
-  return { ok: true };
+  return checkAccess(node, path, user, group, 'r');
 }
 
 /**
- * Validates write access on a path for a given user/group
+ * Validates write access on a path for a given user/group. For a path that does not exist
+ * yet, checks that the parent directory allows creating entries (w and x).
  */
 export function canWriteNode(
   root: FileNode,
@@ -428,30 +528,20 @@ export function canWriteNode(
   user: string,
   group: string | string[],
   isWindows = false
-): { ok: boolean; error?: string } {
+): AccessCheck {
   if (isWindows || user === 'root') return { ok: true };
-  if (!checkPathTraversal(root, path, user, group, isWindows)) {
-    return { ok: false, error: 'Permission denied' };
-  }
+  const blocked = traversalDenied(root, path, user, group);
+  if (blocked) return blocked;
   const node = getNodeAtPath(root, path, isWindows);
-  if (node) {
-    if (!checkNodePermission(node, user, group, 'w')) {
-      return { ok: false, error: 'Permission denied' };
-    }
-    return { ok: true };
-  }
+  if (node) return checkAccess(node, path, user, group, 'w');
 
-  // File does not exist yet: check parent directory write and search permissions
-  const parts = path.split('/').filter(Boolean);
-  const parentPath = '/' + parts.slice(0, parts.length - 1).join('/');
+  const parentPath = parentOf(path);
   const parent = getNodeAtPath(root, parentPath, isWindows);
   if (!parent || parent.type !== 'directory') {
     return { ok: false, error: 'No such file or directory' };
   }
-  if (!checkNodePermission(parent, user, group, 'w')) {
-    return { ok: false, error: 'Permission denied' };
-  }
-  return { ok: true };
+  return checkAccess(parent, parentPath, user, group, 'w',
+    `To create ${path} you need write (w) on its directory, but ${parentPath}`);
 }
 
 /**
@@ -463,32 +553,35 @@ export function canDeleteNode(
   user: string,
   group: string | string[],
   isWindows = false
-): { ok: boolean; error?: string } {
+): AccessCheck {
   if (isWindows || user === 'root') return { ok: true };
   const parts = path.split('/').filter(Boolean);
   if (parts.length === 0) return { ok: false, error: 'Cannot remove root directory' };
 
-  const parentPath = '/' + parts.slice(0, parts.length - 1).join('/');
+  const blocked = traversalDenied(root, path, user, group);
+  if (blocked) return blocked;
+  const parentPath = parentOf(path);
   const parent = getNodeAtPath(root, parentPath, isWindows);
   if (!parent || parent.type !== 'directory') {
     return { ok: false, error: 'No such file or directory' };
   }
 
-  if (!checkNodePermission(parent, user, group, 'w')) {
-    return { ok: false, error: 'Permission denied' };
-  }
+  const writable = checkAccess(parent, parentPath, user, group, 'w',
+    `Removing ${path} needs write (w) on the directory that contains it, but ${parentPath}`);
+  if (!writable.ok) return writable;
 
   const node = getNodeAtPath(root, path, isWindows);
   if (!node) return { ok: false, error: 'No such file or directory' };
 
   // Sticky bit (t) on parent directory: only file owner or directory owner (or root) may delete
   const isSticky = parent.permissions.endsWith('t') || parent.permissions.endsWith('T');
-  if (isSticky) {
-    if (user !== node.owner && user !== parent.owner) {
-      return { ok: false, error: 'Operation not permitted' };
-    }
+  if (isSticky && user !== node.owner && user !== parent.owner) {
+    return {
+      ok: false,
+      error: 'Operation not permitted',
+      explanation: `${describeIdentity(user, asGroups(group))} ${parentPath} has the sticky bit set (${describeMode(parent)}), so even though you may write to it, only the file's owner (${node.owner}), the directory's owner (${parent.owner}) or root may delete ${path}.`,
+    };
   }
-
   return { ok: true };
 }
 

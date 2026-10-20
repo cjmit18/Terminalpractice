@@ -1,4 +1,4 @@
-import { createNode } from '../../filesystem';
+import { createNode, describeIdentity } from '../../filesystem';
 import { LinuxContext, LinuxResult, linuxCommands } from '../context';
 
 // System, hardware, processes, services, packages, archives and help
@@ -85,7 +85,8 @@ function systemctl(ctx: LinuxContext): LinuxResult {
     return ctx.ok(`● ${srvName}.service - Service\n   Active: active (running)`);
   }
   if (NEEDS_ROOT.has(sub) && !ctx.isRoot) {
-    return ctx.fail(`Failed to ${sub} ${srvName}: Interactive authentication required or root privileges needed (try 'sudo systemctl ${sub} ${srvName}')`);
+    return ctx.fail(`Failed to ${sub} ${srvName}: Interactive authentication required or root privileges needed (try 'sudo systemctl ${sub} ${srvName}')`, 1,
+      ctx.needsRoot(`systemctl ${sub} changes system-wide service state, so it`));
   }
   return ctx.ok();
 }
@@ -108,7 +109,10 @@ function kill(ctx: LinuxContext): LinuxResult {
 
 function fdisk(ctx: LinuxContext): LinuxResult {
   const list = ctx.args.includes('-l');
-  if (!list && !ctx.isRoot) return ctx.fail('fdisk: cannot open /dev/sda: Permission denied');
+  if (!list && !ctx.isRoot) {
+    return ctx.fail('fdisk: cannot open /dev/sda: Permission denied', 1,
+      `${describeIdentity(ctx.user, ctx.groups)} /dev/sda is owned by root:disk with mode brw-rw---- (660); you are not its owner and not in group 'disk', so the 'other' bits (---) apply, and they do not include read (r).`);
+  }
   if (list) return ctx.ok(FDISK_L);
   return ctx.ok('Usage: fdisk [options] <disk>');
 }
@@ -116,7 +120,8 @@ function fdisk(ctx: LinuxContext): LinuxResult {
 function apt(ctx: LinuxContext): LinuxResult {
   const sub = ctx.args[0];
   if ((sub === 'update' || sub === 'install' || sub === 'upgrade' || sub === 'remove') && !ctx.isRoot) {
-    return ctx.fail('E: Could not open lock file /var/lib/dpkg/lock-frontend - open (13: Permission denied)\nE: Unable to acquire the dpkg frontend lock, are you root?', 100);
+    return ctx.fail('E: Could not open lock file /var/lib/dpkg/lock-frontend - open (13: Permission denied)\nE: Unable to acquire the dpkg frontend lock, are you root?', 100,
+      ctx.needsRoot(`apt ${sub} locks and writes /var/lib/dpkg (owned by root), so it`));
   }
   if (sub === 'update') {
     return ctx.ok([

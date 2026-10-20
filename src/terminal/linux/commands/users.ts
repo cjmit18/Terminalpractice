@@ -1,5 +1,5 @@
 import { FileNode } from '../../../types/terminal';
-import { createNode, applyChmod, octalToSymbolic, toOctalField } from '../../filesystem';
+import { createNode, applyChmod, octalToSymbolic, toOctalField, describeIdentity } from '../../filesystem';
 import { LinuxContext, LinuxResult, linuxCommands } from '../context';
 
 // Identity, ownership and permissions: su, exit, whoami, id, chmod, chown, umask, useradd, usermod
@@ -51,13 +51,16 @@ function chmod(ctx: LinuxContext): LinuxResult {
 
   const denied: string[] = [];
   for (const p of targetPaths) {
-    const node = ctx.node(ctx.resolve(p));
+    const abs = ctx.resolve(p);
+    const node = ctx.node(abs);
+    if (!ctx.traverse(abs).ok) return ctx.fail(`chmod: cannot access '${p}': Permission denied`);
     if (!node) return ctx.fail(`chmod: cannot access '${p}': No such file or directory`);
     if (!applyChmod(node.permissions, modeArg)) return ctx.fail(`chmod: invalid mode: '${modeArg}'`);
 
     const applyTree = (n: FileNode, path: string) => {
       if (!ctx.isRoot && ctx.user !== n.owner) {
         denied.push(`chmod: changing permissions of '${path}': Operation not permitted`);
+        ctx.deny(`${describeIdentity(ctx.user, ctx.groups)} Only a file's owner or root can change its mode, and ${path} is owned by ${n.owner}; read or write permission on it does not count.`);
         return;
       }
       const result = applyChmod(n.permissions, modeArg)!;
@@ -75,7 +78,10 @@ function chmod(ctx: LinuxContext): LinuxResult {
 function chown(ctx: LinuxContext): LinuxResult {
   const { args } = ctx;
   if (args.length < 2) return ctx.fail('chown: missing operand');
-  if (!ctx.isRoot) return ctx.fail(`chown: changing ownership of '${args[1]}': Operation not permitted`);
+  if (!ctx.isRoot) {
+    return ctx.fail(`chown: changing ownership of '${args[1]}': Operation not permitted`, 1,
+      `${describeIdentity(ctx.user, ctx.groups)} Only root can give a file to another owner (otherwise users could dodge disk quotas or plant files on others), so run chown with sudo.`);
+  }
   const [newOwner, newGroup] = args[0].split(':');
   for (const p of args.slice(1)) {
     const node = ctx.node(ctx.resolve(p));
@@ -114,7 +120,7 @@ function umask(ctx: LinuxContext): LinuxResult {
 }
 
 function useradd(ctx: LinuxContext): LinuxResult {
-  if (!ctx.isRoot) return ctx.fail('useradd: Permission denied.');
+  if (!ctx.isRoot) return ctx.fail('useradd: Permission denied.\nuseradd: cannot lock /etc/passwd; try again later.', 1, ctx.needsRoot('useradd writes /etc/passwd, /etc/shadow and /etc/group, which only root may modify, so it'));
   const username = ctx.args[ctx.args.length - 1];
   if (!username || username.startsWith('-')) return ctx.fail('useradd: missing username');
   const passwdNode = ctx.node('/etc/passwd');
@@ -127,7 +133,7 @@ function useradd(ctx: LinuxContext): LinuxResult {
 
 function usermod(ctx: LinuxContext): LinuxResult {
   const { args } = ctx;
-  if (!ctx.isRoot) return ctx.fail('usermod: Permission denied.');
+  if (!ctx.isRoot) return ctx.fail('usermod: Permission denied.\nusermod: cannot lock /etc/passwd; try again later.', 1, ctx.needsRoot('usermod edits /etc/passwd and /etc/group, which only root may modify, so it'));
   const gi = args.findIndex(a => a === '-aG' || a === '-G');
   const user = args[args.length - 1];
   if (gi === -1 || !args[gi + 1] || user === args[gi + 1]) {
