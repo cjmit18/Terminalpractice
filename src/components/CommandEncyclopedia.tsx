@@ -1,173 +1,244 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { COMMAND_REFERENCE, CommandRefEntry } from '../data/commandReference';
-import { Search, BookOpen, Terminal, Copy, Check, AlertTriangle, Layers, Filter } from 'lucide-react';
+import { ArrowLeft, Search, X } from 'lucide-react';
+import { Button, CodeBlock, Segmented, cx } from './sims/ui';
 
 interface CommandEncyclopediaProps {
   onSelectCommand?: (cmd: string) => void;
 }
 
+type Platform = 'all' | 'linux' | 'windows';
+
+const PLATFORM_LABEL: Record<CommandRefEntry['platform'], string> = {
+  linux: 'Linux',
+  windows: 'Windows',
+  both: 'Linux and Windows',
+};
+
+const matches = (cmd: CommandRefEntry, q: string) =>
+  !q ||
+  cmd.name.toLowerCase().includes(q) ||
+  cmd.summary.toLowerCase().includes(q) ||
+  cmd.exam.toLowerCase().includes(q) ||
+  cmd.category.toLowerCase().includes(q) ||
+  cmd.switches.some(s => s.flag.toLowerCase().includes(q) || s.description.toLowerCase().includes(q)) ||
+  cmd.examples.some(e => e.cmd.toLowerCase().includes(q));
+
 export const CommandEncyclopedia: React.FC<CommandEncyclopediaProps> = ({
   onSelectCommand,
 }) => {
   const [search, setSearch] = useState('');
-  const [platformFilter, setPlatformFilter] = useState<'all' | 'linux' | 'windows'>('all');
-  const [copiedCmd, setCopiedCmd] = useState<string | null>(null);
+  const [platformFilter, setPlatformFilter] = useState<Platform>('all');
+  const [selectedName, setSelectedName] = useState<string>(COMMAND_REFERENCE[0]?.name ?? '');
+  // Phones show one pane at a time: the list, or one command's page
+  const [phoneView, setPhoneView] = useState<'list' | 'page'>('list');
+  const articleRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
-  const filteredCommands = COMMAND_REFERENCE.filter(cmd => {
-    const matchesPlatform = platformFilter === 'all' || cmd.platform === platformFilter || cmd.platform === 'both';
-    const q = search.toLowerCase();
-    const matchesSearch = 
-      cmd.name.toLowerCase().includes(q) ||
-      cmd.summary.toLowerCase().includes(q) ||
-      cmd.exam.toLowerCase().includes(q) ||
-      cmd.category.toLowerCase().includes(q) ||
-      cmd.switches.some(s => s.flag.toLowerCase().includes(q) || s.description.toLowerCase().includes(q));
-    return matchesPlatform && matchesSearch;
-  });
+  const q = search.trim().toLowerCase();
+  const filtered = COMMAND_REFERENCE.filter(
+    cmd => (platformFilter === 'all' || cmd.platform === platformFilter || cmd.platform === 'both') && matches(cmd, q),
+  );
 
-  const handleCopy = (text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedCmd(text);
-    setTimeout(() => setCopiedCmd(null), 2000);
+  // Keep the data file's order, grouped by category
+  const groups: { category: string; items: CommandRefEntry[] }[] = [];
+  for (const cmd of filtered) {
+    const g = groups.find(x => x.category === cmd.category);
+    if (g) g.items.push(cmd);
+    else groups.push({ category: cmd.category, items: [cmd] });
+  }
+
+  const selected = COMMAND_REFERENCE.find(c => c.name === selectedName) ?? COMMAND_REFERENCE[0];
+  const index = COMMAND_REFERENCE.indexOf(selected);
+  const next = COMMAND_REFERENCE[index + 1];
+
+  const open = (name: string) => {
+    setSelectedName(name);
+    setPhoneView('page');
+    articleRef.current?.scrollTo({ top: 0 });
   };
 
   return (
-    <div className="flex flex-col h-full bg-slate-950 overflow-hidden font-sans">
-      {/* Search & Filter Header */}
-      <div className="p-6 bg-slate-900/60 border-b border-slate-800 shrink-0 space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-4">
+    <div className="flex h-full min-h-0 flex-col bg-bg text-text md:flex-row">
+      {/* Command list */}
+      <aside
+        aria-label="Commands"
+        className={cx(
+          'min-h-0 flex-col border-line md:flex md:w-72 md:shrink-0 md:border-r lg:w-80',
+          phoneView === 'list' ? 'flex flex-1 md:flex-none' : 'hidden',
+        )}
+      >
+        <div className="shrink-0 space-y-3 border-b border-line px-4 pb-4 pt-5">
           <div>
-            <h1 className="text-xl font-bold text-white tracking-tight flex items-center gap-2">
-              <BookOpen className="w-5 h-5 text-cyan-400" />
-              <span>Command Reference & Exam Syntax Explorer</span>
-            </h1>
-            <p className="text-xs text-slate-400 mt-1">
-              Searchable database of essential LPI Linux and CompTIA Windows command-line utilities, flags, and exam traps.
-            </p>
+            <h1 className="text-2xl font-semibold">Command reference</h1>
+            <p className="mt-0.5 text-sm text-muted">The commands the labs use, with the options the exams ask about.</p>
           </div>
-
-          {/* Interactive filter tabs / segmented controls compliant with frontend-design */}
-          <div className="flex items-center gap-1 p-1 bg-slate-900 rounded-lg border border-slate-800 text-xs font-medium">
-            <button
-              onClick={() => setPlatformFilter('all')}
-              className={`px-3 py-1.5 rounded-md transition-colors whitespace-nowrap ${
-                platformFilter === 'all'
-                  ? 'bg-slate-800 text-white shadow-sm font-semibold'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              All Standards
-            </button>
-            <button
-              onClick={() => setPlatformFilter('linux')}
-              className={`px-3 py-1.5 rounded-md transition-colors whitespace-nowrap ${
-                platformFilter === 'linux'
-                  ? 'bg-amber-500/20 text-amber-300 font-semibold'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              LPI Linux
-            </button>
-            <button
-              onClick={() => setPlatformFilter('windows')}
-              className={`px-3 py-1.5 rounded-md transition-colors whitespace-nowrap ${
-                platformFilter === 'windows'
-                  ? 'bg-blue-500/20 text-blue-300 font-semibold'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              CompTIA Windows
-            </button>
+          <div className="relative">
+            <label htmlFor="ref-search" className="sr-only">Search commands</label>
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" aria-hidden />
+            <input
+              ref={searchRef}
+              id="ref-search"
+              type="search"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search, e.g. -ano or /flushdns"
+              autoComplete="off"
+              spellCheck={false}
+              className="min-h-10 w-full rounded-md border border-line-strong bg-surface pl-9 pr-10 text-[15px] text-text placeholder:text-subtle [&::-webkit-search-cancel-button]:hidden"
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearch('');
+                  searchRef.current?.focus();
+                }}
+                aria-label="Clear search"
+                className="absolute right-0 top-0 inline-flex h-10 w-10 items-center justify-center rounded-md text-muted hover:text-text"
+              >
+                <X className="h-4 w-4" aria-hidden />
+              </button>
+            )}
           </div>
-        </div>
-
-        {/* Search Input Box */}
-        <div className="relative">
-          <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            placeholder="Search commands, switches (e.g. -ano, chmod 750, /flushdns, diskpart)..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-4 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500/50"
+          <Segmented<Platform>
+            label="Platform"
+            value={platformFilter}
+            onChange={setPlatformFilter}
+            className="flex w-full"
+            options={[
+              { value: 'all', label: 'All' },
+              { value: 'linux', label: 'Linux' },
+              { value: 'windows', label: 'Windows' },
+            ]}
           />
         </div>
-      </div>
 
-      {/* Commands Card Grid */}
-      <div className="flex-1 p-6 overflow-y-auto">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {filteredCommands.map((cmd) => (
-            <div
-              key={cmd.name}
-              className="p-5 rounded-xl bg-slate-900/60 border border-slate-800 space-y-3.5 hover:border-slate-700 transition-colors"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-base font-bold text-white font-mono">{cmd.name}</span>
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-semibold uppercase ${
-                      cmd.platform === 'linux'
-                        ? 'bg-amber-500/15 text-amber-300'
-                        : cmd.platform === 'windows'
-                        ? 'bg-blue-500/15 text-blue-300'
-                        : 'bg-emerald-500/15 text-emerald-300'
-                    }`}>
-                      {cmd.platform}
-                    </span>
-                    <span className="text-slate-400 text-xs font-medium">· {cmd.category}</span>
-                  </div>
-                  <div className="text-[11px] text-slate-400 mt-1 font-mono">{cmd.exam}</div>
-                </div>
-
-                <button
-                  onClick={() => handleCopy(cmd.syntax)}
-                  className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 transition-colors"
-                  title="Copy Syntax"
-                >
-                  {copiedCmd === cmd.syntax ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                </button>
-              </div>
-
-              <p className="text-xs text-slate-300 leading-relaxed">
-                {cmd.summary}
-              </p>
-
-              {/* Syntax Box */}
-              <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800/80 font-mono text-cyan-300 text-xs">
-                {cmd.syntax}
-              </div>
-
-              {/* Switches Table */}
-              <div className="space-y-1.5">
-                <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                  Exam-Tested Switches & Flags
-                </div>
-                <div className="space-y-1">
-                  {cmd.switches.slice(0, 4).map((sw, i) => (
-                    <div key={i} className="flex items-start gap-2 text-xs">
-                      <span className="font-mono text-amber-300 font-semibold shrink-0 min-w-[70px]">
-                        {sw.flag}
-                      </span>
-                      <span className="text-slate-400 text-[11px] leading-relaxed">
-                        {sw.description}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Exam Trap Advice */}
-              <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-200/90 leading-relaxed flex items-start gap-2">
-                <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
-                <div>
-                  <strong className="text-amber-300">Exam Note: </strong>
-                  {cmd.examNotes}
-                </div>
-              </div>
+        <nav aria-label="Command list" className="min-h-0 flex-1 overflow-y-auto py-2">
+          <p className="sr-only" role="status" aria-live="polite">
+            {filtered.length === 1 ? '1 command' : `${filtered.length} commands`}
+          </p>
+          {groups.length === 0 && (
+            <p className="px-4 py-6 text-sm text-muted">
+              Nothing matches “{search.trim()}”. Try a command name or a flag.
+            </p>
+          )}
+          {groups.map(g => (
+            <div key={g.category} className="pb-2">
+              <h2 className="px-4 pb-1 pt-3 text-xs font-medium text-muted">{g.category}</h2>
+              <ul>
+                {g.items.map(cmd => {
+                  const isSel = cmd.name === selected?.name;
+                  return (
+                    <li key={cmd.name}>
+                      <button
+                        type="button"
+                        onClick={() => open(cmd.name)}
+                        aria-current={isSel ? 'page' : undefined}
+                        className={cx(
+                          'block min-h-10 w-full border-l-2 border-transparent px-4 py-1.5 text-left hover:bg-surface-2',
+                          isSel && 'md:border-accent md:bg-surface-2',
+                        )}
+                      >
+                        <span className="flex items-baseline justify-between gap-3">
+                          <span className={cx('font-mono text-sm', isSel ? 'md:font-semibold md:text-accent' : '')}>{cmd.name}</span>
+                          <span className="shrink-0 text-xs text-muted">{PLATFORM_LABEL[cmd.platform]}</span>
+                        </span>
+                        <span className="block truncate text-sm text-muted">{cmd.summary}</span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
             </div>
           ))}
-        </div>
+        </nav>
+      </aside>
+
+      {/* One command's page */}
+      <div
+        ref={articleRef}
+        className={cx('min-h-0 min-w-0 flex-1 overflow-y-auto', phoneView === 'page' ? 'block' : 'hidden md:block')}
+      >
+        {selected && (
+          <article className="mx-auto max-w-3xl px-4 pb-12 pt-4 sm:px-8 md:pt-8">
+            <button
+              type="button"
+              onClick={() => setPhoneView('list')}
+              className="-ml-2 mb-3 inline-flex min-h-10 items-center gap-1.5 rounded-md px-2 text-sm font-medium text-accent hover:bg-surface-2 md:hidden"
+            >
+              <ArrowLeft className="h-4 w-4" aria-hidden />
+              All commands
+            </button>
+
+            <header>
+              <h1 className="break-words font-mono text-2xl font-semibold">{selected.name}</h1>
+              <p className="mt-1 text-sm text-muted">
+                {PLATFORM_LABEL[selected.platform]} · {selected.category} · {selected.exam}
+              </p>
+              <p className="mt-4 max-w-prose">{selected.summary}</p>
+            </header>
+
+            <section className="mt-8" aria-labelledby="ref-syntax">
+              <h2 id="ref-syntax" className="text-base font-semibold">Syntax</h2>
+              <CodeBlock code={selected.syntax} className="mt-2" />
+            </section>
+
+            {selected.switches.length > 0 && (
+              <section className="mt-8" aria-labelledby="ref-options">
+                <h2 id="ref-options" className="text-base font-semibold">Options</h2>
+                <dl className="mt-2 grid grid-cols-1 border-t border-line sm:grid-cols-[minmax(7rem,max-content)_1fr]">
+                  {selected.switches.map((sw, i) => (
+                    <div key={i} className="contents">
+                      <dt className="break-words pt-2.5 font-mono text-sm font-medium sm:border-b sm:border-line sm:py-2.5 sm:pr-6">
+                        {sw.flag}
+                      </dt>
+                      <dd className="border-b border-line pb-2.5 text-muted sm:py-2.5">{sw.description}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </section>
+            )}
+
+            {selected.examples.length > 0 && (
+              <section className="mt-8" aria-labelledby="ref-examples">
+                <h2 id="ref-examples" className="text-base font-semibold">Examples</h2>
+                <ul className="mt-2 space-y-4">
+                  {selected.examples.map((ex, i) => (
+                    <li key={i}>
+                      <p className="text-sm text-muted">{ex.description}</p>
+                      <CodeBlock code={ex.cmd} className="mt-1" />
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            <section className="mt-8" aria-labelledby="ref-exam">
+              <h2 id="ref-exam" className="text-base font-semibold">Exam notes</h2>
+              <p className="mt-2 max-w-prose border-l-2 border-warn bg-warn-soft px-4 py-3">{selected.examNotes}</p>
+            </section>
+
+            <footer className="mt-10 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
+              {onSelectCommand ? (
+                <Button variant="secondary" onClick={() => onSelectCommand(selected.name)}>
+                  Try <span className="font-mono">{selected.name}</span> in the sandbox
+                </Button>
+              ) : (
+                <span />
+              )}
+              {next && (
+                <button
+                  type="button"
+                  onClick={() => open(next.name)}
+                  className="inline-flex min-h-10 items-center gap-1.5 rounded-md px-2 text-sm text-muted hover:bg-surface-2 hover:text-text"
+                >
+                  Next: <span className="font-mono text-accent">{next.name}</span>
+                </button>
+              )}
+            </footer>
+          </article>
+        )}
       </div>
     </div>
   );
