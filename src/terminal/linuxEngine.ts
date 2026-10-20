@@ -333,6 +333,9 @@ function executeSingleLinuxCommand(
         if (g === 'student') return '1000(student)';
         if (g === 'sudo') return '27(sudo)';
         if (g === 'finance') return '1002(finance)';
+        if (g === 'adm') return '4(adm)';
+        if (g === 'developers') return '1003(developers)';
+        if (g === 'nginx') return '1001(nginx)';
         return `1001(${g})`;
       }).join(',');
       return {
@@ -421,6 +424,7 @@ function executeSingleLinuxCommand(
     case 'ls': {
       const showAll = args.some(a => a.startsWith('-') && a.includes('a'));
       const showLong = args.some(a => a.startsWith('-') && a.includes('l'));
+      const showDirSelf = args.some(a => a.startsWith('-') && a.includes('d'));
       const targetPath = args.find(a => !a.startsWith('-')) || activeCwd;
       const resolved = normalizePath(targetPath, activeCwd, false);
       const node = getNodeAtPath(activeFs, resolved, false);
@@ -429,7 +433,12 @@ function executeSingleLinuxCommand(
         return { stdout: '', stderr: `ls: cannot access '${targetPath}': No such file or directory`, exitCode: 2, newCwd: activeCwd, newFs: activeFs, newState: activeState };
       }
 
-      if (!isRoot && !checkNodePermission(node, effUser, effGroups, 'r')) {
+      if (node.type === 'directory' && showDirSelf) {
+        const bits = node.permissions.length === 10 ? node.permissions.slice(1) : node.permissions;
+        return ok(showLong ? `d${bits} 2 ${node.owner} ${node.group} 4096 Oct 19 10:00 ${targetPath}` : targetPath);
+      }
+
+      if (node.type === 'directory' && !isRoot && !checkNodePermission(node, effUser, effGroups, 'r')) {
         return { stdout: '', stderr: `ls: cannot open directory '${targetPath}': Permission denied`, exitCode: 2, newCwd: activeCwd, newFs: activeFs, newState: activeState };
       }
 
@@ -658,6 +667,7 @@ function executeSingleLinuxCommand(
         return fail(`chmod: missing operand after '${modeArg}'`);
       }
 
+      const denied: string[] = [];
       for (const p of targetPaths) {
         const resolved = normalizePath(p, activeCwd, false);
         const node = getNodeAtPath(activeFs, resolved, false);
@@ -665,32 +675,23 @@ function executeSingleLinuxCommand(
           return fail(`chmod: cannot access '${p}': No such file or directory`, 1);
         }
 
-        const applyTree = (n: FileNode): boolean => {
+        if (!applyChmod(node.permissions, modeArg)) return fail(`chmod: invalid mode: '${modeArg}'`, 1);
+
+        const applyTree = (n: FileNode, path: string) => {
           if (!isRoot && effUser !== n.owner) {
-            return false;
+            denied.push(`chmod: changing permissions of '${path}': Operation not permitted`);
+            return;
           }
-          const result = applyChmod(n.permissions, modeArg);
-          if (!result) return false;
+          const result = applyChmod(n.permissions, modeArg)!;
           n.permissions = result.sym;
           n.octal = result.octal;
           if (recursive && n.children) {
-            for (const child of Object.values(n.children)) {
-              if (!applyTree(child)) return false;
-            }
+            for (const [name, child] of Object.entries(n.children)) applyTree(child, `${path}/${name}`);
           }
-          return true;
         };
-
-        if (!isRoot && effUser !== node.owner) {
-          return fail(`chmod: changing permissions of '${p}': Operation not permitted`, 1);
-        }
-
-        const valid = applyTree(node);
-        if (!valid) {
-          return fail(`chmod: invalid mode: '${modeArg}'`, 1);
-        }
+        applyTree(node, p);
       }
-      return ok();
+      return denied.length ? fail(denied.join('\n'), 1) : ok();
     }
 
     case 'tee': {
@@ -1104,6 +1105,10 @@ function executeSingleLinuxCommand(
       if (gi === -1 || !args[gi + 1] || user === args[gi + 1]) {
         return fail('Usage: usermod [-a] -G GROUP[,GROUP] LOGIN', 2);
       }
+      const passwd = getNodeAtPath(activeFs, '/etc/passwd', false)?.content ?? '';
+      if (!passwd.split('\n').some(l => l.startsWith(user + ':'))) {
+        return fail(`usermod: user '${user}' does not exist`, 6);
+      }
       const append = args[gi] === '-aG' || args.includes('-a');
       const wanted = args[gi + 1].split(',').filter(Boolean);
       const groupFile = getNodeAtPath(activeFs, '/etc/group', false);
@@ -1127,10 +1132,12 @@ function executeSingleLinuxCommand(
     }
 
     case 'tar': {
-      const hasC = args.some(a => a.includes('c'));
-      const hasX = args.some(a => a.includes('x'));
-      const hasT = args.some(a => a.includes('t'));
-      const hasV = args.some(a => a.includes('v'));
+      // Mode letters come only from the first argument (dashless style) or from dash flags
+      const flags = args.filter((a, i) => i === 0 || a.startsWith('-')).map(a => a.replace(/^-+/, '')).join('');
+      const hasC = flags.includes('c');
+      const hasX = flags.includes('x');
+      const hasT = flags.includes('t');
+      const hasV = flags.includes('v');
 
       if (!hasC && !hasX && !hasT) {
         return fail('tar: Must specify one of -c, -r, -t, -u, -x', 2);
@@ -1144,7 +1151,7 @@ function executeSingleLinuxCommand(
           fIndex = i;
           archiveName = args[i + 1] || '';
           break;
-        } else if (a.startsWith('-') && a.includes('f')) {
+        } else if ((a.startsWith('-') || i === 0) && a.includes('f')) {
           fIndex = i;
           archiveName = args[i + 1] || '';
           break;
@@ -1152,7 +1159,8 @@ function executeSingleLinuxCommand(
       }
 
       if (hasC) {
-        const nonFlags = args.filter((a, idx) => !a.startsWith('-') && idx !== fIndex + 1);
+        // the first argument is the mode letters (or a dash flag), never a file to add
+        const nonFlags = args.filter((a, idx) => idx !== 0 && !a.startsWith('-') && idx !== fIndex + 1);
         if (!archiveName && nonFlags.length > 0) {
           archiveName = nonFlags[0];
           nonFlags.shift();
@@ -1167,7 +1175,7 @@ function executeSingleLinuxCommand(
       }
 
       if (hasT || hasX) {
-        const target = archiveName || args.find(a => !a.startsWith('-'));
+        const target = archiveName || args.find((a, i) => i > 0 && !a.startsWith('-'));
         if (target) {
           const resolved = normalizePath(target, activeCwd, false);
           const node = getNodeAtPath(activeFs, resolved, false);

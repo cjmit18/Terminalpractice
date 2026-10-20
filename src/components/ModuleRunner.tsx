@@ -73,8 +73,9 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
             updated[obj.id] = true;
             hasChanges = true;
           }
-        } catch {
-          // Ignore verifier exceptions during active typing
+        } catch (err) {
+          // A throwing verifier leaves the objective incomplete; surface it in development
+          if (import.meta.env.DEV) console.error(`Verifier for "${obj.id}" threw`, err);
         }
       }
     });

@@ -18,6 +18,7 @@ import { executeLinuxLine } from './linuxEngine.ts';
 import { executeWindowsLine } from './windowsEngine.ts';
 import { LPI_MODULES } from '../data/lpiModules.ts';
 import { WINDOWS_PBQS } from '../data/windowsPbqs.ts';
+import type { CommandContext } from '../types/modules.ts';
 
 test('Filesystem: octal and symbolic conversions work bidirectionally', () => {
   assert.equal(octalToSymbolic(755), 'rwxr-xr-x');
@@ -795,3 +796,114 @@ test('Finding 10: Windows redirect files mode', () => {
   assert.equal(node.octal, 644);
 });
 
+
+test('Walkthrough replay: every module can be completed by following its own solution steps', () => {
+  for (const m of [...LPI_MODULES, ...WINDOWS_PBQS]) {
+    let fs = m.initialFs;
+    let state = m.initialState;
+    let cwd = m.track === 'lpi' ? '/home/student' : 'C:\\Users\\Student';
+    let diskpartActive = false;
+    const done = new Set<string>();
+
+    const lines = m.solutionWalkthrough.flatMap(step => step.command.split('\n'));
+    for (const line of lines) {
+      let ctx: CommandContext;
+      if (m.defaultShell === 'bash') {
+        const res = executeLinuxLine(line, cwd, fs, state);
+        ({ newFs: fs, newState: state, newCwd: cwd } = res);
+        ctx = { command: line, exitCode: res.exitCode, stdout: res.stdout };
+      } else {
+        const res = executeWindowsLine(line, cwd, fs, state, m.defaultShell, diskpartActive);
+        ({ newFs: fs, newState: state, newCwd: cwd } = res);
+        diskpartActive = !!res.diskpartActive;
+        ctx = { command: line, exitCode: res.exitCode, stdout: res.stdout };
+      }
+      for (const o of m.objectives) {
+        if (!done.has(o.id) && o.verifier(fs, state, ctx)) done.add(o.id);
+      }
+    }
+
+    const missing = m.objectives.filter(o => !done.has(o.id)).map(o => o.id);
+    assert.deepEqual(missing, [], `${m.id} cannot be completed by its walkthrough`);
+  }
+});
+
+// Regression tests for the final review findings
+function studentSession() {
+  const fs = structuredClone(LPI_MODULES[0].initialFs);
+  const state = { ...LPI_MODULES[0].initialState, currentUser: 'student', currentGroup: 'student', isRootOrAdmin: false };
+  let cwd = '/home/student';
+  let current = { fs, state };
+  return (line: string) => {
+    const res = executeLinuxLine(line, cwd, current.fs, current.state);
+    current = { fs: res.newFs, state: res.newState };
+    cwd = res.newCwd;
+    return res;
+  };
+}
+
+test('Review 1: ls -ld lists the directory itself', () => {
+  const run = studentSession();
+  const res = run('ls -ld /home/student/finance');
+  assert.ok(res.stdout.includes('finance'));
+  assert.ok(!res.stdout.includes('q3_payroll.csv'));
+  assert.ok(res.stdout.startsWith('d'));
+});
+
+test('Review 2: chmod -R validates the mode first and skips files you do not own', () => {
+  const run = studentSession();
+  run('mkdir d');
+  run('sudo touch d/rootfile');
+  run('touch d/mine');
+  const res = run('chmod -R 700 d');
+  assert.ok(!res.stderr.includes('invalid mode'));
+  assert.ok(res.stderr.includes("d/rootfile': Operation not permitted"));
+  assert.equal(res.exitCode, 1);
+  assert.ok(run('ls -l d').stdout.includes('rwx------'));
+  assert.ok(run('chmod -R 9z9 d').stderr.includes('invalid mode'));
+});
+
+test('Review 3: tar reads mode letters from flags, not file names', () => {
+  const run = studentSession();
+  run('echo hi > notes.txt');
+  assert.equal(run('tar -czf backup.tar.gz notes.txt').exitCode, 0);
+  assert.ok(run('tar -tf backup.tar.gz').stdout.includes('notes.txt'));
+  assert.ok(run('tar -tvf backup.tar.gz').stdout.includes('notes.txt'));
+  assert.ok(run('cat backup.tar.gz').stdout.includes('notes.txt'));
+  assert.equal(run('tar czvf b2.tgz notes.txt').exitCode, 0);
+  assert.ok(run('tar tf b2.tgz').stdout.includes('notes.txt'));
+  assert.ok(run('tar -c -f b3.tar notes.txt').exitCode === 0);
+  assert.ok(run('tar -xzvf backup.tar.gz').exitCode === 0);
+  assert.ok(run('cat backup.tar.gz').stdout.includes('notes.txt'));
+});
+
+test('Review 4: usermod rejects users that do not exist', () => {
+  const run = studentSession();
+  const res = run('sudo usermod -aG finance ghost');
+  assert.equal(res.exitCode, 6);
+  assert.ok(res.stderr.includes("user 'ghost' does not exist"));
+  assert.ok(!run('cat /etc/group').stdout.includes('ghost'));
+});
+
+test('Review 5: id prints real group numbers', () => {
+  const run = studentSession();
+  run('sudo usermod -aG developers student');
+  const out = run('id').stdout;
+  assert.ok(out.includes('4(adm)'));
+  assert.ok(out.includes('1003(developers)'));
+  assert.ok(!out.includes('1001(adm)'));
+});
+
+test('Review 5: CMD does not split 2>&1 into a second command', () => {
+  const stages = splitChainedCommandLine('dir nope 2>&1', 'cmd');
+  assert.equal(stages.length, 1);
+  assert.equal(splitChainedCommandLine('echo a & echo b', 'cmd').length, 2);
+});
+
+test('Review 8: ls -l on a file you cannot read shows its details', () => {
+  const run = studentSession();
+  const res = run('ls -l /etc/shadow');
+  assert.equal(res.exitCode, 0);
+  assert.ok(res.stdout.includes('shadow'));
+  assert.ok(run('ls /root').stderr.includes('Permission denied'));
+});
