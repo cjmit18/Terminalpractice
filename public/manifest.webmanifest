@@ -1,7 +1,7 @@
 {
   "name": "Terminus CertSim",
   "short_name": "CertSim",
-  "description": "LPI Linux and CompTIA Windows PBQ terminal simulator. Works offline.",
+  "description": "Simulated Linux and Windows terminal labs for LPIC-1 and CompTIA A+, Network+ and Security+. Works offline.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
