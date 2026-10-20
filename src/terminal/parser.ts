@@ -4,6 +4,15 @@
 
 export type StderrRedirect = { type: '>' | '>>'; target: string } | { type: 'merge' };
 
+/**
+ * Quoting rules differ per shell:
+ * - bash: '...' is literal, "..." keeps backslashes except before $ ` " \ and newline,
+ *   and an unquoted backslash escapes any character.
+ * - cmd: only "..." groups; ^ escapes; backslashes and single quotes are ordinary characters.
+ * - powershell: '...' and "..." group; the backtick escapes; backslashes are ordinary.
+ */
+export type ShellSyntax = 'bash' | 'cmd' | 'powershell';
+
 export interface ParsedCommand {
   raw: string;
   name: string;
@@ -20,88 +29,87 @@ export interface ChainedStage {
   nextOp?: '&&' | '||' | ';';
 }
 
+const ESCAPE: Record<ShellSyntax, string> = { bash: '\\', cmd: '^', powershell: '`' };
+
+/**
+ * For each character, whether it is "active" syntax: outside any quotes, not escaped, and
+ * not itself a quote or escape character. Operators (|, &, ;, >) only count when active.
+ */
+function activeMask(input: string, syntax: ShellSyntax): boolean[] {
+  const mask = new Array<boolean>(input.length).fill(false);
+  const esc = ESCAPE[syntax];
+  let inDouble = false;
+  let inSingle = false;
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+    if (ch === esc && !inSingle && (syntax !== 'bash' || !inDouble || i + 1 < input.length)) {
+      i++; // the escaped character is never syntax
+      continue;
+    }
+    if (ch === '"' && !inSingle) { inDouble = !inDouble; continue; }
+    if (ch === "'" && !inDouble && syntax !== 'cmd') { inSingle = !inSingle; continue; }
+    if (!inDouble && !inSingle) mask[i] = true;
+  }
+  return mask;
+}
+
 /**
  * Tokenizes a single command string into an array of arguments handling quotes and escapes
  */
-export function tokenizeArgs(input: string): string[] {
+export function tokenizeArgs(input: string, syntax: ShellSyntax = 'bash'): string[] {
   const tokens: string[] = [];
+  const esc = ESCAPE[syntax];
   let current = '';
-  let inDoubleQuote = false;
-  let inSingleQuote = false;
-  let escaped = false;
+  let started = false;
+  let inDouble = false;
+  let inSingle = false;
 
   for (let i = 0; i < input.length; i++) {
-    const char = input[i];
+    const ch = input[i];
 
-    if (escaped) {
-      current += char;
-      escaped = false;
+    if (ch === esc && !inSingle && i + 1 < input.length) {
+      const next = input[i + 1];
+      if (syntax === 'bash' && inDouble && !'$`"\\\n'.includes(next)) {
+        current += ch; // inside "...", bash keeps backslashes that escape nothing
+      } else {
+        current += syntax === 'powershell' ? ({ n: '\n', t: '\t' } as Record<string, string>)[next] ?? next : next;
+        i++;
+      }
+      started = true;
       continue;
     }
+    if (ch === '"' && !inSingle) { inDouble = !inDouble; started = true; continue; }
+    if (ch === "'" && !inDouble && syntax !== 'cmd') { inSingle = !inSingle; started = true; continue; }
 
-    if (char === '\\' && !inSingleQuote) {
-      escaped = true;
-      continue;
-    }
-
-    if (char === '"' && !inSingleQuote) {
-      inDoubleQuote = !inDoubleQuote;
-      continue;
-    }
-
-    if (char === "'" && !inDoubleQuote) {
-      inSingleQuote = !inSingleQuote;
-      continue;
-    }
-
-    if (/\s/.test(char) && !inDoubleQuote && !inSingleQuote) {
-      if (current.length > 0) {
+    if (/\s/.test(ch) && !inDouble && !inSingle) {
+      if (started) {
         tokens.push(current);
         current = '';
+        started = false;
       }
     } else {
-      current += char;
+      current += ch;
+      started = true;
     }
   }
-
-  if (current.length > 0) {
-    tokens.push(current);
-  }
-
+  if (started) tokens.push(current);
   return tokens;
 }
 
 /**
  * Extracts stderr redirect (2>, 2>>, 2>&1) outside quotes
  */
-export function extractStderrRedirect(cmd: string): { body: string; stderr?: StderrRedirect } {
-  let inD = false;
-  let inS = false;
+export function extractStderrRedirect(cmd: string, syntax: ShellSyntax = 'bash'): { body: string; stderr?: StderrRedirect } {
+  const mask = activeMask(cmd, syntax);
   for (let i = 0; i < cmd.length; i++) {
-    const ch = cmd[i];
-    if (ch === '\\' && !inS) {
-      i++;
-      continue;
-    }
-    if (ch === '"' && !inS) {
-      inD = !inD;
-      continue;
-    }
-    if (ch === "'" && !inD) {
-      inS = !inS;
-      continue;
-    }
-    if (inD || inS) continue;
-
-    if (ch === '2' && cmd[i + 1] === '>' && (i === 0 || /\s/.test(cmd[i - 1]))) {
-      const m = cmd.slice(i).match(/^2>(>?)\s*(&1|[^\s|&;]+)/);
-      if (!m) continue;
-      const body = (cmd.slice(0, i) + cmd.slice(i + m[0].length)).trim();
-      const stderr: StderrRedirect = m[2] === '&1'
-        ? { type: 'merge' }
-        : { type: m[1] ? '>>' : '>', target: m[2] };
-      return { body, stderr };
-    }
+    if (!mask[i] || cmd[i] !== '2' || cmd[i + 1] !== '>' || (i > 0 && !/\s/.test(cmd[i - 1]))) continue;
+    const m = cmd.slice(i).match(/^2>(>?)\s*(&1|[^\s|&;]+)/);
+    if (!m) continue;
+    const body = (cmd.slice(0, i) + cmd.slice(i + m[0].length)).trim();
+    const stderr: StderrRedirect = m[2] === '&1'
+      ? { type: 'merge' }
+      : { type: m[1] ? '>>' : '>', target: m[2] };
+    return { body, stderr };
   }
   return { body: cmd };
 }
@@ -109,174 +117,63 @@ export function extractStderrRedirect(cmd: string): { body: string; stderr?: Std
 /**
  * Splits a command line into chained stages separated by &&, ||, or ;
  * strictly ignoring operators inside quotes.
- * Supports shell parameter: in cmd, single & is sequence operator, and ; is literal text.
+ * In cmd, a single & is the sequence operator and ; is literal text.
  */
-export function splitChainedCommandLine(input: string, shell: 'bash' | 'cmd' = 'bash'): ChainedStage[] {
+export function splitChainedCommandLine(input: string, shell: ShellSyntax = 'bash'): ChainedStage[] {
+  const mask = activeMask(input, shell);
   const stages: ChainedStage[] = [];
-  let current = '';
-  let inDoubleQuote = false;
-  let inSingleQuote = false;
-  let escaped = false;
+  let start = 0;
+  const cut = (end: number, op: ChainedStage['nextOp'], skip: number) => {
+    stages.push({ commandLine: input.slice(start, end).trim(), nextOp: op });
+    start = end + skip;
+  };
 
-  let i = 0;
-  while (i < input.length) {
-    const char = input[i];
-
-    if (escaped) {
-      current += char;
-      escaped = false;
-      i++;
-      continue;
-    }
-
-    if (char === '\\' && !inSingleQuote) {
-      escaped = true;
-      current += char;
-      i++;
-      continue;
-    }
-
-    if (char === '"' && !inSingleQuote) {
-      inDoubleQuote = !inDoubleQuote;
-      current += char;
-      i++;
-      continue;
-    }
-
-    if (char === "'" && !inDoubleQuote) {
-      inSingleQuote = !inSingleQuote;
-      current += char;
-      i++;
-      continue;
-    }
-
-    // Check for operators only outside quotes
-    if (!inDoubleQuote && !inSingleQuote) {
-      if (char === '&' && input[i + 1] === '&') {
-        stages.push({ commandLine: current.trim(), nextOp: '&&' });
-        current = '';
-        i += 2;
-        continue;
-      }
-      if (char === '|' && input[i + 1] === '|') {
-        stages.push({ commandLine: current.trim(), nextOp: '||' });
-        current = '';
-        i += 2;
-        continue;
-      }
-      if (shell === 'cmd' && char === '&' && input[i + 1] !== '&' && input[i - 1] !== '>') {
-        stages.push({ commandLine: current.trim(), nextOp: ';' });
-        current = '';
-        i++;
-        continue;
-      }
-      if (shell === 'bash' && char === ';') {
-        stages.push({ commandLine: current.trim(), nextOp: ';' });
-        current = '';
-        i++;
-        continue;
-      }
-    }
-
-    current += char;
-    i++;
+  for (let i = 0; i < input.length; i++) {
+    if (!mask[i]) continue;
+    const ch = input[i];
+    if (ch === '&' && input[i + 1] === '&' && mask[i + 1]) { cut(i, '&&', 2); i++; continue; }
+    if (ch === '|' && input[i + 1] === '|' && mask[i + 1]) { cut(i, '||', 2); i++; continue; }
+    if (shell === 'cmd' && ch === '&' && input[i - 1] !== '>') { cut(i, ';', 1); continue; }
+    if (shell !== 'cmd' && ch === ';') { cut(i, ';', 1); continue; }
   }
-
-  if (current.trim().length > 0 || stages.length > 0) {
-    stages.push({ commandLine: current.trim() });
-  }
-
+  const rest = input.slice(start).trim();
+  if (rest.length > 0 || stages.length > 0) stages.push({ commandLine: rest });
   return stages.filter(s => s.commandLine.length > 0);
 }
 
 /**
  * Parses a single command stage, extracting stderr and stdout redirects if present outside quotes
  */
-export function parseSingleCommand(cmdStr: string): ParsedCommand {
-  const extracted = extractStderrRedirect(cmdStr);
+export function parseSingleCommand(cmdStr: string, syntax: ShellSyntax = 'bash'): ParsedCommand {
+  const extracted = extractStderrRedirect(cmdStr, syntax);
   const trimmed = extracted.body.trim();
-  const stderrRedirect = extracted.stderr;
-
-  let inDoubleQuote = false;
-  let inSingleQuote = false;
-  let escaped = false;
-  let redirectIndex = -1;
-  let redirectType: '>' | '>>' = '>';
-
-  // Find stdout redirect operators outside quotes
-  for (let i = 0; i < trimmed.length; i++) {
-    const char = trimmed[i];
-
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-
-    if (char === '\\' && !inSingleQuote) {
-      escaped = true;
-      continue;
-    }
-
-    if (char === '"' && !inSingleQuote) {
-      inDoubleQuote = !inDoubleQuote;
-      continue;
-    }
-
-    if (char === "'" && !inDoubleQuote) {
-      inSingleQuote = !inSingleQuote;
-      continue;
-    }
-
-    if (!inDoubleQuote && !inSingleQuote) {
-      if (char === '>' && trimmed[i + 1] === '>') {
-        redirectIndex = i;
-        redirectType = '>>';
-        break;
-      } else if (char === '>') {
-        redirectIndex = i;
-        redirectType = '>';
-        break;
-      }
-    }
-  }
+  const mask = activeMask(trimmed, syntax);
+  const redirectIndex = trimmed.split('').findIndex((ch, i) => ch === '>' && mask[i]);
 
   let body = trimmed;
-  let redirect: { type: '>' | '>>'; target: string } | undefined;
+  let redirect: ParsedCommand['redirect'];
   let leftoverArgs: string[] = [];
 
   if (redirectIndex !== -1) {
-    // If preceded by 1 (e.g. 1> or 1>>), strip the 1
+    const type: '>' | '>>' = trimmed[redirectIndex + 1] === '>' ? '>>' : '>';
+    // "1>" and "1>>" are the same as ">" and ">>"
     let cutPos = redirectIndex;
-    if (cutPos > 0 && trimmed[cutPos - 1] === '1' && (cutPos === 1 || /\s/.test(trimmed[cutPos - 2]))) {
-      cutPos--;
-    }
+    if (cutPos > 0 && trimmed[cutPos - 1] === '1' && (cutPos === 1 || /\s/.test(trimmed[cutPos - 2]))) cutPos--;
     body = trimmed.slice(0, cutPos).trim();
-    const after = trimmed.slice(redirectIndex + (redirectType === '>>' ? 2 : 1)).trim();
-    const targetTokens = tokenizeArgs(after);
+    const targetTokens = tokenizeArgs(trimmed.slice(redirectIndex + type.length).trim(), syntax);
     if (targetTokens.length > 0) {
-      redirect = {
-        type: redirectType,
-        target: targetTokens[0],
-      };
-      if (targetTokens.length > 1) {
-        leftoverArgs = targetTokens.slice(1);
-      }
+      redirect = { type, target: targetTokens[0] };
+      leftoverArgs = targetTokens.slice(1);
     }
   }
 
-  const tokens = tokenizeArgs(body);
-  const name = tokens.length > 0 ? tokens[0] : '';
-  const args = tokens.slice(1);
-  if (leftoverArgs.length > 0) {
-    args.push(...leftoverArgs);
-  }
-
+  const tokens = tokenizeArgs(body, syntax);
   return {
     raw: cmdStr.trim(),
-    name,
-    args,
+    name: tokens[0] ?? '',
+    args: [...tokens.slice(1), ...leftoverArgs],
     redirect,
-    stderrRedirect,
+    stderrRedirect: extracted.stderr,
   };
 }
 
@@ -284,58 +181,17 @@ export function parseSingleCommand(cmdStr: string): ParsedCommand {
  * Parses a piped line (e.g. "cat /var/log/syslog | grep error | wc -l")
  * ignoring pipes that are inside quotes or double pipes (||)
  */
-export function parsePipelinedLine(line: string): ParsedCommand[] {
+export function parsePipelinedLine(line: string, syntax: ShellSyntax = 'bash'): ParsedCommand[] {
+  const mask = activeMask(line, syntax);
   const stages: string[] = [];
-  let current = '';
-  let inDoubleQuote = false;
-  let inSingleQuote = false;
-  let escaped = false;
-
+  let start = 0;
   for (let i = 0; i < line.length; i++) {
-    const char = line[i];
-
-    if (escaped) {
-      current += char;
-      escaped = false;
-      continue;
-    }
-
-    if (char === '\\' && !inSingleQuote) {
-      escaped = true;
-      current += char;
-      continue;
-    }
-
-    if (char === '"' && !inSingleQuote) {
-      inDoubleQuote = !inDoubleQuote;
-      current += char;
-      continue;
-    }
-
-    if (char === "'" && !inDoubleQuote) {
-      inSingleQuote = !inSingleQuote;
-      current += char;
-      continue;
-    }
-
-    // Only split on single pipe outside quotes (not part of ||)
-    if (char === '|' && !inDoubleQuote && !inSingleQuote) {
-      if (line[i + 1] === '|') {
-        // Skip over the || pair
-        current += '||';
-        i++;
-        continue;
-      }
-      stages.push(current);
-      current = '';
-    } else {
-      current += char;
-    }
+    if (!mask[i] || line[i] !== '|') continue;
+    if (line[i + 1] === '|') { i++; continue; }
+    stages.push(line.slice(start, i));
+    start = i + 1;
   }
-
-  if (current.trim().length > 0) {
-    stages.push(current);
-  }
-
-  return stages.map(stage => parseSingleCommand(stage));
+  const rest = line.slice(start);
+  if (rest.trim().length > 0) stages.push(rest);
+  return stages.map(stage => parseSingleCommand(stage, syntax));
 }

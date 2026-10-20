@@ -1,7 +1,7 @@
 import { createNode, removeNode, fileSize, writeFileContent } from '../../filesystem';
 import { LinuxContext, LinuxResult, linuxCommands } from '../context';
 
-// Navigation and file management: pwd, cd, ls, cat, mkdir, touch, rm, tee
+// Navigation and file management: pwd, cd, ls, mkdir, touch, rm, tee (cat lives with the text filters)
 
 function pwd(ctx: LinuxContext): LinuxResult {
   return ctx.ok(ctx.cwd);
@@ -71,25 +71,6 @@ function ls(ctx: LinuxContext): LinuxResult {
     return `${perm} 1 ${child.owner.padEnd(8, ' ')} ${child.group.padEnd(8, ' ')} ${size} Oct 19 10:00 ${child.name}`;
   });
   return ctx.ok(lines.join('\n'));
-}
-
-function cat(ctx: LinuxContext): LinuxResult {
-  if (ctx.args.length === 0) return ctx.ok(ctx.stdin);
-  const outputs: string[] = [];
-  for (const arg of ctx.args) {
-    if (arg === '-') {
-      outputs.push(ctx.stdin);
-      continue;
-    }
-    const targetPath = ctx.resolve(arg);
-    const node = ctx.node(targetPath);
-    if (!node) return ctx.fail(`cat: ${arg}: No such file or directory`);
-    if (node.type === 'directory') return ctx.fail(`cat: ${arg}: Is a directory`);
-    const readCheck = ctx.canRead(targetPath);
-    if (!readCheck.ok) return ctx.fail(`cat: ${arg}: ${readCheck.error || 'Permission denied'}`);
-    outputs.push(node.content || '');
-  }
-  return ctx.ok(outputs.join('\n'));
 }
 
 function mkdir(ctx: LinuxContext): LinuxResult {
@@ -174,4 +155,4 @@ function tee(ctx: LinuxContext): LinuxResult {
   return ctx.ok(stdin);
 }
 
-linuxCommands.registerAll({ pwd, cd, ls, cat, mkdir, touch, rm, tee });
+linuxCommands.registerAll({ pwd, cd, ls, mkdir, touch, rm, tee });

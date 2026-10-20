@@ -84,7 +84,7 @@ function executeCmdPipeline(
   fs: FileNode,
   state: SystemState
 ): WindowsExecutionResult {
-  const stages = parsePipelinedLine(pipelineStr);
+  const stages = parsePipelinedLine(pipelineStr, 'cmd');
   let currentInput = '';
   let activeFs = cloneFileSystem(fs);
   let activeState = cloneState(state);
@@ -135,7 +135,7 @@ function executePowerShellCommand(
   fs: FileNode,
   state: SystemState
 ): WindowsExecutionResult {
-  const stages = parsePipelinedLine(line);
+  const stages = parsePipelinedLine(line, 'powershell');
   const first = stages[0];
   const ctx = new WindowsContext(first?.name ?? '', first?.args ?? [], '', line, cwd, cloneFileSystem(fs), cloneState(state));
 
