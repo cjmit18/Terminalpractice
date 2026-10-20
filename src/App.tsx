@@ -164,7 +164,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-cyan-500/30 selection:text-cyan-200">
+    <div className="h-dvh bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-cyan-500/30 selection:text-cyan-200">
       {/* Top Bar Header */}
       <Header
         activeTab={activeTab}
@@ -174,18 +174,18 @@ export default function App() {
       />
 
       {/* Main Content Viewport */}
-      <main className="flex-1 overflow-hidden">
+      <main className="flex-1 min-h-0 overflow-y-auto">
         {/* LPI Exam Modules Tab */}
         {activeTab === 'lpi' && (
           selectedModule ? (
             <div className="flex flex-col h-full">
-              <div className="bg-slate-950 px-6 py-2 border-b border-slate-900 flex items-center justify-between">
+              <div className="bg-slate-950 px-3 sm:px-6 py-2 border-b border-slate-900 flex items-center justify-between gap-3 shrink-0">
                 <button
                   onClick={() => setSelectedModule(null)}
                   className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors font-medium"
                 >
                   <ArrowLeft className="w-3.5 h-3.5" />
-                  <span>Back to LPI Modules Catalog</span>
+                  <span className="whitespace-nowrap">Back<span className="hidden sm:inline"> to LPI Modules Catalog</span></span>
                 </button>
                 <div className="flex items-center gap-2 overflow-x-auto text-xs">
                   {LPI_MODULES.map(m => (
@@ -222,13 +222,13 @@ export default function App() {
         {activeTab === 'comptia' && (
           selectedModule ? (
             <div className="flex flex-col h-full">
-              <div className="bg-slate-950 px-6 py-2 border-b border-slate-900 flex items-center justify-between">
+              <div className="bg-slate-950 px-3 sm:px-6 py-2 border-b border-slate-900 flex items-center justify-between gap-3 shrink-0">
                 <button
                   onClick={() => setSelectedModule(null)}
                   className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors font-medium"
                 >
                   <ArrowLeft className="w-3.5 h-3.5" />
-                  <span>Back to CompTIA PBQ Catalog</span>
+                  <span className="whitespace-nowrap">Back<span className="hidden sm:inline"> to CompTIA PBQ Catalog</span></span>
                 </button>
                 <div className="flex items-center gap-2 overflow-x-auto text-xs">
                   {WINDOWS_PBQS.map(m => (

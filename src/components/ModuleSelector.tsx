@@ -18,7 +18,7 @@ export const ModuleSelector: React.FC<ModuleSelectorProps> = ({
   const isLpi = track === 'lpi';
 
   return (
-    <div className="flex flex-col h-[calc(100vh-65px)] bg-slate-950 overflow-y-auto font-sans p-6 sm:p-8">
+    <div className="flex flex-col h-full bg-slate-950 overflow-y-auto font-sans p-6 sm:p-8">
       <div className="max-w-6xl mx-auto w-full space-y-6">
         {/* Banner Section */}
         <div className="p-6 rounded-2xl bg-gradient-to-br from-slate-900 to-slate-950 border border-slate-800 space-y-3">

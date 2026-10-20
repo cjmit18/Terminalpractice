@@ -60,32 +60,64 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
       }
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      if (history.length === 0) return;
-      const newIndex = historyIndex === null ? history.length - 1 : Math.max(0, historyIndex - 1);
-      setHistoryIndex(newIndex);
-      setInput(history[newIndex].command);
+      historyPrev();
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
-      if (historyIndex === null) return;
-      const newIndex = historyIndex + 1;
-      if (newIndex >= history.length) {
-        setHistoryIndex(null);
-        setInput('');
-      } else {
-        setHistoryIndex(newIndex);
-        setInput(history[newIndex].command);
-      }
+      historyNext();
     } else if (e.key === 'Tab') {
       e.preventDefault();
-      // Simple tab autocomplete for common commands
-      const commonLinux = ['chmod', 'chown', 'ls', 'cat', 'grep', 'awk', 'tar', 'useradd', 'usermod', 'systemctl', 'journalctl', 'fdisk', 'df', 'ifconfig', 'ip', 'ping'];
-      const commonWin = ['ipconfig', 'ping', 'tracert', 'nslookup', 'netstat', 'sfc', 'dism', 'chkdsk', 'diskpart', 'gpupdate', 'gpresult', 'tasklist', 'taskkill', 'Get-Service', 'Start-Service', 'Get-Process', 'Test-NetConnection', 'Unlock-ADAccount'];
-      const pool = shell === 'bash' ? commonLinux : commonWin;
-      const match = pool.find(c => c.toLowerCase().startsWith(input.toLowerCase()));
-      if (match) {
-        setInput(match + ' ');
-      }
+      completeCommand();
+    } else if (e.ctrlKey && e.key.toLowerCase() === 'c') {
+      e.preventDefault();
+      cancelLine();
     }
+  };
+
+  const historyPrev = () => {
+    if (history.length === 0) return;
+    const newIndex = historyIndex === null ? history.length - 1 : Math.max(0, historyIndex - 1);
+    setHistoryIndex(newIndex);
+    setInput(history[newIndex].command);
+  };
+
+  const historyNext = () => {
+    if (historyIndex === null) return;
+    const newIndex = historyIndex + 1;
+    if (newIndex >= history.length) {
+      setHistoryIndex(null);
+      setInput('');
+    } else {
+      setHistoryIndex(newIndex);
+      setInput(history[newIndex].command);
+    }
+  };
+
+  // Simple tab autocomplete for common commands
+  const completeCommand = () => {
+    const commonLinux = ['chmod', 'chown', 'ls', 'cat', 'grep', 'awk', 'tar', 'useradd', 'usermod', 'systemctl', 'journalctl', 'fdisk', 'df', 'ifconfig', 'ip', 'ping'];
+    const commonWin = ['ipconfig', 'ping', 'tracert', 'nslookup', 'netstat', 'sfc', 'dism', 'chkdsk', 'diskpart', 'gpupdate', 'gpresult', 'tasklist', 'taskkill', 'Get-Service', 'Start-Service', 'Get-Process', 'Test-NetConnection', 'Unlock-ADAccount'];
+    const pool = shell === 'bash' ? commonLinux : commonWin;
+    const match = pool.find(c => c.toLowerCase().startsWith(input.toLowerCase()));
+    if (match) {
+      setInput(match + ' ');
+    }
+  };
+
+  const cancelLine = () => {
+    setInput('');
+    setHistoryIndex(null);
+  };
+
+  // Insert text at the caret so the toolbar works mid-line, then restore focus and caret
+  const insertAtCaret = (text: string) => {
+    const el = inputRef.current;
+    const start = el?.selectionStart ?? input.length;
+    const end = el?.selectionEnd ?? input.length;
+    setInput(input.slice(0, start) + text + input.slice(end));
+    requestAnimationFrame(() => {
+      el?.focus();
+      el?.setSelectionRange(start + text.length, start + text.length);
+    });
   };
 
   const getThemeStyles = () => {
@@ -189,7 +221,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
       onClick={() => inputRef.current?.focus()}
     >
       {/* Terminal Title Bar */}
-      <div className={`flex items-center justify-between px-4 py-2.5 border-b border-slate-800/80 ${styles.headerBg}`}>
+      <div className={`flex items-center justify-between px-3 sm:px-4 py-2 sm:py-2.5 border-b border-slate-800/80 ${styles.headerBg}`}>
         <div className="flex items-center gap-2.5">
           <div className="flex items-center gap-1.5">
             <div className="w-3 h-3 rounded-full bg-rose-500/80"></div>
@@ -212,7 +244,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
               setCrtEffect(!crtEffect);
             }}
             title="Toggle Vintage CRT Phosphor Scanline Filter"
-            className={`px-2 py-1 rounded text-[11px] font-sans transition-colors ${
+            className={`hidden sm:block px-2 py-1 rounded text-[11px] font-sans transition-colors ${
               crtEffect ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'text-slate-400 hover:text-slate-200'
             }`}
           >
@@ -228,7 +260,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
             }}
             onClick={(e) => e.stopPropagation()}
             aria-label="Terminal Color Theme"
-            className="bg-slate-900 border border-slate-700 text-slate-300 text-[11px] font-sans rounded px-2 py-1 focus:outline-none"
+            className="hidden sm:block bg-slate-900 border border-slate-700 text-slate-300 text-[11px] font-sans rounded px-2 py-1 focus:outline-none"
           >
             <option value="ubuntu">Ubuntu Purple</option>
             <option value="powershell">PowerShell Blue</option>
@@ -328,12 +360,56 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
               className="flex-1 bg-transparent text-white focus:outline-none font-mono caret-cyan-400"
               spellCheck={false}
               autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="none"
+              enterKeyHint="send"
+              inputMode="text"
             />
           </div>
         )}
 
         <div ref={bottomRef} />
       </div>
+
+      {/* Key toolbar: keys phone keyboards bury or lack. pointerdown keeps the keyboard open */}
+      {!readOnly && (
+        <div
+          className="flex items-center gap-1.5 px-2 py-1.5 bg-slate-950/80 border-t border-slate-800 overflow-x-auto shrink-0"
+          role="toolbar"
+          aria-label="Terminal keys"
+        >
+          {[
+            { label: 'Tab', run: completeCommand },
+            { label: 'Ctrl+C', run: cancelLine },
+            { label: '↑', aria: 'Previous command', run: historyPrev },
+            { label: '↓', aria: 'Next command', run: historyNext },
+          ].map(k => (
+            <button
+              key={k.label}
+              type="button"
+              aria-label={k.aria}
+              onPointerDown={(e) => e.preventDefault()}
+              onClick={() => { k.run(); inputRef.current?.focus(); }}
+              className="min-w-10 h-9 px-2.5 rounded-md bg-slate-800 active:bg-slate-600 text-slate-200 text-xs font-mono border border-slate-700 shrink-0"
+            >
+              {k.label}
+            </button>
+          ))}
+          <span className="w-px h-5 bg-slate-700 mx-0.5 shrink-0" aria-hidden="true" />
+          {['|', '>', '<', '&', '/', '~', '-', '_', '.', '$', '*', '"', "'", '\\', ':'].map(ch => (
+            <button
+              key={ch}
+              type="button"
+              aria-label={`Insert ${ch}`}
+              onPointerDown={(e) => e.preventDefault()}
+              onClick={() => insertAtCaret(ch)}
+              className="min-w-9 h-9 px-2 rounded-md bg-slate-800 active:bg-slate-600 text-cyan-300 text-sm font-mono border border-slate-700 shrink-0"
+            >
+              {ch}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Suggested Fast-Execution Commands (Optional Help Bar) */}
       {suggestedCommands.length > 0 && !readOnly && (

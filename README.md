@@ -1,100 +1,68 @@
-# Terminus CertSim - LPI Linux & CompTIA Windows PBQ Simulator
+# Terminus CertSim
 
-A high-fidelity, interactive terminal simulation and performance-based question (PBQ) platform designed for IT certification candidates studying for:
-- **LPI Linux Essentials & LPIC-1 (Exams 101-500, 102-500)**
-- **CompTIA A+ (Core 2 220-1102)**
-- **CompTIA Network+ (N10-008 / N10-009)**
-- **CompTIA Security+ (SY0-701)**
+A browser-based terminal simulator for IT certification practice. It runs entirely on the client: no server, no accounts, no API keys. It installs as an app on phones and desktops and works offline after the first visit.
 
----
+Covers hands-on objectives for:
+- **LPI Linux** (LPIC-1 101/102): permissions, text processing, system architecture, user administration, disk partitioning
+- **CompTIA Windows PBQs** (A+, Network+, Security+ style): network troubleshooting, Active Directory, Group Policy, DiskPart, incident response, SFC/DISM, PowerShell
 
-## Features
+## What's in the app
 
-- **POSIX Virtual Filesystem**: Real node hierarchy with full permission enforcement (`r`, `w`, `x`, `s`, `t`), SUID (4000), SGID (2000), and Sticky Bit (1000) support.
-- **Dual Engine Architecture**:
-  - **Linux Engine (Bash)**: Implements standard coreutils (`ls`, `cat`, `grep`, `head`, `tail`, `wc`, `awk`, `sed`, `chmod`, `chown`, `umask`, `mkdir -p`, `rm -rf`, `tee`, `systemctl`, `journalctl`, `ip`, `ps`, `kill`, `su`, `sudo`).
-  - **Windows Engine (CMD & PowerShell)**: Interactive `diskpart` partition & formatting shell, `net user / add`, `gpresult /r`, `ipconfig`, `route`, `ping`, `tracert`, `sfc /scannow`, `dism /restorehealth`, `Test-NetConnection`, and `Get-Service`.
-- **Quote-Aware Shell Parser**:
-  - Handles shell quote preservation (`"echo a > b"` does not redirect, `'x && y'` does not split).
-  - Handles command chaining: `&&`, `||`, and `;` in Bash; `&&`, `||`, and `&` in CMD.
-  - Multi-stage pipelines with stdin filtering (`grep`, `awk`, `sed`, `wc`, `findstr`, `more`).
-  - Stderr redirection support: `2>`, `2>>`, `2>&1`, and `2>/dev/null`.
-- **Permission Matrix Visualizer**:
-  - Live interactive chmod converter mapping 4-digit octal codes, symbolic strings, and binary representations.
-  - SUID / SGID / Sticky bit presets (`4755`, `2755`, `1777`, `0750`, `0644`).
-- **Interactive Exam Lab Objectives**:
-  - Step-by-step verification engines that check real filesystem and system state rather than naive regex string matching.
+- **13 guided lab modules** (5 Linux, 8 Windows). Each has a scenario, objectives that are checked against real simulated system state, hints, exam tips and a full walkthrough.
+- **Terminal sandbox**: free-form Linux Bash, CMD and PowerShell sessions with a live view of the virtual filesystem.
+- **System simulators**: interactive Active Directory, Group Policy, DiskPart, network topology and permission-matrix panels.
+- **Command reference**: searchable list of exam-relevant commands.
+- **Phone support**: single-pane lab layout, a key toolbar (`Tab`, `Ctrl+C`, arrows, and `| > < & / ~ - _ . $ * " ' \ :`) and an input configured so the keyboard does not autocorrect or capitalize commands.
+- **Installable and offline**: web app manifest, icons and a service worker. Fonts are bundled, so nothing is fetched from third parties.
 
----
+### Simulated command support
 
-## Architecture
+- **Linux:** `ls` (including `-l`, `-a`, `-d`), `cat`, `grep`, `awk`, `sed`, `sort`, `uniq`, `head`, `tail`, `wc`, `echo`, `tee`, `touch`, `mkdir -p`, `rm`, `chmod` (octal, symbolic, `-R`, SUID/SGID/sticky), `chown`, `umask`, `useradd`, `usermod -aG`, `id`, `tar`, `sudo`, `su`, `systemctl`, `journalctl`, `fdisk -l`, `df`, `lspci`, `lsmod`, `dmesg`, `ip`, `ps`, `kill`
+- **Windows:** `ipconfig`, `ping`, `tracert`, `netstat`, `route print`, `tasklist`, `taskkill`, `gpupdate`, `gpresult`, interactive `diskpart`, `sfc`, `dism`, `net user`, `findstr`, plus PowerShell cmdlets such as `Get-Service`, `Start-Service`, `Get-Process` (with `Where-Object` using `-eq`, `-ne`, `-like`), `Test-NetConnection` and the Active Directory cmdlets used by the labs
+- **Shell features:** pipes, `>` and `>>`, `2>`, `2>>`, `2>&1`, quote-aware parsing, `&&`, `||` and `;` in Bash, and `&`, `&&`, `||` in CMD
+
+## Project layout
 
 ```
 src/
 ├── terminal/
-│   ├── parser.ts         # Quote-aware tokenizer, pipeline splitter, chaining parser & stderr extractor
-│   ├── filesystem.ts     # In-memory virtual POSIX & Windows filesystem, permission validator, applyChmod
-│   ├── linuxEngine.ts    # Bash command execution, pipeline runner, sudo/su state transitions
-│   ├── windowsEngine.ts  # CMD & PowerShell executor, interactive diskpart subshell, piping to findstr
-│   └── rules.test.ts     # Automated regression & unit test suite (18 test suites)
-├── components/
-│   ├── Terminal.tsx      # ANSI-compliant terminal emulator component with tab completion & history
-│   ├── PermissionMatrixSim.tsx # Interactive permission bit matrix explorer
-│   ├── LpiLabView.tsx    # LPI certification practice modules
-│   └── WindowsPbqView.tsx# CompTIA Windows PBQ scenarios
-└── data/
-    ├── lpiModules.ts     # LPI exam labs and state verifiers
-    └── windowsPbqs.ts    # CompTIA PBQ troubleshooting scenarios
+│   ├── parser.ts         # tokenizer, pipelines, command chaining, redirects
+│   ├── filesystem.ts     # virtual POSIX/Windows filesystem and permission checks
+│   ├── linuxEngine.ts    # Bash command execution
+│   ├── windowsEngine.ts  # CMD and PowerShell execution, DiskPart subshell
+│   └── rules.test.ts     # unit, regression and walkthrough replay tests
+├── components/           # React UI: module runner, terminal view, simulators, sandbox
+├── data/                 # lab modules, Windows PBQs, command reference
+└── types/
+public/                   # web app manifest, service worker, icons
 ```
 
----
+## Development
 
-## Running Locally
+Requires Node.js 22 or newer.
 
-### Prerequisites
-- Node.js 18+
-- npm 9+
-
-### Quick Start
 ```bash
-# Install dependencies
 npm ci
-
-# Run test suite
-npm test
-
-# Start development server
-npm run dev
-
-# Build production bundle
-npm run build
+npm run dev        # dev server on http://localhost:3000
+npm test           # run the test suite
+npm run lint       # typecheck (tsc --noEmit)
+npm run build      # typecheck, then production build into dist/
+npm run preview    # serve the production build
 ```
 
----
+### Tests
 
-## Test Suite
+`npm test` runs the Node test runner through `tsx`. Besides unit tests for the parser, filesystem and both engines, it includes:
 
-The automated test suite runs via Node.js native test runner and `tsx`:
-```bash
-npm test
-```
-Validates:
-1. Bidirectional octal and symbolic permission conversions
-2. POSIX path normalization and tilde home directory expansion
-3. Quote-aware tokenization and escape character handling
-4. Pipeline command splitting
-5. Linux core commands and pipeline flows
-6. Windows CMD commands and interactive DiskPart subshells
-7. LPI and CompTIA module verifiers
-8. POSIX permission enforcement, user groups, and sudo elevation
-9. Chaining operators (`&&`, `||`, `;`), quote safety, and grep pipes
-10. SUID / SGID / Sticky bits preservation in chmod
-11. Symbolic chmod clauses (`[ugoa]*[+-=][rwxst]*`)
-12. Sudo redirection trap vs `tee` elevation
-13. Stderr redirection (`2>`, `2>>`, `2>&1`, `2>/dev/null`)
-14. `mkdir -p` recursive creation and existing directory checks
-15. Chained command error accumulation
-16. CMD `&` sequencing and CMD pipeline filtering with `findstr`
-17. `rm` directory safety checks and `rm -f` flags
-18. Supplementary group resolution from `/etc/group`
-19. Windows redirect default mode (644)
+- **Walkthrough replay:** every module's own solution steps are run through the engine, and every objective's verifier must pass. A module that cannot be completed fails the build.
+- **Regression tests** for each bug found in review (`ls -ld`, `chmod -R` with files you do not own, `tar` flag parsing, `usermod` with unknown users, `id` group numbers, CMD `2>&1`, `ls -l` on unreadable files).
+
+### Adding a module
+
+Add it to `src/data/lpiModules.ts` or `src/data/windowsPbqs.ts`. Verifiers receive the filesystem, system state and the last command (`CommandContext`: command, exit code, stdout). Check success and evidence in the output, not just the command text. Put the commands a student types in `solutionWalkthrough`, one per line; the replay test will tell you if they do not satisfy every objective.
+
+## Deployment
+
+Pushes to `main` run `.github/workflows/deploy.yml`, which tests, builds and publishes `dist/` to GitHub Pages. One-time setup: in the repository settings, under **Pages**, set **Source** to **GitHub Actions**. The build uses a relative base path, so it works from a project URL such as `https://<user>.github.io/<repo>/`.
+
+CI (`.github/workflows/ci.yml`) runs typecheck, tests and build on every push and pull request.

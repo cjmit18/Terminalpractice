@@ -222,9 +222,9 @@ export const SandboxMode: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-65px)] bg-slate-950 overflow-hidden font-sans">
+    <div className="flex flex-col h-full bg-slate-950 overflow-hidden font-sans">
       {/* Top Controls Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-3 bg-slate-900/60 border-b border-slate-800 shrink-0">
+      <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-4 px-3 sm:px-6 py-2 sm:py-3 bg-slate-900/60 border-b border-slate-800 shrink-0">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg bg-purple-500/10 border border-purple-500/30 flex items-center justify-center text-purple-400">
             <Terminal className="w-4 h-4" />
@@ -298,9 +298,9 @@ export const SandboxMode: React.FC = () => {
       </div>
 
       {/* Main Terminal Viewport */}
-      <div className="flex-1 p-4 overflow-hidden flex gap-4">
+      <div className="flex-1 min-h-0 p-2 sm:p-4 overflow-hidden flex gap-4">
         {/* Main Terminal (Expands or Shares with FS Tree) */}
-        <div className="flex-1 h-full overflow-hidden">
+        <div className={`flex-1 h-full overflow-hidden ${showFileInspector ? 'hidden md:block' : ''}`}>
           <TerminalView
             shell={shell}
             cwd={activeCwd}
@@ -322,7 +322,7 @@ export const SandboxMode: React.FC = () => {
 
         {/* Collapsible Virtual Filesystem Inspector */}
         {showFileInspector && (
-          <div className="w-80 h-full bg-slate-900/90 border border-slate-800 rounded-xl p-4 overflow-y-auto space-y-3 text-xs">
+          <div className="w-full md:w-80 h-full bg-slate-900/90 border border-slate-800 rounded-xl p-4 overflow-y-auto space-y-3 text-xs">
             <div className="flex items-center justify-between border-b border-slate-800 pb-2">
               <span className="font-bold text-slate-200 flex items-center gap-1.5">
                 <Folder className="w-4 h-4 text-amber-400" />
