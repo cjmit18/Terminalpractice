@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { SystemState } from '../types/terminal';
-import { Monitor, Server, Globe, ArrowRight, CheckCircle2, AlertTriangle, RefreshCw, Radio } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Globe, Monitor, Router, Server, XCircle } from 'lucide-react';
+import { Button, SimPanel, SimToolbar, StatusText, cx } from './sims/ui';
 
 interface NetworkTopologySimProps {
   systemState: SystemState;
@@ -9,180 +10,213 @@ interface NetworkTopologySimProps {
   onFlushDns?: () => void;
 }
 
+type Tone = 'ok' | 'warn' | 'danger';
+const toneIcon = { ok: CheckCircle2, warn: AlertTriangle, danger: XCircle };
+const toneLine = { ok: 'border-ok', warn: 'border-warn border-dashed', danger: 'border-danger border-dashed' };
+
+const GATEWAY = '192.168.1.1';
+const DNS_SERVER = '192.168.1.10';
+const INTERNET = '8.8.8.8';
+
+const Node: React.FC<{
+  icon: React.ComponentType<{ className?: string; 'aria-hidden'?: boolean }>;
+  name: string;
+  host: string;
+  address: string;
+  className?: string;
+}> = ({ icon: Icon, name, host, address, className }) => (
+  <div className={cx('flex items-center gap-3 rounded-md border border-line bg-surface px-3 py-2.5 @3xl:flex-col @3xl:text-center', className)}>
+    <Icon className="h-5 w-5 shrink-0 text-muted" aria-hidden />
+    <div className="min-w-0">
+      <div className="font-medium">{name}</div>
+      <div className="truncate font-mono text-sm text-muted">{host}</div>
+      <div className="font-mono text-sm">{address}</div>
+    </div>
+  </div>
+);
+
+/** A connection between two nodes: the line, plus its state in words. */
+const Link: React.FC<{
+  tone: Tone;
+  label: string;
+  /** Said only in the stacked layout, where the line alone doesn't show which two nodes it joins */
+  narrowPrefix?: string;
+  horizontalWhenWide?: boolean;
+  className?: string;
+}> = ({ tone, label, narrowPrefix, horizontalWhenWide = false, className }) => (
+  <div
+    className={cx(
+      'flex items-center gap-3 pl-5',
+      horizontalWhenWide && '@3xl:flex-col @3xl:justify-center @3xl:gap-1.5 @3xl:px-2 @3xl:pl-2',
+      className,
+    )}
+  >
+    <span
+      aria-hidden
+      className={cx(
+        'block h-10 w-0 border-l-2',
+        horizontalWhenWide && '@3xl:h-0 @3xl:w-full @3xl:border-l-0 @3xl:border-t-2',
+        toneLine[tone],
+      )}
+    />
+    <StatusText tone={tone} icon={toneIcon[tone]} className={cx('text-sm', horizontalWhenWide && '@3xl:text-center')}>
+      {narrowPrefix && <span className="font-normal text-muted @3xl:hidden">{narrowPrefix} </span>}
+      {label}
+    </StatusText>
+  </div>
+);
+
 export const NetworkTopologySim: React.FC<NetworkTopologySimProps> = ({
   systemState,
   onRunPing,
   onRenewDhcp,
   onFlushDns,
 }) => {
-  const [pingTarget, setPingTarget] = useState<string | null>(null);
-  const [pingStatus, setPingStatus] = useState<string | null>(null);
+  const [pingOutput, setPingOutput] = useState<string | null>(null);
+  const timer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
 
   const iface = systemState.interfaces[0] || {
+    name: 'Ethernet0',
     ip: '192.168.1.145',
     netmask: '255.255.255.0',
     mac: '00-50-56-A1-2B-3C',
-    gateway: '192.168.1.1',
-    dns: ['192.168.1.10', '8.8.8.8'],
+    gateway: GATEWAY,
+    dns: [DNS_SERVER, INTERNET],
   };
 
   const isApipa = iface.ip.startsWith('169.254.');
   const hasGateway = !!iface.gateway && !isApipa;
   const isDnsWorking = systemState.dnsWorking;
 
+  const clientLink: { tone: Tone; label: string } = hasGateway
+    ? { tone: 'ok', label: 'Connected' }
+    : { tone: 'danger', label: 'No gateway' };
+  const internetLink: { tone: Tone; label: string } = hasGateway
+    ? { tone: 'ok', label: 'Reachable' }
+    : { tone: 'danger', label: 'Unreachable' };
+  const dnsLink: { tone: Tone; label: string } = !hasGateway
+    ? { tone: 'danger', label: 'Unreachable' }
+    : isDnsWorking
+      ? { tone: 'ok', label: 'Resolving names' }
+      : { tone: 'warn', label: 'Stale cache' };
+
   const simulatePing = (target: string) => {
-    setPingTarget(target);
-    setPingStatus('Pinging...');
-    setTimeout(() => {
-      if (isApipa && target !== '127.0.0.1' && !target.startsWith('169.254.')) {
-        setPingStatus('Destination host unreachable (APIPA Active)');
-      } else {
-        setPingStatus(`Reply from ${target}: bytes=32 time=12ms TTL=118 (Success)`);
-      }
+    setPingOutput(`Pinging ${target} with 32 bytes of data:`);
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => {
+      const ok = !isApipa || target === '127.0.0.1' || target.startsWith('169.254.');
+      const line = ok
+        ? `Reply from ${target}: bytes=32 time=${target === GATEWAY ? '1' : '12'}ms TTL=${target === GATEWAY ? '64' : '118'}`
+        : 'PING: transmit failed. General failure.';
+      setPingOutput(
+        [
+          `Pinging ${target} with 32 bytes of data:`,
+          line,
+          line,
+          '',
+          `Ping statistics for ${target}:`,
+          ok
+            ? '    Packets: Sent = 2, Received = 2, Lost = 0 (0% loss)'
+            : '    Packets: Sent = 2, Received = 0, Lost = 2 (100% loss)',
+        ].join('\n'),
+      );
       onRunPing?.(target);
     }, 500);
   };
 
+  const actions: { label: string; command: string; run?: () => void; hint?: string }[] = [
+    { label: 'Ping the gateway', command: `ping ${GATEWAY}`, run: () => simulatePing(GATEWAY) },
+    { label: 'Ping the internet', command: `ping ${INTERNET}`, run: () => simulatePing(INTERNET) },
+    {
+      label: 'Renew DHCP lease',
+      command: 'ipconfig /renew',
+      run: onRenewDhcp,
+      hint: isApipa ? 'Try this first: the client has no lease.' : undefined,
+    },
+    {
+      label: 'Flush DNS cache',
+      command: 'ipconfig /flushdns',
+      run: onFlushDns,
+      hint: hasGateway && !isDnsWorking ? 'Clears the stale entries.' : undefined,
+    },
+  ];
+
   return (
-    <div className="flex flex-col h-full bg-slate-900/90 border border-slate-800 rounded-xl overflow-hidden shadow-xl text-xs font-sans">
-      {/* Title Bar */}
-      <div className="flex items-center justify-between px-4 py-2.5 bg-slate-950 border-b border-slate-800">
-        <div className="flex items-center gap-2">
-          <Radio className="w-4 h-4 text-blue-400" />
-          <span className="font-semibold text-slate-200">Interactive Network Topology & OSI Layer 3 Visualizer</span>
-        </div>
-        <div className="flex items-center gap-2">
-          {isApipa ? (
-            <span className="flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-rose-500/20 text-rose-300 border border-rose-500/40">
-              <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
-              APIPA 169.254 Active (No Gateway)
-            </span>
+    <SimPanel label="Network">
+      <SimToolbar
+        title="Network"
+        context={
+          isApipa ? (
+            <StatusText tone="danger" icon={XCircle}>No DHCP lease, using an APIPA address</StatusText>
           ) : (
-            <span className="flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-              DHCP Lease Active (192.168.1.0/24)
-            </span>
-          )}
-        </div>
-      </div>
+            <StatusText tone="ok" icon={CheckCircle2}>DHCP lease from {GATEWAY}</StatusText>
+          )
+        }
+      />
 
-      {/* Topology Diagram Container */}
-      <div className="flex-1 p-5 flex flex-col justify-between overflow-y-auto">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-center relative">
-          {/* Node 1: Workstation */}
-          <div className={`p-4 rounded-xl border text-center transition-all ${
-            isApipa ? 'bg-rose-950/30 border-rose-500/50' : 'bg-slate-950 border-blue-500/40'
-          }`}>
-            <div className="w-10 h-10 mx-auto rounded-lg bg-blue-500/10 border border-blue-500/30 flex items-center justify-center text-blue-400 mb-2">
-              <Monitor className="w-5 h-5" />
-            </div>
-            <div className="font-bold text-slate-100 text-xs">Workstation</div>
-            <div className="text-[11px] text-slate-400 font-mono">{systemState.hostname}</div>
-            <div className={`text-[11px] font-mono mt-2 px-2 py-0.5 rounded ${
-              isApipa ? 'bg-rose-500/20 text-rose-300 font-bold' : 'bg-slate-800 text-cyan-300'
-            }`}>
-              {iface.ip}
-            </div>
-            <div className="text-[10px] text-slate-400 mt-1 font-mono">MAC: {iface.mac}</div>
-          </div>
-
-          {/* Node 2: Managed Switch & Router Gateway */}
-          <div className={`p-4 rounded-xl border text-center transition-all ${
-            hasGateway ? 'bg-slate-950 border-emerald-500/40' : 'bg-slate-950/60 border-slate-800'
-          }`}>
-            <div className="w-10 h-10 mx-auto rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 mb-2">
-              <Server className="w-5 h-5" />
-            </div>
-            <div className="font-bold text-slate-100 text-xs">Default Gateway</div>
-            <div className="text-[11px] text-slate-400 font-mono">Router (gw.corp.local)</div>
-            <div className="text-[11px] font-mono mt-2 px-2 py-0.5 rounded bg-slate-800 text-emerald-300">
-              192.168.1.1
-            </div>
-            <div className="text-[10px] text-slate-400 mt-1">Status: {hasGateway ? 'Reachable' : 'No Route'}</div>
-          </div>
-
-          {/* Node 3: Corporate DNS / DC */}
-          <div className={`p-4 rounded-xl border text-center transition-all ${
-            isDnsWorking ? 'bg-slate-950 border-cyan-500/40' : 'bg-slate-950/60 border-amber-500/40'
-          }`}>
-            <div className="w-10 h-10 mx-auto rounded-lg bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400 mb-2">
-              <Server className="w-5 h-5" />
-            </div>
-            <div className="font-bold text-slate-100 text-xs">DNS / Domain Controller</div>
-            <div className="text-[11px] text-slate-400 font-mono">dc01.corp.local</div>
-            <div className="text-[11px] font-mono mt-2 px-2 py-0.5 rounded bg-slate-800 text-cyan-300">
-              192.168.1.10:53
-            </div>
-            <div className="text-[10px] text-slate-400 mt-1">Status: {isDnsWorking ? 'Resolving' : 'Cache Stale'}</div>
-          </div>
-
-          {/* Node 4: Public Internet */}
-          <div className={`p-4 rounded-xl border text-center transition-all ${
-            hasGateway ? 'bg-slate-950 border-purple-500/40' : 'bg-slate-950/60 border-slate-800 opacity-60'
-          }`}>
-            <div className="w-10 h-10 mx-auto rounded-lg bg-purple-500/10 border border-purple-500/30 flex items-center justify-center text-purple-400 mb-2">
-              <Globe className="w-5 h-5" />
-            </div>
-            <div className="font-bold text-slate-100 text-xs">Public Internet</div>
-            <div className="text-[11px] text-slate-400 font-mono">Anycast Cloud</div>
-            <div className="text-[11px] font-mono mt-2 px-2 py-0.5 rounded bg-slate-800 text-purple-300">
-              8.8.8.8
-            </div>
-            <div className="text-[10px] text-slate-400 mt-1">Status: {hasGateway ? 'Internet UP' : 'Unreachable'}</div>
-          </div>
+      <div className="min-h-0 flex-1 space-y-6 overflow-y-auto p-4">
+        {/* Diagram: a column in a narrow pane, a row with DNS hanging off the router when wide */}
+        <div
+          role="group"
+          aria-label="Network diagram"
+          className="grid grid-cols-1 @3xl:grid-cols-[minmax(0,1fr)_minmax(7rem,0.8fr)_minmax(0,1fr)_minmax(7rem,0.8fr)_minmax(0,1fr)] @3xl:items-center"
+        >
+          <Node icon={Monitor} name="This computer" host={systemState.hostname} address={iface.ip} className="@3xl:col-start-1 @3xl:row-start-1" />
+          <Link {...clientLink} horizontalWhenWide className="@3xl:col-start-2 @3xl:row-start-1" />
+          <Node icon={Router} name="Router" host="gw.corp.local" address={GATEWAY} className="@3xl:col-start-3 @3xl:row-start-1" />
+          <Link {...internetLink} horizontalWhenWide className="@3xl:col-start-4 @3xl:row-start-1" />
+          <Node icon={Globe} name="Internet" host="dns.google" address={INTERNET} className="@3xl:col-start-5 @3xl:row-start-1" />
+          <Link {...dnsLink} narrowPrefix="Router to DNS server:" className="@3xl:col-start-3 @3xl:row-start-2 @3xl:pl-[calc(50%-1px)]" />
+          <Node icon={Server} name="DNS server" host="dc01.corp.local" address={DNS_SERVER} className="@3xl:col-start-3 @3xl:row-start-3" />
         </div>
 
-        {/* Live Diagnostics & Action Panel */}
-        <div className="mt-6 p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="font-semibold text-slate-200 flex items-center gap-2">
-              <span>Interactive Network Prober & Actions</span>
-            </div>
+        <div className="grid grid-cols-1 gap-6 @3xl:grid-cols-2">
+          <div>
+            <h3 className="text-sm font-semibold">IP configuration</h3>
+            <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+              <dt className="text-muted">Adapter</dt>
+              <dd className="font-mono">{iface.name}</dd>
+              <dt className="text-muted">IPv4 address</dt>
+              <dd className={cx('font-mono', isApipa && 'text-danger')}>{iface.ip}</dd>
+              <dt className="text-muted">Subnet mask</dt>
+              <dd className="font-mono">{iface.netmask}</dd>
+              <dt className="text-muted">Default gateway</dt>
+              <dd className="font-mono">{hasGateway ? iface.gateway : <span className="font-sans text-muted">None</span>}</dd>
+              <dt className="text-muted">DNS servers</dt>
+              <dd className="font-mono">{iface.dns.join(', ')}</dd>
+              <dt className="text-muted">MAC address</dt>
+              <dd className="font-mono">{iface.mac}</dd>
+            </dl>
+          </div>
 
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => simulatePing('192.168.1.1')}
-                className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono transition-colors"
-              >
-                ping 192.168.1.1
-              </button>
-              <button
-                onClick={() => simulatePing('8.8.8.8')}
-                className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono transition-colors"
-              >
-                ping 8.8.8.8
-              </button>
-              {isApipa && onRenewDhcp && (
-                <button
-                  onClick={onRenewDhcp}
-                  className="px-3 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs transition-colors flex items-center gap-1.5"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>ipconfig /renew</span>
-                </button>
-              )}
-              {!isDnsWorking && onFlushDns && (
-                <button
-                  onClick={onFlushDns}
-                  className="px-3 py-1 rounded bg-cyan-600 hover:bg-cyan-500 text-white font-medium text-xs transition-colors"
-                >
-                  ipconfig /flushdns
-                </button>
+          <div>
+            <h3 className="text-sm font-semibold">Try it</h3>
+            <ul className="mt-2 space-y-2">
+              {actions.map(a => (
+                <li key={a.command} className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <Button variant="secondary" onClick={a.run} disabled={!a.run} className="w-44 justify-start">
+                    {a.label}
+                  </Button>
+                  <span className="font-mono text-sm text-muted">{a.command}</span>
+                  {a.hint && <span className="basis-full text-sm text-warn">{a.hint}</span>}
+                </li>
+              ))}
+            </ul>
+            <div role="status" aria-live="polite">
+              {pingOutput && (
+                <pre className="mt-3 overflow-x-auto whitespace-pre-wrap rounded-md bg-surface-2 px-3 py-2 font-mono text-sm leading-relaxed">{pingOutput}</pre>
               )}
             </div>
           </div>
-
-          {pingStatus && (
-            <div className="p-2.5 rounded bg-slate-900 border border-slate-800 font-mono text-[11px] text-slate-300">
-              <span className="text-cyan-400">&gt; Test Ping to {pingTarget}:</span> {pingStatus}
-            </div>
-          )}
-
-          <div className="text-[11px] text-slate-400 leading-relaxed border-t border-slate-800/80 pt-2.5">
-            <strong className="text-slate-300">CompTIA Exam Concept:</strong> APIPA addresses (169.254.0.1 to 169.254.255.254) mean the client has zero default gateway and cannot route traffic outside the local link. Once DHCP is renewed, Layer 3 routing to 192.168.1.1 is restored.
-          </div>
         </div>
+
+        <p className="max-w-prose border-t border-line pt-4 text-sm text-muted">
+          <span className="font-medium text-text">On the exam:</span> an address from 169.254.0.0/16 (APIPA) means the
+          client asked for a DHCP lease and got no answer. It has no gateway, so it can only reach hosts on the same
+          link. Fix DHCP, then run <code className="rounded-sm bg-surface-2 px-1">ipconfig /renew</code>.
+        </p>
       </div>
-    </div>
+    </SimPanel>
   );
 };

@@ -1,11 +1,56 @@
 import React from 'react';
-import { SystemState } from '../types/terminal';
-import { HardDrive, Layers, CheckCircle2, Disc } from 'lucide-react';
+import { SystemState, VirtualDisk, VirtualDiskPartition } from '../types/terminal';
+import { HardDrive } from 'lucide-react';
+import { Button, SimPanel, SimToolbar, cx, thClass } from './sims/ui';
 
 interface DiskpartSimProps {
   systemState: SystemState;
   onUpdateState?: (newState: SystemState) => void;
 }
+
+const formatSize = (mb: number) => {
+  if (mb >= 1024) {
+    const gb = mb / 1024;
+    return `${gb >= 100 ? gb.toFixed(0) : gb.toFixed(1)} GB`;
+  }
+  return `${mb} MB`;
+};
+
+/** A partition entry with no filesystem and no primary flag is free space, not a partition. */
+const isFreeEntry = (p: VirtualDiskPartition) => p.fsType === 'Unallocated' && !p.isPrimary;
+/** Created with `create partition primary` but not formatted yet. */
+const isRaw = (p: VirtualDiskPartition) => p.fsType === 'Unallocated' && !!p.isPrimary;
+
+type Segment =
+  | { kind: 'partition'; part: VirtualDiskPartition; sizeMB: number }
+  | { kind: 'free'; sizeMB: number };
+
+/** Turn the disk's partition list into what you'd see on screen: partitions plus whatever is left. */
+const segmentsFor = (disk: VirtualDisk): { segments: Segment[]; scale: number } => {
+  const parts = disk.partitions.filter(p => !isFreeEntry(p));
+  const used = parts.reduce((sum, p) => sum + p.sizeMB, 0);
+  const free = Math.max(0, disk.totalSizeMB - used);
+  const segments: Segment[] = parts.map(part => ({ kind: 'partition', part, sizeMB: part.sizeMB }));
+  if (free > 0) segments.push({ kind: 'free', sizeMB: free });
+  return { segments, scale: Math.max(disk.totalSizeMB, used) };
+};
+
+const partName = (p: VirtualDiskPartition) => {
+  const letter = p.driveLetter || '';
+  if (letter && p.label) return `${p.label} (${letter})`;
+  return letter || p.label || `Partition ${p.id}`;
+};
+
+const partDetail = (p: VirtualDiskPartition) => {
+  if (isRaw(p)) return 'RAW, not formatted';
+  if (p.label === 'EFI System') return 'EFI system partition';
+  if (p.driveLetter === 'C:') return 'Boot, primary partition';
+  return 'Primary partition';
+};
+
+const hatch: React.CSSProperties = {
+  backgroundImage: 'repeating-linear-gradient(135deg, var(--line-strong) 0 1px, transparent 1px 7px)',
+};
 
 export const DiskpartSim: React.FC<DiskpartSimProps> = ({
   systemState,
@@ -92,140 +137,174 @@ export const DiskpartSim: React.FC<DiskpartSimProps> = ({
     });
   };
 
+  const selected = systemState.disks.find(d => d.diskNumber === systemState.diskpartSelectedDisk) ?? null;
+  const volumes = systemState.disks.flatMap(d =>
+    d.partitions.filter(p => !isFreeEntry(p)).map(p => ({ disk: d, part: p })),
+  );
+
+  // What the selected disk is ready for next: create, then format, then assign a letter
+  let nextAction: { label: string; command: string; run: () => void } | null = null;
+  if (selected && onUpdateState) {
+    const n = selected.diskNumber;
+    const hasRaw = selected.partitions.some(isRaw);
+    const hasUnassigned = selected.partitions.some(p => p.fsType === 'NTFS' && !p.driveLetter);
+    const hasFree = segmentsFor(selected).segments.some(s => s.kind === 'free');
+    if (hasRaw) nextAction = { label: 'Format as NTFS', command: 'format fs=ntfs quick', run: () => handleFormatNTFS(n) };
+    else if (hasUnassigned) nextAction = { label: 'Assign letter E:', command: 'assign letter=E', run: () => handleAssignDriveLetter(n, 'E:') };
+    else if (hasFree && selected.partitions.some(isFreeEntry))
+      nextAction = { label: 'Create partition', command: 'create partition primary', run: () => handleCreatePartition(n) };
+  }
+
   return (
-    <div className="flex flex-col h-full bg-slate-900/90 border border-slate-800 rounded-xl overflow-hidden shadow-xl text-xs font-sans">
-      {/* Title Bar */}
-      <div className="flex items-center justify-between px-4 py-2.5 bg-slate-950 border-b border-slate-800">
-        <div className="flex items-center gap-2">
-          <HardDrive className="w-4 h-4 text-emerald-400" />
-          <span className="font-semibold text-slate-200">Disk Management & Partition Table Visualizer (diskmgmt.msc)</span>
+    <SimPanel label="Disk Management">
+      <SimToolbar
+        title="Disk Management"
+        context={selected ? `Disk ${selected.diskNumber} selected` : 'Select a disk to work on it'}
+      >
+        {nextAction && (
+          <>
+            <span className="hidden font-mono text-sm text-muted @xl:inline">{nextAction.command}</span>
+            <Button variant="primary" onClick={nextAction.run}>{nextAction.label}</Button>
+          </>
+        )}
+      </SimToolbar>
+
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {/* Volume list, as in the top half of the real console */}
+        <div className="overflow-x-auto border-b border-line">
+          <table className="w-full border-collapse text-sm">
+            <caption className="sr-only">Volumes</caption>
+            <thead>
+              <tr className="border-b border-line">
+                <th scope="col" className={thClass}>Volume</th>
+                <th scope="col" className={thClass}>File system</th>
+                <th scope="col" className={cx(thClass, 'hidden @lg:table-cell')}>Status</th>
+                <th scope="col" className={cx(thClass, 'text-right')}>Capacity</th>
+              </tr>
+            </thead>
+            <tbody>
+              {volumes.map(({ disk, part }) => (
+                <tr key={`${disk.diskNumber}-${part.id}`} className="border-b border-line last:border-b-0">
+                  <th scope="row" className="px-3 py-1.5 text-left font-normal">
+                    {partName(part)}
+                    <span className="text-muted"> · Disk {disk.diskNumber}</span>
+                  </th>
+                  <td className="px-3 py-1.5">{isRaw(part) ? 'RAW' : part.fsType}</td>
+                  <td className="hidden px-3 py-1.5 text-muted @lg:table-cell">
+                    {isRaw(part) ? 'Not formatted' : `Healthy (${partDetail(part)})`}
+                  </td>
+                  <td className="px-3 py-1.5 text-right tabular-nums">{formatSize(part.sizeMB)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
-        <div className="text-[11px] text-slate-400 font-mono">
-          Focus: {systemState.diskpartSelectedDisk !== null ? `Disk ${systemState.diskpartSelectedDisk} Selected` : 'No disk selected'}
-        </div>
-      </div>
 
-      {/* Main Visualizer Container */}
-      <div className="flex-1 p-4 overflow-y-auto space-y-4">
-        {systemState.disks.map((disk) => {
-          const isSelected = systemState.diskpartSelectedDisk === disk.diskNumber;
-          const hasUnallocated = disk.partitions.some(p => p.fsType === 'Unallocated');
-          const hasUnformattedPrimary = disk.partitions.some(p => p.isPrimary && p.fsType === 'Unallocated');
-          const hasUnassignedNTFS = disk.partitions.some(p => p.fsType === 'NTFS' && !p.driveLetter);
-
-          return (
-            <div
-              key={disk.diskNumber}
-              onClick={() => handleSelectDisk(disk.diskNumber)}
-              className={`p-3.5 rounded-xl border transition-all cursor-pointer ${
-                isSelected
-                  ? 'border-emerald-500/50 bg-slate-950/90 ring-1 ring-emerald-500/30'
-                  : 'border-slate-800 bg-slate-950/40 hover:border-slate-700'
-              }`}
-            >
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2">
-                  <Disc className="w-4 h-4 text-emerald-400" />
-                  <span className="font-bold text-slate-200">Disk {disk.diskNumber}</span>
-                  <span className="text-[11px] text-slate-400 font-mono">
-                    ({disk.model} - {(disk.totalSizeMB / 1024).toFixed(0)} GB)
-                  </span>
-                  <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-slate-800 text-slate-300">
-                    {disk.partitionTable}
-                  </span>
-                  <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-500/15 text-emerald-300">
-                    {disk.status}
-                  </span>
-                </div>
-
-                {/* Quick actions for simulator mode */}
-                <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-                  {hasUnallocated && !hasUnformattedPrimary && (
-                    <button
-                      onClick={() => handleCreatePartition(disk.diskNumber)}
-                      className="px-2 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-medium"
-                    >
-                      + Create Partition
-                    </button>
+        {/* Graphical view: one row per disk */}
+        <ul className="space-y-3 p-4">
+          {systemState.disks.map(disk => {
+            const isSelected = systemState.diskpartSelectedDisk === disk.diskNumber;
+            const { segments, scale } = segmentsFor(disk);
+            return (
+              <li key={disk.diskNumber} className="flex flex-col gap-2 @xl:flex-row @xl:items-stretch">
+                <button
+                  type="button"
+                  onClick={() => handleSelectDisk(disk.diskNumber)}
+                  aria-pressed={isSelected}
+                  disabled={!onUpdateState}
+                  className={cx(
+                    'flex shrink-0 items-start gap-2 rounded-md border px-3 py-2 text-left text-sm @xl:w-40 @xl:flex-col @xl:gap-0',
+                    isSelected ? 'border-accent bg-accent-soft' : 'border-line hover:bg-surface-2',
+                    'disabled:cursor-default',
                   )}
-                  {hasUnformattedPrimary && (
-                    <button
-                      onClick={() => handleFormatNTFS(disk.diskNumber)}
-                      className="px-2 py-1 rounded bg-amber-600 hover:bg-amber-500 text-white text-[11px] font-medium"
-                    >
-                      Format NTFS Quick
-                    </button>
-                  )}
-                  {hasUnassignedNTFS && (
-                    <button
-                      onClick={() => handleAssignDriveLetter(disk.diskNumber, 'E:')}
-                      className="px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-medium"
-                    >
-                      Assign E:
-                    </button>
-                  )}
-                </div>
-              </div>
+                >
+                  <span className="flex items-center gap-1.5 font-semibold">
+                    <HardDrive className="h-4 w-4 text-muted" aria-hidden />
+                    Disk {disk.diskNumber}
+                  </span>
+                  <span className="text-muted">
+                    <span className="@xl:block">Basic, {disk.partitionTable}</span>
+                    <span className="@xl:hidden"> · </span>
+                    <span className="@xl:block">{formatSize(disk.totalSizeMB)}, {disk.status}</span>
+                  </span>
+                  <span className="hidden truncate text-xs text-muted @xl:block">{disk.model}</span>
+                </button>
 
-              {/* Graphical Partition Strip */}
-              <div className="flex w-full h-20 rounded-lg overflow-hidden border border-slate-700/80 bg-slate-900 mt-2">
-                {disk.partitions.length === 0 ? (
-                  <div className="flex-1 flex flex-col items-center justify-center bg-slate-900 text-slate-400 border border-dashed border-slate-700">
-                    <span className="font-semibold text-xs">Unallocated Space</span>
-                    <span className="text-[11px] font-mono">{(disk.totalSizeMB / 1024).toFixed(0)} GB Unallocated</span>
-                  </div>
-                ) : (
-                  disk.partitions.map((part) => {
-                    const pct = Math.max(15, Math.min(100, (part.sizeMB / disk.totalSizeMB) * 100));
-                    const isUnallocated = part.fsType === 'Unallocated';
-                    const isSystem = part.driveLetter === 'C:' || part.mountPoint === '/';
-
+                <div
+                  className="flex min-h-20 min-w-0 flex-1 overflow-hidden rounded-md border border-line"
+                  role="img"
+                  aria-label={`Disk ${disk.diskNumber} layout: ${segments
+                    .map(s => (s.kind === 'free' ? `${formatSize(s.sizeMB)} unallocated` : `${partName(s.part)} ${formatSize(s.sizeMB)} ${isRaw(s.part) ? 'RAW' : s.part.fsType}`))
+                    .join(', ')}`}
+                >
+                  {segments.map((s, i) => {
+                    const grow = (s.sizeMB / scale) * 100;
+                    // Proportional, but never so thin that the label can't be read
+                    const style: React.CSSProperties = { flex: `${grow} 1 0%`, minWidth: '7rem' };
+                    if (s.kind === 'free') {
+                      // A leftover sliver (alignment gaps and the like) gets a thin strip, not a full label
+                      const sliver = s.sizeMB / scale < 0.02;
+                      return (
+                        <div
+                          key={`free-${i}`}
+                          style={{ ...style, ...hatch, minWidth: sliver ? '1.25rem' : style.minWidth }}
+                          title={sliver ? `${formatSize(s.sizeMB)} unallocated` : undefined}
+                          className="flex flex-col justify-end border-l border-line px-2 py-1.5 text-sm first:border-l-0"
+                        >
+                          {!sliver && (
+                            <>
+                              <span className="w-fit bg-surface px-0.5 tabular-nums">{formatSize(s.sizeMB)}</span>
+                              <span className="w-fit bg-surface px-0.5 text-muted">Unallocated</span>
+                            </>
+                          )}
+                        </div>
+                      );
+                    }
+                    const raw = isRaw(s.part);
                     return (
                       <div
-                        key={part.id}
-                        style={{ width: `${pct}%` }}
-                        className={`h-full border-r border-slate-700/80 p-2 flex flex-col justify-between transition-colors ${
-                          isUnallocated
-                            ? 'bg-slate-900/90 text-slate-400 border-dashed'
-                            : isSystem
-                            ? 'bg-blue-950/60 text-blue-200 border-blue-500/30'
-                            : 'bg-emerald-950/60 text-emerald-200 border-emerald-500/30'
-                        }`}
+                        key={s.part.id}
+                        style={style}
+                        className={cx(
+                          'flex min-w-0 flex-col border-l border-t-4 border-l-line px-2 py-1.5 text-sm first:border-l-0',
+                          raw ? 'border-t-warn' : 'border-t-accent',
+                        )}
                       >
-                        <div className="flex items-center justify-between">
-                          <span className="font-bold text-xs truncate">
-                            {part.driveLetter ? `${part.driveLetter} (${part.label || 'Volume'})` : part.label || `Partition ${part.id}`}
-                          </span>
-                          <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-black/40">
-                            {part.fsType}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between text-[11px] font-mono text-slate-400">
-                          <span>{(part.sizeMB >= 1024 ? `${(part.sizeMB / 1024).toFixed(1)} GB` : `${part.sizeMB} MB`)}</span>
-                          <span className="text-[10px] text-slate-400">
-                            {part.isPrimary ? 'Primary' : 'System'}
-                          </span>
-                        </div>
+                        <span className="truncate font-medium">{partName(s.part)}</span>
+                        <span className="truncate text-muted">
+                          {formatSize(s.sizeMB)} {raw ? 'RAW' : s.part.fsType}
+                        </span>
+                        <span className="hidden truncate text-xs text-muted @lg:block">{partDetail(s.part)}</span>
                       </div>
                     );
-                  })
-                )}
-              </div>
-            </div>
-          );
-        })}
+                  })}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
 
-        {/* Informational Guidance Box */}
-        <div className="p-3.5 rounded-lg bg-slate-950 border border-slate-800 text-[11px] text-slate-400 space-y-1.5">
-          <div className="font-semibold text-slate-200 flex items-center gap-1.5">
-            <Layers className="w-3.5 h-3.5 text-cyan-400" />
-            <span>Interactive Terminal & Graphic Synchronization</span>
-          </div>
-          <p className="leading-relaxed">
-            Running commands in the terminal (e.g. <code className="text-cyan-300">diskpart</code> &rarr; <code className="text-cyan-300">select disk 1</code> &rarr; <code className="text-cyan-300">create partition primary</code> &rarr; <code className="text-cyan-300">format fs=ntfs quick</code> &rarr; <code className="text-cyan-300">assign letter=E</code> or Linux <code className="text-cyan-300">fdisk -l</code>) directly updates this physical disk representation in real time.
-          </p>
+        <div className="flex flex-wrap gap-x-5 gap-y-1 px-4 text-xs text-muted">
+          <span className="inline-flex items-center gap-1.5">
+            <span className="h-1 w-4 bg-accent" aria-hidden /> Primary partition
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="h-1 w-4 bg-warn" aria-hidden /> Not formatted
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="h-3 w-4 border border-line" style={hatch} aria-hidden /> Unallocated
+          </span>
         </div>
+
+        <p className="max-w-prose px-4 py-4 text-sm text-muted">
+          The terminal and this view share the same disks. In a lab, run{' '}
+          <code className="rounded-sm bg-surface-2 px-1">diskpart</code>, then{' '}
+          <code className="rounded-sm bg-surface-2 px-1">select disk 1</code>,{' '}
+          <code className="rounded-sm bg-surface-2 px-1">create partition primary</code>,{' '}
+          <code className="rounded-sm bg-surface-2 px-1">format fs=ntfs quick</code> and{' '}
+          <code className="rounded-sm bg-surface-2 px-1">assign letter=E</code>, and watch Disk 1 change here.
+        </p>
       </div>
-    </div>
+    </SimPanel>
   );
 };
