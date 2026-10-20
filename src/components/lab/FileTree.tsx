@@ -78,7 +78,7 @@ export const FileTree: React.FC<FileTreeProps> = ({ root, cwd, isWindows }) => {
     const kids = isOpen ? sortedChildren(node) : [];
 
     const meta = (
-      <span className="shrink-0 font-mono text-xs text-muted whitespace-nowrap">
+      <span className="ml-auto pl-5 font-mono text-xs text-muted whitespace-nowrap">
         {isWindows ? node.owner : `${isDir ? 'd' : '-'}${node.permissions} ${node.owner} ${node.group}`}
       </span>
     );
@@ -103,19 +103,19 @@ export const FileTree: React.FC<FileTreeProps> = ({ root, cwd, isWindows }) => {
       </>
     );
 
-    const rowClass = `flex items-center gap-2 w-full min-h-8 pr-2 rounded-sm text-left ${isCwd ? 'bg-accent-soft' : 'hover:bg-surface-2'}`;
+    const rowClass = `flex flex-wrap items-center gap-x-2 w-full min-h-8 py-1 pr-2 rounded-sm text-left ${isCwd ? 'bg-accent-soft' : 'hover:bg-surface-2'}`;
     const indent = { paddingLeft: `${depth * 14 + 4}px` };
 
     return (
       <li key={path}>
         {isDir ? (
           <button type="button" aria-expanded={isOpen} onClick={() => toggle(path)} className={rowClass} style={indent}>
-            <span className="flex items-center gap-1.5 flex-1 min-w-0">{nameBlock}</span>
+            <span className="flex items-center gap-1.5 min-w-0 max-w-full">{nameBlock}</span>
             {meta}
           </button>
         ) : (
           <div className={rowClass} style={indent}>
-            <span className="flex items-center gap-1.5 flex-1 min-w-0">{nameBlock}</span>
+            <span className="flex items-center gap-1.5 min-w-0 max-w-full">{nameBlock}</span>
             {meta}
           </div>
         )}

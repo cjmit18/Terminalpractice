@@ -9,7 +9,7 @@ import { NetworkTopologySim } from './NetworkTopologySim';
 import { PermissionMatrixSim } from './PermissionMatrixSim';
 import { createSession, ShellSession, useShellSession } from './lab/useShellSession';
 import { TasksPanel, ConceptsPanel, WalkthroughPanel } from './lab/LabManual';
-import { RotateCcw } from 'lucide-react';
+import { PageHeader, ResetButton, segmentClass } from './lab/PageHeader';
 
 interface ModuleRunnerProps {
   module: ExamModule;
@@ -20,12 +20,6 @@ interface ModuleRunnerProps {
 }
 
 type SideTab = 'tasks' | 'simulator' | 'concepts' | 'walkthrough';
-
-const SHELL_LABELS: Record<TerminalShell, string> = {
-  bash: 'bash',
-  cmd: 'Command Prompt',
-  powershell: 'PowerShell',
-};
 
 const startCwd = (module: ExamModule) => (module.track === 'lpi' ? '/home/student' : 'C:\\Users\\Student');
 const freshSession = (module: ExamModule) => createSession(module.initialFs, module.initialState, startCwd(module));
@@ -132,48 +126,19 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
     document.getElementById(`lab-tab-${next.id}`)?.focus();
   };
 
-  const segment = (selected: boolean) =>
-    `px-3 h-10 sm:h-8 text-sm rounded-sm transition-colors whitespace-nowrap ${
-      selected ? 'bg-accent-soft text-accent font-medium' : 'text-muted hover:text-text'
-    }`;
-
   return (
     <div className="flex flex-col flex-1 min-h-0 h-full overflow-hidden bg-bg text-text">
-      <header className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3 px-4 sm:px-6 py-4 border-b border-line shrink-0">
-        <div className="min-w-0">
-          <h1 className="text-xl sm:text-2xl font-semibold leading-snug flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span>{module.title}</span>
-            {isComplete && (
-              <span className="inline-flex items-center px-1.5 py-0.5 rounded-sm bg-ok-soft text-ok text-xs font-medium">
-                Done
-              </span>
-            )}
-          </h1>
-          <p className="text-sm text-muted mt-0.5">
-            {module.examCode} · {module.difficulty} · about {module.estimatedMinutes} min
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          {module.allowedShells.length > 1 && (
-            <div className="flex items-center gap-0.5 p-0.5 rounded-md border border-line bg-surface" role="group" aria-label="Shell">
-              {module.allowedShells.map(sh => (
-                <button key={sh} type="button" aria-pressed={activeShell === sh} onClick={() => setActiveShell(sh)} className={segment(activeShell === sh)}>
-                  {SHELL_LABELS[sh]}
-                </button>
-              ))}
-            </div>
-          )}
-          <button
-            type="button"
-            onClick={handleResetLab}
-            className="inline-flex items-center gap-1.5 h-10 sm:h-9 px-3 rounded-md border border-line-strong bg-surface text-sm font-medium hover:bg-surface-2 transition-colors"
-          >
-            <RotateCcw className="size-4 text-muted" aria-hidden="true" />
-            Reset lab
-          </button>
-        </div>
-      </header>
+      <PageHeader
+        title={module.title}
+        badge={isComplete ? 'Done' : undefined}
+        meta={`${module.examCode} · ${module.difficulty} · about ${module.estimatedMinutes} min`}
+        shellSwitch={
+          module.allowedShells.length > 1
+            ? { shells: module.allowedShells, value: activeShell, onChange: setActiveShell }
+            : undefined
+        }
+        actions={<ResetButton label="Reset lab" onClick={handleResetLab} />}
+      />
 
       {/* Phone: one pane at a time */}
       <div className="lg:hidden px-4 pt-3 shrink-0">
@@ -184,7 +149,7 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
               type="button"
               aria-pressed={mobilePane === pane}
               onClick={() => setMobilePane(pane)}
-              className={`flex-1 ${segment(mobilePane === pane)}`}
+              className={`flex-1 ${segmentClass(mobilePane === pane)}`}
             >
               {pane === 'lab' ? (
                 <>
@@ -231,6 +196,7 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
           </div>
 
           <div
+            key={currentTab}
             id="lab-panel"
             role="tabpanel"
             aria-labelledby={`lab-tab-${currentTab}`}

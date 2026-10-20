@@ -4,7 +4,8 @@ import { createDefaultLinuxFs, createDefaultWindowsFs } from '../terminal/filesy
 import { TerminalView } from './TerminalView';
 import { FileTree } from './lab/FileTree';
 import { createSession, useShellSession } from './lab/useShellSession';
-import { FolderTree, RotateCcw, X } from 'lucide-react';
+import { PageHeader, ResetButton } from './lab/PageHeader';
+import { FolderTree, X } from 'lucide-react';
 
 const LINUX_STATE: SystemState = {
   hostname: 'sandbox-linux',
@@ -152,11 +153,7 @@ const WINDOWS_STATE: SystemState = {
 const LINUX_HOME = '/home/student';
 const WINDOWS_HOME = 'C:\\Users\\Student';
 
-const SHELLS: { id: TerminalShell; label: string }[] = [
-  { id: 'bash', label: 'bash' },
-  { id: 'cmd', label: 'Command Prompt' },
-  { id: 'powershell', label: 'PowerShell' },
-];
+const SHELLS: TerminalShell[] = ['bash', 'cmd', 'powershell'];
 
 const EXAMPLES: Record<TerminalShell, string[]> = {
   bash: ['ls -la', 'cat /etc/passwd | grep student', 'chmod 750 notes.txt', 'df -h'],
@@ -179,50 +176,29 @@ export const SandboxMode: React.FC = () => {
   const machine = isLinux ? linux : windows;
   const { session } = machine;
 
-  const segment = (selected: boolean) =>
-    `px-3 h-10 sm:h-8 text-sm rounded-sm transition-colors whitespace-nowrap ${
-      selected ? 'bg-accent-soft text-accent font-medium' : 'text-muted hover:text-text'
-    }`;
-  const secondaryButton =
-    'inline-flex items-center gap-1.5 h-10 sm:h-9 px-3 rounded-md border text-sm font-medium transition-colors';
-
   return (
     <div className="flex flex-col h-full min-h-0 overflow-hidden bg-bg text-text">
-      <header className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3 px-4 sm:px-6 py-4 border-b border-line shrink-0">
-        <div className="min-w-0">
-          <h1 className="text-xl sm:text-2xl font-semibold leading-snug">Sandbox</h1>
-          <p className="text-sm text-muted mt-0.5">A practice machine with no tasks. Nothing here counts toward your progress.</p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-0.5 p-0.5 rounded-md border border-line bg-surface" role="group" aria-label="Shell">
-            {SHELLS.map(s => (
-              <button key={s.id} type="button" aria-pressed={shell === s.id} onClick={() => setShell(s.id)} className={segment(shell === s.id)}>
-                {s.label}
-              </button>
-            ))}
-          </div>
-          <button
-            type="button"
-            aria-pressed={showFiles}
-            onClick={() => setShowFiles(v => !v)}
-            className={`${secondaryButton} ${
-              showFiles ? 'bg-accent-soft text-accent border-accent-soft' : 'bg-surface border-line-strong hover:bg-surface-2'
-            }`}
-          >
-            <FolderTree className="size-4" aria-hidden="true" />
-            Files
-          </button>
-          <button
-            type="button"
-            onClick={() => machine.reset(isLinux ? newLinux() : newWindows())}
-            className={`${secondaryButton} bg-surface border-line-strong hover:bg-surface-2`}
-          >
-            <RotateCcw className="size-4 text-muted" aria-hidden="true" />
-            Reset
-          </button>
-        </div>
-      </header>
+      <PageHeader
+        title="Sandbox"
+        meta="A practice machine with no tasks. Nothing here counts toward your progress."
+        shellSwitch={{ shells: SHELLS, value: shell, onChange: setShell }}
+        actions={
+          <>
+            <button
+              type="button"
+              aria-pressed={showFiles}
+              onClick={() => setShowFiles(v => !v)}
+              className={`inline-flex items-center gap-1.5 h-10 sm:h-9 px-3 rounded-md border text-sm font-medium transition-colors ${
+                showFiles ? 'bg-accent-soft text-accent border-accent-soft' : 'bg-surface border-line-strong hover:bg-surface-2'
+              }`}
+            >
+              <FolderTree className="size-4" aria-hidden="true" />
+              Files
+            </button>
+            <ResetButton label="Reset" onClick={() => machine.reset(isLinux ? newLinux() : newWindows())} />
+          </>
+        }
+      />
 
       <div className="flex-1 min-h-0 flex gap-4 p-3 sm:p-4 overflow-hidden">
         {/* On phones the file tree takes the terminal's place while it is open */}

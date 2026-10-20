@@ -277,7 +277,8 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
 
         {!readOnly && (
           <div className="flex items-baseline">
-            <span className="shrink-0 max-w-[70%] break-all">
+            {/* pre-wrap keeps the space after "$ " that a flex item would otherwise drop */}
+            <span className="shrink-0 max-w-[70%] break-all whitespace-pre-wrap">
               {renderPrompt(shell, cwd, currentUser, isDiskpartActive)}
             </span>
             <input
