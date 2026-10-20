@@ -196,7 +196,7 @@ export const WINDOWS_PBQS: ExamModule[] = [
         title: 'Diagnose IP Configuration with ipconfig /all',
         description: 'Run "ipconfig /all" to identify current adapter configuration and note the 169.254.x.x APIPA address.',
         hint: 'Execute: ipconfig /all',
-        verifier: (_, __, lastCmd) => !!lastCmd && lastCmd.includes('ipconfig') && lastCmd.includes('/all'),
+        verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && ctx.command.toLowerCase().includes('ipconfig') && ctx.command.toLowerCase().includes('/all') && (ctx.stdout.includes('169.254.') || ctx.stdout.includes('Windows IP Configuration')),
       },
       {
         id: 'net-dhcp-renew',
@@ -217,7 +217,7 @@ export const WINDOWS_PBQS: ExamModule[] = [
         title: 'Verify Gateway and Internet Reachability',
         description: 'Verify end-to-end IP transport using ping or PowerShell Test-NetConnection.',
         hint: 'Execute: ping 8.8.8.8 or ping 192.168.1.1',
-        verifier: (_, __, lastCmd) => !!lastCmd && (lastCmd.includes('ping') || lastCmd.includes('Test-NetConnection') || lastCmd.includes('tnc')),
+        verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && (ctx.command.toLowerCase().includes('ping') || ctx.command.toLowerCase().includes('test-netconnection') || ctx.command.toLowerCase().includes('tnc')) && (ctx.stdout.includes('Reply from') || ctx.stdout.includes('PingSucceeded') || ctx.stdout.includes('bytes=')),
       },
     ],
     initialFs: createDefaultWindowsFs(),

@@ -242,6 +242,7 @@ export function parseSingleCommand(cmdStr: string): ParsedCommand {
 
   let body = trimmed;
   let redirect: { type: '>' | '>>'; target: string } | undefined;
+  let leftoverArgs: string[] = [];
 
   if (redirectIndex !== -1) {
     // If preceded by 1 (e.g. 1> or 1>>), strip the 1
@@ -257,12 +258,18 @@ export function parseSingleCommand(cmdStr: string): ParsedCommand {
         type: redirectType,
         target: targetTokens[0],
       };
+      if (targetTokens.length > 1) {
+        leftoverArgs = targetTokens.slice(1);
+      }
     }
   }
 
   const tokens = tokenizeArgs(body);
   const name = tokens.length > 0 ? tokens[0] : '';
   const args = tokens.slice(1);
+  if (leftoverArgs.length > 0) {
+    args.push(...leftoverArgs);
+  }
 
   return {
     raw: cmdStr.trim(),

@@ -178,7 +178,8 @@ export const SandboxMode: React.FC = () => {
         {
           id: Math.random().toString(),
           command: rawCmd,
-          output: res.stdout || res.stderr,
+          output: [res.stdout, res.stderr].filter(Boolean).join('\n'),
+          errorOutput: res.stderr || undefined,
           isError: res.exitCode !== 0,
           timestamp: new Date().toLocaleTimeString(),
           cwd: res.newCwd,
@@ -196,7 +197,8 @@ export const SandboxMode: React.FC = () => {
         {
           id: Math.random().toString(),
           command: rawCmd,
-          output: res.stdout || res.stderr,
+          output: [res.stdout, res.stderr].filter(Boolean).join('\r\n'),
+          errorOutput: res.stderr || undefined,
           isError: res.exitCode !== 0,
           timestamp: new Date().toLocaleTimeString(),
           cwd: res.newCwd,

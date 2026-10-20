@@ -10,12 +10,18 @@ export type InteractiveSimType =
   | 'network-topology'
   | 'permission-matrix';
 
+export interface CommandContext {
+  command: string;
+  exitCode: number;
+  stdout: string;
+}
+
 export interface ModuleObjective {
   id: string;
   title: string;
   description: string;
   hint: string;
-  verifier: (fs: FileNode, state: SystemState, lastCommand?: string) => boolean;
+  verifier: (fs: FileNode, state: SystemState, ctx?: CommandContext) => boolean;
 }
 
 export interface ExamModule {

@@ -32,6 +32,7 @@ export interface HistoryItem {
   id: string;
   command: string;
   output: string;
+  errorOutput?: string;
   isError?: boolean;
   timestamp: string;
   cwd: string;

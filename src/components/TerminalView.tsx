@@ -287,13 +287,28 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
               <span className="text-white font-medium break-all">{item.command}</span>
             </div>
             {item.output && (
-              <pre
-                className={`whitespace-pre-wrap break-all pl-2 font-mono leading-relaxed ${
-                  item.isError ? 'text-rose-400' : styles.text
-                }`}
-              >
-                {item.output}
-              </pre>
+              <div className="pl-2 font-mono leading-relaxed space-y-0.5">
+                {item.errorOutput ? (
+                  <>
+                    {item.output !== item.errorOutput && item.output.replace(item.errorOutput, '').trim() && (
+                      <pre className={`whitespace-pre-wrap break-all ${styles.text}`}>
+                        {item.output.replace(item.errorOutput, '').trimEnd()}
+                      </pre>
+                    )}
+                    <pre className="whitespace-pre-wrap break-all text-rose-400">
+                      {item.errorOutput}
+                    </pre>
+                  </>
+                ) : (
+                  <pre
+                    className={`whitespace-pre-wrap break-all ${
+                      item.isError ? 'text-rose-400' : styles.text
+                    }`}
+                  >
+                    {item.output}
+                  </pre>
+                )}
+              </div>
             )}
           </div>
         ))}

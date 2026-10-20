@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ExamModule } from '../types/modules';
+import { ExamModule, CommandContext } from '../types/modules';
 import { TerminalShell, HistoryItem, FileNode, SystemState } from '../types/terminal';
 import { executeLinuxLine } from '../terminal/linuxEngine';
 import { executeWindowsLine } from '../terminal/windowsEngine';
@@ -44,7 +44,7 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
   const [completedObjectives, setCompletedObjectives] = useState<{ [key: string]: boolean }>({});
   const [activeSideTab, setActiveSideTab] = useState<'objectives' | 'visualizer' | 'concepts' | 'solution'>('objectives');
   const [revealedHints, setRevealedHints] = useState<{ [key: string]: boolean }>({});
-  const [lastExecutedCommand, setLastExecutedCommand] = useState<string>('');
+  const [lastResult, setLastResult] = useState<CommandContext | undefined>(undefined);
 
   // Reset state when module changes
   useEffect(() => {
@@ -56,7 +56,7 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
     setIsDiskpartActive(false);
     setCompletedObjectives({});
     setRevealedHints({});
-    setLastExecutedCommand('');
+    setLastResult(undefined);
     setActiveSideTab('objectives');
   }, [module.id]);
 
@@ -68,7 +68,7 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
     module.objectives.forEach(obj => {
       if (!updated[obj.id]) {
         try {
-          const pass = obj.verifier(fs, state, lastExecutedCommand);
+          const pass = obj.verifier(fs, state, lastResult);
           if (pass) {
             updated[obj.id] = true;
             hasChanges = true;
@@ -86,21 +86,27 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
         onCompleteModule?.(module.id);
       }
     }
-  }, [fs, state, lastExecutedCommand, module]);
+  }, [fs, state, lastResult, module]);
 
   const handleExecuteCommand = (rawCmd: string) => {
-    setLastExecutedCommand(rawCmd);
-
     if (activeShell === 'bash') {
       const res = executeLinuxLine(rawCmd, cwd, fs, state);
       setFs(res.newFs);
       setState(res.newState);
       setCwd(res.newCwd);
 
+      const ctx: CommandContext = {
+        command: rawCmd,
+        exitCode: res.exitCode,
+        stdout: res.stdout,
+      };
+      setLastResult(ctx);
+
       const newItem: HistoryItem = {
         id: Math.random().toString(),
         command: rawCmd,
-        output: res.stdout || res.stderr,
+        output: [res.stdout, res.stderr].filter(Boolean).join('\n'),
+        errorOutput: res.stderr || undefined,
         isError: res.exitCode !== 0,
         timestamp: new Date().toLocaleTimeString(),
         cwd: res.newCwd,
@@ -115,10 +121,18 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
       setCwd(res.newCwd);
       setIsDiskpartActive(!!res.diskpartActive);
 
+      const ctx: CommandContext = {
+        command: rawCmd,
+        exitCode: res.exitCode,
+        stdout: res.stdout,
+      };
+      setLastResult(ctx);
+
       const newItem: HistoryItem = {
         id: Math.random().toString(),
         command: rawCmd,
-        output: res.stdout || res.stderr,
+        output: [res.stdout, res.stderr].filter(Boolean).join('\r\n'),
+        errorOutput: res.stderr || undefined,
         isError: res.exitCode !== 0,
         timestamp: new Date().toLocaleTimeString(),
         cwd: res.newCwd,
@@ -135,7 +149,7 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
     setHistory([]);
     setIsDiskpartActive(false);
     setCompletedObjectives({});
-    setLastExecutedCommand('');
+    setLastResult(undefined);
   };
 
   const totalObjectives = module.objectives.length;

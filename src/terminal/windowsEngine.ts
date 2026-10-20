@@ -535,6 +535,32 @@ function executeSingleCmdCommand(
       return { stdout: `Active Connections\n\n${header}\n${rows.join('\n')}`, stderr: '', exitCode: 0, newCwd: activeCwd, newFs: activeFs, newState: activeState };
     }
 
+    case 'route': {
+      if (args[0]?.toLowerCase() === 'print') {
+        const out = [
+          '===========================================================================',
+          'Interface List',
+          '  3...00 50 56 a1 2b 3c ......Intel(R) 82574L Gigabit Network Connection',
+          '  1...........................Software Loopback Interface 1',
+          '===========================================================================',
+          '',
+          'IPv4 Route Table',
+          '===========================================================================',
+          'Active Routes:',
+          'Network Destination        Netmask          Gateway       Interface  Metric',
+          '          0.0.0.0          0.0.0.0      192.168.1.1    192.168.1.145      25',
+          '        127.0.0.0        255.0.0.0         On-link         127.0.0.1     331',
+          '      192.168.1.0    255.255.255.0         On-link     192.168.1.145     281',
+          '    192.168.1.145  255.255.255.255         On-link     192.168.1.145     281',
+          '===========================================================================',
+          'Persistent Routes:',
+          '  None',
+        ].join('\r\n');
+        return { stdout: out, stderr: '', exitCode: 0, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+      }
+      return { stdout: 'Manipulates network routing tables.\nROUTE [-f] [-p] [-4|-6] command [destination] [MASK netmask] [gateway] [METRIC metric] [IF interface]', stderr: '', exitCode: 0, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+    }
+
     case 'tasklist': {
       const header = 'Image Name                     PID Session Name        Session#    Mem Usage\n========================= ======== ================ =========== ============';
       const rows = [
@@ -721,7 +747,36 @@ function executeSingleCmdCommand(
     }
   };
 
-  return runInner();
+  let res = runInner();
+  const er = parsed.stderrRedirect;
+  if (er) {
+    if (er.type === 'merge') {
+      res = { ...res, stdout: [res.stdout, res.stderr].filter(Boolean).join('\r\n'), stderr: '' };
+    } else if (er.target.toLowerCase() === 'nul') {
+      res = { ...res, stderr: '' };
+    } else {
+      writeWindowsFile(res.newFs, normalizePath(er.target, res.newCwd, true), res.stderr, er.type === '>>');
+      res = { ...res, stderr: '' };
+    }
+  }
+
+  return res;
+}
+
+function writeWindowsFile(fs: FileNode, targetPath: string, content: string, append: boolean) {
+  const norm = targetPath.toLowerCase();
+  if (norm === 'nul' || norm.endsWith('\\nul') || norm.endsWith('/nul')) return;
+  const existing = getNodeAtPath(fs, targetPath, true);
+  if (existing && existing.type === 'file') {
+    if (append) {
+      existing.content = (existing.content || '') + (existing.content ? '\r\n' : '') + content;
+    } else {
+      existing.content = content;
+    }
+    existing.updatedAt = new Date().toISOString();
+  } else {
+    createNode(fs, targetPath, 'file', content, true, 'Administrator', 'Administrators', 644);
+  }
 }
 
 function executeCmdPipeline(
@@ -764,17 +819,12 @@ function executeCmdPipeline(
 
     // Handle stage redirection if last stage has > or >>
     if (isLast && stage.redirect && exitCode === 0) {
-      const targetPath = normalizePath(stage.redirect.target, currentCwd, true);
-      const existing = getNodeAtPath(activeFs, targetPath, true);
-      if (existing && existing.type === 'file') {
-        if (stage.redirect.type === '>>') {
-          existing.content = (existing.content || '') + (existing.content ? '\r\n' : '') + currentInput;
-        } else {
-          existing.content = currentInput;
-        }
-        existing.updatedAt = new Date().toISOString();
+      const targetLower = stage.redirect.target.toLowerCase();
+      if (targetLower === 'nul') {
+        currentInput = '';
       } else {
-        createNode(activeFs, targetPath, 'file', currentInput, true, 'Administrator', 'Administrators', 644);
+        const targetPath = normalizePath(stage.redirect.target, currentCwd, true);
+        writeWindowsFile(activeFs, targetPath, currentInput, stage.redirect.type === '>>');
       }
       return {
         stdout: '',
@@ -806,6 +856,43 @@ export function executeCmdCommand(
   return executeCmdPipeline(rawInput, cwd, fs, state);
 }
 
+function applyWhereObjectFilter<T extends Record<string, any>>(items: T[], rawWhereCmd: string): { items: T[]; error?: string } {
+  const trimmed = rawWhereCmd.trim();
+  const afterCmd = trimmed.replace(/^(Where-Object|where|\?)\s*/i, '').trim();
+
+  // Pattern 1: { $_.Prop -op 'Val' }
+  const blockMatch = afterCmd.match(/^\{\s*\$_\.([a-zA-Z0-9_]+)\s+(-eq|-ne|-like)\s+['"]?([^'"}]+)['"]?\s*\}$/i);
+  // Pattern 2: Prop -op Val
+  const simpleMatch = afterCmd.match(/^([a-zA-Z0-9_]+)\s+(-eq|-ne|-like)\s+['"]?([^'"]+)['"]?$/i);
+
+  const match = blockMatch || simpleMatch;
+  if (!match) {
+    return { items: [], error: 'Where-Object: filtering is not supported in this sim' };
+  }
+
+  const propName = match[1];
+  const op = match[2].toLowerCase();
+  const targetVal = match[3].trim().toLowerCase();
+
+  const filtered = items.filter(item => {
+    const key = Object.keys(item).find(k => k.toLowerCase() === propName.toLowerCase());
+    if (!key) return false;
+    const val = String(item[key]).toLowerCase();
+
+    if (op === '-eq') {
+      return val === targetVal;
+    } else if (op === '-ne') {
+      return val !== targetVal;
+    } else if (op === '-like') {
+      const regexStr = '^' + targetVal.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$';
+      return new RegExp(regexStr, 'i').test(val);
+    }
+    return false;
+  });
+
+  return { items: filtered };
+}
+
 function executePowerShellCommand(
   rawInput: string,
   cwd: string,
@@ -816,6 +903,41 @@ function executePowerShellCommand(
   let activeFs = cloneFileSystem(fs);
   let activeState = { ...state };
   let activeCwd = cwd;
+
+  // Check for piped PowerShell commands
+  const stages = parsePipelinedLine(line);
+  if (stages.length > 1) {
+    const s0 = stages[0].raw.trim();
+    const s1 = stages[1].raw.trim();
+
+    if (/^Get-Service/i.test(s0)) {
+      if (/^(Where-Object|where|\?)/i.test(stages[1].name)) {
+        const res = applyWhereObjectFilter(activeState.services, s1);
+        if (res.error) {
+          return { stdout: '', stderr: res.error, exitCode: 1, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+        }
+        const header = 'Status   Name               DisplayName\n------   ----               -----------';
+        const rows = res.items.map(s => `${s.status.padEnd(8, ' ')} ${s.name.padEnd(18, ' ')} ${s.displayName}`);
+        return { stdout: `${header}\n${rows.join('\n')}`, stderr: '', exitCode: 0, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+      }
+      return { stdout: '', stderr: `${stages[1].name}: pipeline filter not supported in this sim`, exitCode: 1, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+    }
+
+    if (/^Get-Process/i.test(s0)) {
+      if (/^(Where-Object|where|\?)/i.test(stages[1].name)) {
+        const res = applyWhereObjectFilter(activeState.processes, s1);
+        if (res.error) {
+          return { stdout: '', stderr: res.error, exitCode: 1, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+        }
+        const header = ' NPM(K)    PM(M)      WS(M)     CPU(s)      Id  SI ProcessName\n ------    -----      -----     ------      --  -- -----------';
+        const rows = res.items.map(p => {
+          return `     10     ${p.mem.toFixed(2).padStart(5, ' ')}      ${(p.mem * 2).toFixed(2).padStart(5, ' ')}       ${p.cpu.toFixed(2).padStart(5, ' ')}    ${p.pid.toString().padStart(4, ' ')}   1 ${p.command}`;
+        });
+        return { stdout: `${header}\n${rows.join('\n')}`, stderr: '', exitCode: 0, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+      }
+      return { stdout: '', stderr: `${stages[1].name}: pipeline filter not supported in this sim`, exitCode: 1, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+    }
+  }
 
   // Check for Test-NetConnection
   if (/^(Test-NetConnection|tnc)/i.test(line)) {

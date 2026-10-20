@@ -263,13 +263,37 @@ function executeSingleLinuxCommand(
   const effGroup = isRoot ? 'root' : activeState.currentGroup;
   const effGroups = getUserGroups(activeFs, effUser, effGroup);
 
+  const ok = (stdout = ''): LinuxExecutionResult => ({
+    stdout,
+    stderr: '',
+    exitCode: 0,
+    newCwd: activeCwd,
+    newFs: activeFs,
+    newState: activeState,
+  });
+
+  const fail = (stderr: string, exitCode = 1): LinuxExecutionResult => ({
+    stdout: '',
+    stderr,
+    exitCode,
+    newCwd: activeCwd,
+    newFs: activeFs,
+    newState: activeState,
+  });
+
   // Built-in commands
   switch (name) {
+    case 'true':
+      return ok();
+
+    case 'false':
+      return fail('', 1);
+
     case 'su': {
       activeState.currentUser = 'root';
       activeState.currentGroup = 'root';
       activeState.isRootOrAdmin = true;
-      return { stdout: '', stderr: '', exitCode: 0, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+      return ok();
     }
 
     case 'exit': {
@@ -411,10 +435,11 @@ function executeSingleLinuxCommand(
 
       if (node.type === 'file') {
         if (showLong) {
-          const perm = node.permissions;
-          return { stdout: `${perm} 1 ${node.owner} ${node.group} ${node.size || 0} Oct 19 10:00 ${node.name}`, stderr: '', exitCode: 0, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+          const perm = '-' + node.permissions.replace(/^[d-]/, '');
+          const fileSize = node.size ?? (node.content?.length ?? 0);
+          return ok(`${perm} 1 ${node.owner} ${node.group} ${fileSize} Oct 19 10:00 ${node.name}`);
         }
-        return { stdout: node.name, stderr: '', exitCode: 0, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+        return ok(node.name);
       }
 
       const children = node.children || {};
@@ -427,7 +452,7 @@ function executeSingleLinuxCommand(
       keys.sort();
 
       if (!showLong) {
-        return { stdout: keys.join('  '), stderr: '', exitCode: 0, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+        return ok(keys.join('  '));
       }
 
       const lines = keys.map(k => {
@@ -437,11 +462,12 @@ function executeSingleLinuxCommand(
         const child = children[k];
         const prefix = child.type === 'directory' ? 'd' : '-';
         const perm = prefix + child.permissions.replace(/^[d-]/, '');
-        const size = (child.size || 4096).toString().padStart(6, ' ');
+        const sizeVal = child.type === 'directory' ? (child.size || 4096) : (child.size ?? (child.content?.length ?? 0));
+        const size = sizeVal.toString().padStart(6, ' ');
         return `${perm} 1 ${child.owner.padEnd(8, ' ')} ${child.group.padEnd(8, ' ')} ${size} Oct 19 10:00 ${child.name}`;
       });
 
-      return { stdout: lines.join('\n'), stderr: '', exitCode: 0, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+      return ok(lines.join('\n'));
     }
 
     case 'cat': {
@@ -620,32 +646,51 @@ function executeSingleLinuxCommand(
     }
 
     case 'chmod': {
-      if (args.length < 2) {
-        return { stdout: '', stderr: 'chmod: missing operand', exitCode: 1, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+      const OPTIONS = new Set(['-R', '-v', '-c', '-f', '--recursive', '--verbose']);
+      const recursive = args.includes('-R') || args.includes('--recursive');
+      const rest = args.filter(a => !OPTIONS.has(a));
+      if (rest.length === 0) {
+        return fail('chmod: missing operand');
       }
-      const modeArg = args[0];
-      const targetPaths = args.slice(1).filter(a => !a.startsWith('-'));
+      const modeArg = rest[0];
+      const targetPaths = rest.slice(1);
+      if (targetPaths.length === 0) {
+        return fail(`chmod: missing operand after '${modeArg}'`);
+      }
 
       for (const p of targetPaths) {
         const resolved = normalizePath(p, activeCwd, false);
         const node = getNodeAtPath(activeFs, resolved, false);
         if (!node) {
-          return { stdout: '', stderr: `chmod: cannot access '${p}': No such file or directory`, exitCode: 1, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+          return fail(`chmod: cannot access '${p}': No such file or directory`, 1);
         }
 
-        // Only file owner or root can change mode in Linux
+        const applyTree = (n: FileNode): boolean => {
+          if (!isRoot && effUser !== n.owner) {
+            return false;
+          }
+          const result = applyChmod(n.permissions, modeArg);
+          if (!result) return false;
+          n.permissions = result.sym;
+          n.octal = result.octal;
+          if (recursive && n.children) {
+            for (const child of Object.values(n.children)) {
+              if (!applyTree(child)) return false;
+            }
+          }
+          return true;
+        };
+
         if (!isRoot && effUser !== node.owner) {
-          return { stdout: '', stderr: `chmod: changing permissions of '${p}': Operation not permitted`, exitCode: 1, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+          return fail(`chmod: changing permissions of '${p}': Operation not permitted`, 1);
         }
 
-        const result = applyChmod(node.permissions, modeArg);
-        if (!result) {
-          return { stdout: '', stderr: `chmod: invalid mode: '${modeArg}'`, exitCode: 1, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+        const valid = applyTree(node);
+        if (!valid) {
+          return fail(`chmod: invalid mode: '${modeArg}'`, 1);
         }
-        node.permissions = result.sym;
-        node.octal = result.octal;
       }
-      return { stdout: '', stderr: '', exitCode: 0, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+      return ok();
     }
 
     case 'tee': {
@@ -765,7 +810,6 @@ function executeSingleLinuxCommand(
     }
 
     case 'awk': {
-      // Basic awk field extractor e.g. awk '{print $1}' or awk -F: '{print $1}'
       let delimiter = /\s+/;
       let expr = '';
       for (let i = 0; i < args.length; i++) {
@@ -779,16 +823,29 @@ function executeSingleLinuxCommand(
         }
       }
 
-      const match = expr.match(/\$([0-9]+)/);
-      const fieldIdx = match ? parseInt(match[1], 10) : 1;
+      const resolveField = (fields: string[], token: string): string => {
+        if (token === 'NF') return fields[fields.length - 1] ?? '';
+        const m = token.match(/^\(NF-(\d+)\)$/);
+        if (m) return fields[fields.length - 1 - Number(m[1])] ?? '';
+        const n = Number(token);
+        return n === 0 ? fields.join(' ') : fields[n - 1] ?? '';
+      };
 
+      const tokens = [...expr.matchAll(/\$(NF|\(NF-\d+\)|\d+)/g)].map(t => t[1]);
       const lines = stdin.split('\n').filter(Boolean);
-      const out = lines.map(line => {
-        const parts = line.split(delimiter);
-        return parts[fieldIdx - 1] || '';
-      });
+      const isWhitespace = delimiter.source === '\\s+';
+      const out: string[] = [];
 
-      return { stdout: out.join('\n'), stderr: '', exitCode: 0, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+      for (const line of lines) {
+        const fields = isWhitespace ? line.trim().split(delimiter) : line.split(delimiter);
+        if (tokens.length === 0) {
+          out.push(line);
+        } else {
+          out.push(tokens.map(t => resolveField(fields, t)).join(' '));
+        }
+      }
+
+      return ok(out.join('\n'));
     }
 
     case 'sed': {
@@ -1041,16 +1098,88 @@ function executeSingleLinuxCommand(
     }
 
     case 'usermod': {
-      if (!isRoot) {
-        return { stdout: '', stderr: 'usermod: Permission denied.', exitCode: 1, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+      if (!isRoot) return fail('usermod: Permission denied.');
+      const gi = args.findIndex(a => a === '-aG' || a === '-G');
+      const user = args[args.length - 1];
+      if (gi === -1 || !args[gi + 1] || user === args[gi + 1]) {
+        return fail('Usage: usermod [-a] -G GROUP[,GROUP] LOGIN', 2);
       }
-      // Handles usermod -aG developers sarah
-      return { stdout: '', stderr: '', exitCode: 0, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+      const append = args[gi] === '-aG' || args.includes('-a');
+      const wanted = args[gi + 1].split(',').filter(Boolean);
+      const groupFile = getNodeAtPath(activeFs, '/etc/group', false);
+      if (!groupFile) return fail('usermod: /etc/group not found', 1);
+      const lines = (groupFile.content ?? '').split('\n');
+      const missing = wanted.find(g => !lines.some(l => l.startsWith(g + ':')));
+      if (missing) return fail(`usermod: group '${missing}' does not exist`, 6);
+      groupFile.content = lines.map(line => {
+        const parts = line.split(':');
+        if (parts.length < 4) return line;
+        let members = parts[3] ? parts[3].split(',').filter(Boolean) : [];
+        if (wanted.includes(parts[0])) {
+          if (!members.includes(user)) members.push(user);
+        } else if (!append) {
+          members = members.filter(m => m !== user);
+        }
+        parts[3] = members.join(',');
+        return parts.join(':');
+      }).join('\n');
+      return ok();
     }
 
     case 'tar': {
-      // Handles tar -czvf /tmp/backup.tar.gz file or tar -tf
-      return { stdout: 'a file.txt\na scripts/backup.sh', stderr: '', exitCode: 0, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+      const hasC = args.some(a => a.includes('c'));
+      const hasX = args.some(a => a.includes('x'));
+      const hasT = args.some(a => a.includes('t'));
+      const hasV = args.some(a => a.includes('v'));
+
+      if (!hasC && !hasX && !hasT) {
+        return fail('tar: Must specify one of -c, -r, -t, -u, -x', 2);
+      }
+
+      let fIndex = -1;
+      let archiveName = '';
+      for (let i = 0; i < args.length; i++) {
+        const a = args[i];
+        if (a === '-f' || a === 'f') {
+          fIndex = i;
+          archiveName = args[i + 1] || '';
+          break;
+        } else if (a.startsWith('-') && a.includes('f')) {
+          fIndex = i;
+          archiveName = args[i + 1] || '';
+          break;
+        }
+      }
+
+      if (hasC) {
+        const nonFlags = args.filter((a, idx) => !a.startsWith('-') && idx !== fIndex + 1);
+        if (!archiveName && nonFlags.length > 0) {
+          archiveName = nonFlags[0];
+          nonFlags.shift();
+        }
+        if (!archiveName) {
+          return fail('tar: Cowardly refusing to create an empty archive', 2);
+        }
+        const resolved = normalizePath(archiveName, activeCwd, false);
+        createNode(activeFs, resolved, 'file', nonFlags.join('\n'), false, effUser, effGroup, 644);
+        const out = hasV ? nonFlags.map(f => `a ${f}`).join('\n') : '';
+        return ok(out);
+      }
+
+      if (hasT || hasX) {
+        const target = archiveName || args.find(a => !a.startsWith('-'));
+        if (target) {
+          const resolved = normalizePath(target, activeCwd, false);
+          const node = getNodeAtPath(activeFs, resolved, false);
+          if (!node) {
+            return fail(`tar: ${target}: Cannot open: No such file or directory`, 2);
+          }
+          return ok(node.content || 'notes.txt\nscripts/backup.sh');
+        }
+        return ok('notes.txt\nscripts/backup.sh');
+      }
+
+      return ok();
     }
 
     case 'man': {
