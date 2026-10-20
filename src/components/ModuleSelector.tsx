@@ -29,8 +29,9 @@ export const ModuleSelector: React.FC<ModuleSelectorProps> = ({ track, modules, 
   const labsDone = modules.filter(m => doneCount(m) === m.objectives.length).length;
   const tasksDone = modules.reduce((sum, mod) => sum + doneCount(mod), 0);
   const tasksTotal = modules.reduce((sum, mod) => sum + mod.objectives.length, 0);
+  const allLabsDone = modules.length > 0 && labsDone === modules.length;
   const hasProgress = modules.some(m => doneCount(m) > 0);
-  const nextModule = modules.find(m => doneCount(m) < m.objectives.length) ?? modules[0];
+  const nextModule = modules.find(m => doneCount(m) < m.objectives.length) ?? (allLabsDone ? modules[0] : null);
   const nextModuleName = nextModule ? `${topicLabel(nextModule)} ${nextModule.title}` : null;
 
   const handleReset = () => {
@@ -50,7 +51,7 @@ export const ModuleSelector: React.FC<ModuleSelectorProps> = ({ track, modules, 
             role="progressbar"
             aria-label={`${TRACK_NAMES[track]} task progress`}
             aria-valuemin={0}
-            aria-valuemax={tasksTotal}
+            aria-valuemax={tasksTotal || 1}
             aria-valuenow={tasksDone}
             className="h-2 overflow-hidden rounded-full bg-surface-2"
           >
@@ -64,15 +65,15 @@ export const ModuleSelector: React.FC<ModuleSelectorProps> = ({ track, modules, 
             <span aria-hidden="true">·</span>
             <span>{labsDone} of {modules.length} labs complete</span>
             <span className="text-subtle">Saved in this browser</span>
-          {hasProgress && (
-            <button
-              type="button"
-              onClick={handleReset}
-              className="text-sm font-medium text-muted underline underline-offset-2 decoration-line-strong hover:text-danger hover:decoration-danger rounded-sm"
-            >
-              Reset progress
-            </button>
-          )}
+            {hasProgress && (
+              <button
+                type="button"
+                onClick={handleReset}
+                className="text-sm font-medium text-muted underline underline-offset-2 decoration-line-strong hover:text-danger hover:decoration-danger rounded-sm"
+              >
+                Reset progress
+              </button>
+            )}
           </div>
         </div>
         {nextModule && (
@@ -80,7 +81,7 @@ export const ModuleSelector: React.FC<ModuleSelectorProps> = ({ track, modules, 
             href={routeHref({ section: track, moduleId: nextModule.id })}
             className="mt-5 inline-flex min-h-11 items-center gap-2 rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-fg hover:opacity-90"
           >
-            <span>{hasProgress ? 'Continue' : 'Start your first lab'}: {nextModuleName}</span>
+            <span>{allLabsDone ? 'Review' : hasProgress ? 'Continue' : 'Start your first lab'}: {nextModuleName}</span>
             <ArrowRight className="size-4 shrink-0" aria-hidden="true" />
           </a>
         )}

@@ -19,85 +19,93 @@ export const SimulatorsHub: React.FC<SimulatorsHubProps> = ({
   const [activeSim, setActiveSim] = useState<'ad' | 'gpo' | 'disk' | 'network' | 'chmod'>('ad');
 
   return (
-    <div className="flex flex-col h-[calc(100vh-65px)] bg-slate-950 overflow-hidden font-sans">
+    <div className="flex flex-col h-full min-h-0 bg-bg overflow-hidden font-sans">
       {/* Simulators Navigation Header */}
-      <div className="px-6 py-3.5 bg-slate-900/60 border-b border-slate-800 shrink-0 flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="text-base font-bold text-white tracking-tight flex items-center gap-2">
-            <Layers className="w-4 h-4 text-emerald-400" />
-            <span>Interactive System Configuration Simulators</span>
+      <div className="px-4 sm:px-6 py-4 bg-surface border-b border-line shrink-0 flex flex-wrap items-center justify-between gap-4">
+        <div className="min-w-0">
+          <h1 className="text-xl sm:text-2xl font-semibold text-text flex items-center gap-2">
+            <Layers className="w-5 h-5 text-accent shrink-0" aria-hidden="true" />
+            <span>System simulators</span>
           </h1>
-          <p className="text-[11px] text-slate-400 mt-0.5">
-            Hands-on visual tools modeled after real enterprise administrative consoles and operating system kernel models.
+          <p className="text-sm text-muted mt-1 max-w-prose">
+            Explore system settings and see how your changes affect a practice machine.
           </p>
         </div>
 
-        {/* 5 Simulator Selectors */}
-        <div className="flex items-center gap-1.5 p-1 bg-slate-900 rounded-lg border border-slate-800 text-xs font-medium overflow-x-auto">
+        <div className="flex max-w-full items-center gap-1 p-1 bg-bg rounded-md border border-line text-sm overflow-x-auto" role="group" aria-label="Choose a simulator">
           <button
+            type="button"
+            aria-pressed={activeSim === 'ad'}
             onClick={() => setActiveSim('ad')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-colors whitespace-nowrap ${
+            className={`flex items-center gap-1.5 px-3 min-h-10 rounded-sm transition-colors whitespace-nowrap ${
               activeSim === 'ad'
-                ? 'bg-blue-600 text-white font-semibold shadow-sm'
-                : 'text-slate-400 hover:text-slate-200'
+                ? 'bg-accent-soft text-accent font-medium'
+                : 'text-muted hover:text-text'
             }`}
           >
-            <Users className="w-3.5 h-3.5" />
-            <span>Active Directory (ADUC)</span>
+            <Users className="w-4 h-4" aria-hidden="true" />
+            <span>Active Directory</span>
           </button>
 
           <button
+            type="button"
+            aria-pressed={activeSim === 'gpo'}
             onClick={() => setActiveSim('gpo')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-colors whitespace-nowrap ${
+            className={`flex items-center gap-1.5 px-3 min-h-10 rounded-sm transition-colors whitespace-nowrap ${
               activeSim === 'gpo'
-                ? 'bg-cyan-600 text-white font-semibold shadow-sm'
-                : 'text-slate-400 hover:text-slate-200'
+                ? 'bg-accent-soft text-accent font-medium'
+                : 'text-muted hover:text-text'
             }`}
           >
-            <Settings className="w-3.5 h-3.5" />
-            <span>Group Policy (GPMC)</span>
+            <Settings className="w-4 h-4" aria-hidden="true" />
+            <span>Group Policy</span>
           </button>
 
           <button
+            type="button"
+            aria-pressed={activeSim === 'disk'}
             onClick={() => setActiveSim('disk')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-colors whitespace-nowrap ${
+            className={`flex items-center gap-1.5 px-3 min-h-10 rounded-sm transition-colors whitespace-nowrap ${
               activeSim === 'disk'
-                ? 'bg-emerald-600 text-white font-semibold shadow-sm'
-                : 'text-slate-400 hover:text-slate-200'
+                ? 'bg-accent-soft text-accent font-medium'
+                : 'text-muted hover:text-text'
             }`}
           >
-            <HardDrive className="w-3.5 h-3.5" />
+            <HardDrive className="w-4 h-4" aria-hidden="true" />
             <span>Disk Management</span>
           </button>
 
           <button
+            type="button"
+            aria-pressed={activeSim === 'network'}
             onClick={() => setActiveSim('network')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-colors whitespace-nowrap ${
+            className={`flex items-center gap-1.5 px-3 min-h-10 rounded-sm transition-colors whitespace-nowrap ${
               activeSim === 'network'
-                ? 'bg-purple-600 text-white font-semibold shadow-sm'
-                : 'text-slate-400 hover:text-slate-200'
+                ? 'bg-accent-soft text-accent font-medium'
+                : 'text-muted hover:text-text'
             }`}
           >
-            <Radio className="w-3.5 h-3.5" />
-            <span>Network Topology</span>
+            <Radio className="w-4 h-4" aria-hidden="true" />
+            <span>Network</span>
           </button>
 
           <button
+            type="button"
+            aria-pressed={activeSim === 'chmod'}
             onClick={() => setActiveSim('chmod')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-colors whitespace-nowrap ${
+            className={`flex items-center gap-1.5 px-3 min-h-10 rounded-sm transition-colors whitespace-nowrap ${
               activeSim === 'chmod'
-                ? 'bg-amber-600 text-white font-semibold shadow-sm'
-                : 'text-slate-400 hover:text-slate-200'
+                ? 'bg-accent-soft text-accent font-medium'
+                : 'text-muted hover:text-text'
             }`}
           >
-            <Key className="w-3.5 h-3.5" />
-            <span>Linux Permissions Matrix</span>
+            <Key className="w-4 h-4" aria-hidden="true" />
+            <span>Linux permissions</span>
           </button>
         </div>
       </div>
 
-      {/* Main Visualizer Area */}
-      <div className="flex-1 p-4 overflow-hidden">
+      <div className="flex-1 min-h-0 p-3 sm:p-4 overflow-hidden">
         {activeSim === 'ad' && (
           <ActiveDirectorySim systemState={systemState} onUpdateState={onUpdateState} />
         )}
