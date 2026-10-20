@@ -9,7 +9,12 @@
     <meta property="og:description" content="Interactive terminal simulations and exam lab modules for LPI Linux certifications and CompTIA Windows Performance-Based Questions with live Active Directory, Group Policy, PowerShell, and network troubleshooting." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="theme-color" content="#090d16" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f6f6f3" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#111317" />
+    <script>
+      // Apply the saved theme before first paint to avoid a flash. Values: "light" | "dark"; absent = follow OS.
+      try { var t = localStorage.getItem('certsim:theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) {}
+    </script>
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="icon" type="image/svg+xml" href="./icons/icon.svg" />
     <link rel="apple-touch-icon" href="./icons/icon-180.png" />
@@ -17,7 +22,7 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   </head>
-  <body class="bg-slate-950 text-slate-100 antialiased selection:bg-cyan-500/30 selection:text-cyan-200">
+  <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
