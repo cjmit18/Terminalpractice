@@ -313,7 +313,9 @@ function LabBar({ track, module, modules }: LabBarProps) {
             /
           </li>
           <li aria-current="page" className="min-w-0 truncate font-medium text-text">
-            <span className="tabular-nums">{topicLabel(module)}</span> {module.title}
+            {/* The full title is the page heading right below; phones show only the topic number here */}
+            <span className="tabular-nums">{topicLabel(module)}</span>
+            <span className="hidden sm:inline"> {module.title}</span>
           </li>
         </ol>
       </nav>
