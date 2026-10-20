@@ -3,23 +3,41 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
-import { Header, AppTab } from './components/Header';
+import React, { Suspense, lazy, useEffect, useRef, useState } from 'react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { BottomNav, Header } from './components/Header';
 import { ModuleSelector } from './components/ModuleSelector';
 import { ModuleRunner } from './components/ModuleRunner';
-import { SimulatorsHub } from './components/SimulatorsHub';
-import { SandboxMode } from './components/SandboxMode';
-import { CommandEncyclopedia } from './components/CommandEncyclopedia';
-import { LPI_MODULES } from './data/lpiModules';
-import { WINDOWS_PBQS } from './data/windowsPbqs';
 import { ExamModule } from './types/modules';
 import { SystemState } from './types/terminal';
-import { ArrowLeft } from 'lucide-react';
+import { Route, Section, TrackSection, isTrackSection, replaceRoute, routeHref, useHashRoute } from './lib/router';
+import { Progress, countDone, loadProgress, saveProgress } from './lib/progress';
+import { useTheme } from './lib/theme';
+import { ALL_MODULES, TRACK_MODULES, TRACK_NAMES, topicLabel } from './lib/modules';
+
+// Pages that are not needed for the first screen load on demand.
+const SimulatorsHub = lazy(() => import('./components/SimulatorsHub').then(m => ({ default: m.SimulatorsHub })));
+const SandboxMode = lazy(() => import('./components/SandboxMode').then(m => ({ default: m.SandboxMode })));
+const CommandEncyclopedia = lazy(() =>
+  import('./components/CommandEncyclopedia').then(m => ({ default: m.CommandEncyclopedia })),
+);
+
+const PAGE_TITLES: Record<Section, string> = {
+  linux: 'Linux labs',
+  windows: 'Windows labs',
+  simulators: 'Simulators',
+  sandbox: 'Sandbox',
+  reference: 'Reference',
+};
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<AppTab>('lpi');
-  const [selectedModule, setSelectedModule] = useState<ExamModule | null>(LPI_MODULES[0]);
-  const [completedModuleIds, setCompletedModuleIds] = useState<string[]>([]);
+  const route = useHashRoute();
+  const [theme, setTheme] = useTheme();
+  // moduleId -> completed objective ids, saved in localStorage
+  const [progress, setProgress] = useState<Progress>(() => loadProgress(ALL_MODULES));
+  // The lab last open in each track, so coming back to a track returns you to it
+  const [lastLab, setLastLab] = useState<Record<TrackSection, string | null>>({ linux: null, windows: null });
+  const mainRef = useRef<HTMLElement>(null);
 
   // Shared state for the simulators hub
   const [sharedSimState, setSharedSimState] = useState<SystemState>({
@@ -143,186 +161,201 @@ export default function App() {
     envVars: { COMPUTERNAME: 'WIN-CLIENT01', USERNAME: 'Administrator' },
   });
 
-  const allModules = [...LPI_MODULES, ...WINDOWS_PBQS];
-  const totalObjectivesCount = allModules.reduce((acc, m) => acc + m.objectives.length, 0);
+  const track: TrackSection | null = isTrackSection(route.section) ? route.section : null;
+  const moduleId = 'moduleId' in route ? route.moduleId : null;
+  const trackModules = track ? TRACK_MODULES[track] : [];
+  const activeModule = moduleId ? trackModules.find(m => m.id === moduleId) ?? null : null;
+  const routeKey = routeHref(route);
 
-  const handleCompleteModule = (moduleId: string) => {
-    if (!completedModuleIds.includes(moduleId)) {
-      setCompletedModuleIds(prev => [...prev, moduleId]);
-    }
+  // A lab id that does not exist (old link, typo) falls back to the track's catalog
+  useEffect(() => {
+    if (track && moduleId && !activeModule) replaceRoute({ section: track, moduleId: null });
+  }, [track, moduleId, activeModule]);
+
+  // Remember where you were in each track
+  useEffect(() => {
+    if (!track || (moduleId && !activeModule)) return;
+    setLastLab(prev => (prev[track] === moduleId ? prev : { ...prev, [track]: moduleId }));
+  }, [track, moduleId, activeModule]);
+
+  // New page: start at the top, and name it in the tab title
+  useEffect(() => {
+    mainRef.current?.scrollTo({ top: 0 });
+    const parts = [activeModule ? `${topicLabel(activeModule)} ${activeModule.title}` : null, PAGE_TITLES[route.section], 'Terminus CertSim'];
+    document.title = parts.filter(Boolean).join(' · ');
+  }, [routeKey, activeModule, route.section]);
+
+  useEffect(() => {
+    saveProgress(progress);
+  }, [progress]);
+
+  const handleObjectiveComplete = (moduleId: string, objectiveId: string) => {
+    setProgress(prev => {
+      const done = prev[moduleId] ?? [];
+      return done.includes(objectiveId) ? prev : { ...prev, [moduleId]: [...done, objectiveId] };
+    });
   };
 
-  const handleNavTab = (tab: AppTab) => {
-    setActiveTab(tab);
-    if (tab === 'lpi') {
-      setSelectedModule(LPI_MODULES[0]);
-    } else if (tab === 'comptia') {
-      setSelectedModule(WINDOWS_PBQS[0]);
-    } else {
-      setSelectedModule(null);
-    }
+  const resetTrackProgress = (t: TrackSection) => {
+    setProgress(prev => {
+      const next = { ...prev };
+      for (const m of TRACK_MODULES[t]) delete next[m.id];
+      return next;
+    });
   };
+
+  const { done: tasksDone, total: tasksTotal } = countDone(progress, ALL_MODULES);
+
+  // Nav links. A track link takes you back to the lab you last had open there;
+  // from inside that track it goes to the catalog.
+  const trackHref = (t: TrackSection) =>
+    routeHref({ section: t, moduleId: track === t ? null : lastLab[t] });
+  const hrefs: Record<Section, string> = {
+    linux: trackHref('linux'),
+    windows: trackHref('windows'),
+    simulators: routeHref({ section: 'simulators' }),
+    sandbox: routeHref({ section: 'sandbox' }),
+    reference: routeHref({ section: 'reference' }),
+  };
+
+  const loading = <p className="px-4 sm:px-6 py-8 text-sm text-muted">Loading…</p>;
 
   return (
-    <div className="h-dvh bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-cyan-500/30 selection:text-cyan-200">
-      {/* Top Bar Header */}
+    <div className="h-dvh flex flex-col bg-bg text-text font-sans">
+      <a
+        href="#main"
+        onClick={e => {
+          e.preventDefault();
+          mainRef.current?.focus();
+        }}
+        className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:top-2 focus:left-2 focus:px-3 focus:py-2 focus:rounded-md focus:bg-surface focus:text-text focus:border focus:border-line"
+      >
+        Skip to content
+      </a>
+
       <Header
-        activeTab={activeTab}
-        setActiveTab={handleNavTab}
-        completedObjectivesCount={completedModuleIds.length * 3}
-        totalObjectivesCount={totalObjectivesCount}
+        current={route.section}
+        hrefs={hrefs}
+        tasksDone={tasksDone}
+        tasksTotal={tasksTotal}
+        theme={theme}
+        onThemeChange={setTheme}
       />
 
-      {/* Main Content Viewport */}
-      <main className="flex-1 min-h-0 overflow-y-auto">
-        {/* LPI Exam Modules Tab */}
-        {activeTab === 'lpi' && (
-          selectedModule ? (
-            <div className="flex flex-col h-full">
-              <div className="bg-slate-950 px-3 sm:px-6 py-2 border-b border-slate-900 flex items-center justify-between gap-3 shrink-0">
-                <button
-                  onClick={() => setSelectedModule(null)}
-                  className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors font-medium"
-                >
-                  <ArrowLeft className="w-3.5 h-3.5" />
-                  <span className="whitespace-nowrap">Back<span className="hidden sm:inline"> to LPI Modules Catalog</span></span>
-                </button>
-                <div className="flex items-center gap-2 overflow-x-auto text-xs">
-                  {LPI_MODULES.map(m => (
-                    <button
-                      key={m.id}
-                      onClick={() => setSelectedModule(m)}
-                      className={`px-2.5 py-1 rounded text-[11px] font-mono transition-colors whitespace-nowrap ${
-                        selectedModule.id === m.id
-                          ? 'bg-amber-500/20 text-amber-300 font-semibold border border-amber-500/40'
-                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
-                      }`}
-                    >
-                      {m.topicNumber}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <ModuleRunner
-                module={selectedModule}
-                onCompleteModule={handleCompleteModule}
-              />
-            </div>
-          ) : (
-            <ModuleSelector
-              track="lpi"
-              modules={LPI_MODULES}
-              completedModuleIds={completedModuleIds}
-              onSelectModule={(m) => setSelectedModule(m)}
+      <main id="main" ref={mainRef} tabIndex={-1} className="flex-1 min-h-0 overflow-y-auto focus:outline-none">
+        {track && activeModule && (
+          <div className="flex flex-col h-full">
+            <LabBar track={track} module={activeModule} modules={trackModules} />
+            <ModuleRunner
+              key={activeModule.id}
+              module={activeModule}
+              completedObjectiveIds={progress[activeModule.id] ?? []}
+              onObjectiveComplete={handleObjectiveComplete}
             />
-          )
+          </div>
         )}
 
-        {/* CompTIA Windows PBQs Tab */}
-        {activeTab === 'comptia' && (
-          selectedModule ? (
-            <div className="flex flex-col h-full">
-              <div className="bg-slate-950 px-3 sm:px-6 py-2 border-b border-slate-900 flex items-center justify-between gap-3 shrink-0">
-                <button
-                  onClick={() => setSelectedModule(null)}
-                  className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors font-medium"
-                >
-                  <ArrowLeft className="w-3.5 h-3.5" />
-                  <span className="whitespace-nowrap">Back<span className="hidden sm:inline"> to CompTIA PBQ Catalog</span></span>
-                </button>
-                <div className="flex items-center gap-2 overflow-x-auto text-xs">
-                  {WINDOWS_PBQS.map(m => (
-                    <button
-                      key={m.id}
-                      onClick={() => setSelectedModule(m)}
-                      className={`px-2.5 py-1 rounded text-[11px] font-mono transition-colors whitespace-nowrap ${
-                        selectedModule.id === m.id
-                          ? 'bg-blue-500/20 text-blue-300 font-semibold border border-blue-500/40'
-                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
-                      }`}
-                    >
-                      {m.topicNumber}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <ModuleRunner
-                module={selectedModule}
-                onCompleteModule={handleCompleteModule}
-              />
-            </div>
-          ) : (
-            <ModuleSelector
-              track="comptia-windows"
-              modules={WINDOWS_PBQS}
-              completedModuleIds={completedModuleIds}
-              onSelectModule={(m) => setSelectedModule(m)}
-            />
-          )
-        )}
-
-        {/* Interactive System Simulators Tab */}
-        {activeTab === 'simulators' && (
-          <SimulatorsHub
-            systemState={sharedSimState}
-            onUpdateState={setSharedSimState}
+        {track && !moduleId && (
+          <ModuleSelector
+            track={track}
+            modules={trackModules}
+            progress={progress}
+            onResetProgress={() => resetTrackProgress(track)}
           />
         )}
 
-        {/* Freeform Sandbox Tab */}
-        {activeTab === 'sandbox' && (
-          <SandboxMode />
+        {route.section === 'simulators' && (
+          <Suspense fallback={loading}>
+            <SimulatorsHub systemState={sharedSimState} onUpdateState={setSharedSimState} />
+          </Suspense>
         )}
 
-        {/* Command Reference Tab */}
-        {activeTab === 'reference' && (
-          <CommandEncyclopedia />
+        {route.section === 'sandbox' && (
+          <Suspense fallback={loading}>
+            <SandboxMode />
+          </Suspense>
+        )}
+
+        {route.section === 'reference' && (
+          <Suspense fallback={loading}>
+            <CommandEncyclopedia />
+          </Suspense>
         )}
       </main>
 
-      {/* Mobile Bottom Navigation Bar (Visible only on small viewports) */}
-      <nav className="md:hidden flex items-center justify-around px-2 py-2 bg-slate-900 border-t border-slate-800 shrink-0 text-[10px] font-medium z-40">
-        <button
-          onClick={() => handleNavTab('lpi')}
-          className={`flex flex-col items-center gap-1 px-2 py-1 rounded transition-colors ${
-            activeTab === 'lpi' ? 'text-amber-400 font-bold' : 'text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <span>LPI Labs</span>
-        </button>
-        <button
-          onClick={() => handleNavTab('comptia')}
-          className={`flex flex-col items-center gap-1 px-2 py-1 rounded transition-colors ${
-            activeTab === 'comptia' ? 'text-blue-400 font-bold' : 'text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <span>CompTIA</span>
-        </button>
-        <button
-          onClick={() => handleNavTab('simulators')}
-          className={`flex flex-col items-center gap-1 px-2 py-1 rounded transition-colors ${
-            activeTab === 'simulators' ? 'text-emerald-400 font-bold' : 'text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <span>Sims</span>
-        </button>
-        <button
-          onClick={() => handleNavTab('sandbox')}
-          className={`flex flex-col items-center gap-1 px-2 py-1 rounded transition-colors ${
-            activeTab === 'sandbox' ? 'text-purple-400 font-bold' : 'text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <span>Terminal</span>
-        </button>
-        <button
-          onClick={() => handleNavTab('reference')}
-          className={`flex flex-col items-center gap-1 px-2 py-1 rounded transition-colors ${
-            activeTab === 'reference' ? 'text-cyan-400 font-bold' : 'text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <span>Ref</span>
-        </button>
-      </nav>
+      <BottomNav current={route.section} hrefs={hrefs} />
     </div>
+  );
+}
+
+interface LabBarProps {
+  track: TrackSection;
+  module: ExamModule;
+  modules: ExamModule[];
+}
+
+/** Breadcrumb back to the catalog, plus links to the neighbouring labs. */
+function LabBar({ track, module, modules }: LabBarProps) {
+  const index = modules.findIndex(m => m.id === module.id);
+  const prev = index > 0 ? modules[index - 1] : null;
+  const next = index >= 0 && index < modules.length - 1 ? modules[index + 1] : null;
+
+  return (
+    <div className="shrink-0 flex items-center justify-between gap-3 min-h-11 px-4 lg:px-6 border-b border-line bg-bg">
+      <nav aria-label="Breadcrumb" className="min-w-0">
+        <ol className="flex items-center gap-2 text-sm min-w-0">
+          <li className="shrink-0">
+            <a href={routeHref({ section: track, moduleId: null })} className="text-muted hover:text-text underline-offset-2 hover:underline">
+              {TRACK_NAMES[track]}
+            </a>
+          </li>
+          <li aria-hidden="true" className="shrink-0 text-subtle">
+            /
+          </li>
+          <li aria-current="page" className="min-w-0 truncate font-medium text-text">
+            <span className="tabular-nums">{topicLabel(module)}</span> {module.title}
+          </li>
+        </ol>
+      </nav>
+
+      <div className="flex items-center gap-1 shrink-0 -mr-2">
+        <NeighbourLink track={track} target={prev} direction="prev" />
+        <NeighbourLink track={track} target={next} direction="next" />
+      </div>
+    </div>
+  );
+}
+
+function NeighbourLink({ track, target, direction }: { track: TrackSection; target: ExamModule | null; direction: 'prev' | 'next' }) {
+  const label = direction === 'prev' ? 'Previous' : 'Next';
+  const Icon = direction === 'prev' ? ChevronLeft : ChevronRight;
+  const base = 'flex items-center gap-1 h-10 sm:h-8 px-2 rounded-md text-sm font-medium';
+  const content = (
+    <>
+      {direction === 'prev' && <Icon className="w-4 h-4" aria-hidden="true" />}
+      <span className="hidden sm:inline">{label}</span>
+      {direction === 'next' && <Icon className="w-4 h-4" aria-hidden="true" />}
+    </>
+  );
+
+  if (!target) {
+    return (
+      <span aria-hidden="true" className={`${base} text-subtle opacity-50`}>
+        {content}
+      </span>
+    );
+  }
+
+  const name = `${topicLabel(target)} ${target.title}`;
+  const route: Route = { section: track, moduleId: target.id };
+  return (
+    <a
+      href={routeHref(route)}
+      aria-label={`${label} lab: ${name}`}
+      title={name}
+      className={`${base} text-muted hover:text-text hover:bg-surface-2`}
+    >
+      {content}
+    </a>
   );
 }

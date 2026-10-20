@@ -1,117 +1,150 @@
 import React from 'react';
-import { Terminal, Shield, Cpu, BookOpen, Layers } from 'lucide-react';
+import { AppWindow, BookOpen, Layers, Monitor, Moon, SquareTerminal, Sun, Terminal } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
+import { Section } from '../lib/router';
+import { ThemeChoice } from '../lib/theme';
 
-export type AppTab = 'lpi' | 'comptia' | 'simulators' | 'sandbox' | 'reference';
-
-interface HeaderProps {
-  activeTab: AppTab;
-  setActiveTab: (tab: AppTab) => void;
-  completedObjectivesCount: number;
-  totalObjectivesCount: number;
+interface NavItem {
+  section: Section;
+  label: string;
+  shortLabel: string;
+  icon: LucideIcon;
 }
 
-export const Header: React.FC<HeaderProps> = ({
-  activeTab,
-  setActiveTab,
-  completedObjectivesCount,
-  totalObjectivesCount,
-}) => {
+export const NAV_ITEMS: NavItem[] = [
+  { section: 'linux', label: 'Linux labs', shortLabel: 'Linux', icon: SquareTerminal },
+  { section: 'windows', label: 'Windows labs', shortLabel: 'Windows', icon: AppWindow },
+  { section: 'simulators', label: 'Simulators', shortLabel: 'Simulators', icon: Layers },
+  { section: 'sandbox', label: 'Sandbox', shortLabel: 'Sandbox', icon: Terminal },
+  { section: 'reference', label: 'Reference', shortLabel: 'Reference', icon: BookOpen },
+];
+
+const THEME_OPTIONS: { value: ThemeChoice; label: string; icon: LucideIcon }[] = [
+  { value: 'system', label: 'Match system theme', icon: Monitor },
+  { value: 'light', label: 'Light theme', icon: Sun },
+  { value: 'dark', label: 'Dark theme', icon: Moon },
+];
+
+interface HeaderProps {
+  current: Section;
+  hrefs: Record<Section, string>;
+  tasksDone: number;
+  tasksTotal: number;
+  theme: ThemeChoice;
+  onThemeChange: (theme: ThemeChoice) => void;
+}
+
+export const Header: React.FC<HeaderProps> = ({ current, hrefs, tasksDone, tasksTotal, theme, onThemeChange }) => {
   return (
-    <header className="flex items-center justify-between gap-3 sm:gap-8 px-3 sm:px-6 py-2.5 sm:py-3.5 bg-slate-900/90 border-b border-slate-800 backdrop-blur-md sticky top-0 z-50">
-      {/* Zone 1: Single clean brand mark */}
-      <div className="flex items-center gap-3 shrink-0">
-        <div className="w-8 h-8 rounded-lg bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400">
-          <Terminal className="w-4 h-4" />
+    <header className="shrink-0 bg-surface border-b border-line">
+      <div className="flex items-center gap-4 lg:gap-8 h-14 px-4 lg:px-6">
+        <a
+          href="#/linux"
+          className="shrink-0 text-base font-semibold text-text whitespace-nowrap rounded-sm"
+        >
+          Terminus CertSim
+        </a>
+
+        <nav aria-label="Main" className="hidden md:flex self-stretch items-stretch gap-1 min-w-0">
+          {NAV_ITEMS.map(item => {
+            const active = item.section === current;
+            return (
+              <a
+                key={item.section}
+                href={hrefs[item.section]}
+                aria-current={active ? 'page' : undefined}
+                className={`flex items-center px-2.5 lg:px-3 text-sm font-medium whitespace-nowrap border-b-2 -mb-px transition-colors ${
+                  active
+                    ? 'text-accent border-accent'
+                    : 'text-muted border-transparent hover:text-text'
+                }`}
+              >
+                {item.label}
+              </a>
+            );
+          })}
+        </nav>
+
+        <div className="ml-auto flex items-center gap-3 lg:gap-4 shrink-0">
+          <p className="text-sm text-muted whitespace-nowrap tabular-nums">
+            {tasksDone} of {tasksTotal}
+            <span className="hidden lg:inline"> tasks</span> done
+          </p>
+          <ThemeSwitch theme={theme} onChange={onThemeChange} />
+          <ThemeCycleButton theme={theme} onChange={onThemeChange} />
         </div>
-        <div className="flex flex-col">
-          <span className="text-base font-bold tracking-tight text-white whitespace-nowrap">
-            Terminus CertSim
-          </span>
-          <span className="hidden sm:block text-[11px] text-slate-400 font-mono">
-            LPI Linux & CompTIA Windows PBQs
-          </span>
-        </div>
-      </div>
-
-      {/* Zone 2: 5 clean navigation tabs */}
-      <nav className="hidden md:flex items-center gap-1.5 text-xs font-medium">
-        <button
-          onClick={() => setActiveTab('lpi')}
-          className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors whitespace-nowrap ${
-            activeTab === 'lpi'
-              ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30 font-semibold'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
-          }`}
-        >
-          <Cpu className="w-3.5 h-3.5" />
-          <span>LPI Linux Modules</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('comptia')}
-          className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors whitespace-nowrap ${
-            activeTab === 'comptia'
-              ? 'bg-blue-500/15 text-blue-300 border border-blue-500/30 font-semibold'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
-          }`}
-        >
-          <Shield className="w-3.5 h-3.5" />
-          <span>CompTIA Windows PBQs</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('simulators')}
-          className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors whitespace-nowrap ${
-            activeTab === 'simulators'
-              ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-semibold'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
-          }`}
-        >
-          <Layers className="w-3.5 h-3.5" />
-          <span>System Simulators</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('sandbox')}
-          className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors whitespace-nowrap ${
-            activeTab === 'sandbox'
-              ? 'bg-purple-500/15 text-purple-300 border border-purple-500/30 font-semibold'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
-          }`}
-        >
-          <Terminal className="w-3.5 h-3.5" />
-          <span>Terminal Sandbox</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('reference')}
-          className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors whitespace-nowrap ${
-            activeTab === 'reference'
-              ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-semibold'
-              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
-          }`}
-        >
-          <BookOpen className="w-3.5 h-3.5" />
-          <span>Command Reference</span>
-        </button>
-      </nav>
-
-      {/* Zone 3: 1 primary action / progress indicator */}
-      <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-        <div className="hidden sm:flex items-center gap-2 px-2.5 py-1 rounded bg-slate-950/60 border border-slate-800 text-[11px] font-mono text-slate-300">
-          <span className="text-slate-400">Mastery:</span>
-          <span className="text-cyan-400 font-semibold tabular-nums">
-            {completedObjectivesCount}/{totalObjectivesCount}
-          </span>
-          <span className="text-slate-500">Objectives</span>
-        </div>
-        <button
-          onClick={() => setActiveTab('sandbox')}
-          className="px-2.5 sm:px-3.5 py-1.5 text-xs font-semibold text-slate-950 bg-cyan-400 hover:bg-cyan-300 rounded-lg transition-colors whitespace-nowrap shadow-sm"
-        >
-          <span className="hidden sm:inline">Launch </span>Terminal
-        </button>
       </div>
     </header>
   );
 };
+
+const ThemeSwitch: React.FC<{ theme: ThemeChoice; onChange: (t: ThemeChoice) => void }> = ({ theme, onChange }) => (
+  <div role="radiogroup" aria-label="Color theme" className="hidden md:flex items-center rounded-md border border-line p-0.5">
+    {THEME_OPTIONS.map(({ value, label, icon: Icon }) => {
+      const selected = theme === value;
+      return (
+        <button
+          key={value}
+          type="button"
+          role="radio"
+          aria-checked={selected}
+          aria-label={label}
+          title={label}
+          onClick={() => onChange(value)}
+          className={`flex items-center justify-center w-7 h-7 rounded-sm transition-colors ${
+            selected ? 'bg-accent-soft text-accent' : 'text-muted hover:text-text'
+          }`}
+        >
+          <Icon className="w-4 h-4" aria-hidden="true" />
+        </button>
+      );
+    })}
+  </div>
+);
+
+/** Phones: one 40px button that steps through System, Light and Dark. */
+const ThemeCycleButton: React.FC<{ theme: ThemeChoice; onChange: (t: ThemeChoice) => void }> = ({ theme, onChange }) => {
+  const index = THEME_OPTIONS.findIndex(o => o.value === theme);
+  const current = THEME_OPTIONS[index] ?? THEME_OPTIONS[0];
+  const next = THEME_OPTIONS[(index + 1) % THEME_OPTIONS.length];
+  const Icon = current.icon;
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(next.value)}
+      aria-label={`${current.label}. Switch to ${next.label.toLowerCase()}`}
+      className="md:hidden flex items-center justify-center w-10 h-10 -mr-2 rounded-md text-muted hover:text-text hover:bg-surface-2"
+    >
+      <Icon className="w-5 h-5" aria-hidden="true" />
+    </button>
+  );
+};
+
+/** Phone-only navigation pinned to the bottom of the screen. */
+export const BottomNav: React.FC<{ current: Section; hrefs: Record<Section, string> }> = ({ current, hrefs }) => (
+  <nav
+    aria-label="Main"
+    className="md:hidden shrink-0 bg-surface border-t border-line"
+    style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+  >
+    <ul className="grid grid-cols-5">
+      {NAV_ITEMS.map(({ section, shortLabel, icon: Icon }) => {
+        const active = section === current;
+        return (
+          <li key={section}>
+            <a
+              href={hrefs[section]}
+              aria-current={active ? 'page' : undefined}
+              className={`flex flex-col items-center justify-center gap-0.5 min-h-[52px] px-1 text-xs font-medium border-t-2 -mt-px transition-colors ${
+                active ? 'text-accent border-accent' : 'text-muted border-transparent hover:text-text'
+              }`}
+            >
+              <Icon className="w-5 h-5" aria-hidden="true" />
+              <span>{shortLabel}</span>
+            </a>
+          </li>
+        );
+      })}
+    </ul>
+  </nav>
+);

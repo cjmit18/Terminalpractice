@@ -8,7 +8,7 @@ Covers hands-on objectives for:
 
 ## What's in the app
 
-- **13 guided lab modules** (5 Linux, 8 Windows). Each has a scenario, objectives that are checked against real simulated system state, hints, exam tips and a full walkthrough.
+- **12 guided lab modules** (5 Linux, 7 Windows). Each has a scenario, objectives that are checked against real simulated system state, hints, exam tips and a full walkthrough.
 - **Terminal sandbox**: free-form Linux Bash, CMD and PowerShell sessions with a live view of the virtual filesystem.
 - **System simulators**: interactive Active Directory, Group Policy, DiskPart, network topology and permission-matrix panels.
 - **Command reference**: searchable list of exam-relevant commands.
