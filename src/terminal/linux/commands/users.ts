@@ -1,5 +1,5 @@
 import { FileNode } from '../../../types/terminal';
-import { createNode, applyChmod } from '../../filesystem';
+import { createNode, applyChmod, octalToSymbolic, toOctalField } from '../../filesystem';
 import { LinuxContext, LinuxResult, linuxCommands } from '../context';
 
 // Identity, ownership and permissions: su, exit, whoami, id, chmod, chown, umask, useradd, usermod
@@ -86,10 +86,30 @@ function chown(ctx: LinuxContext): LinuxResult {
   return ctx.ok();
 }
 
+/** u=rwx,g=rx,o=rx style rendering of the permissions a umask still allows. */
+function umaskSymbolic(mask: number): string {
+  const allowed = 0o777 & ~mask;
+  return ['u', 'g', 'o'].map((who, i) => {
+    const bits = (allowed >> (6 - 3 * i)) & 7;
+    return `${who}=${bits & 4 ? 'r' : ''}${bits & 2 ? 'w' : ''}${bits & 1 ? 'x' : ''}`;
+  }).join(',');
+}
+
 function umask(ctx: LinuxContext): LinuxResult {
-  if (ctx.args.length === 0) return ctx.ok(ctx.state.umask.toString().padStart(4, '0'));
-  const val = parseInt(ctx.args[0], 8);
-  if (!isNaN(val)) ctx.state.umask = val;
+  const symbolic = ctx.args.includes('-S');
+  const value = ctx.args.find(a => a !== '-S' && a !== '-p');
+  if (value === undefined) {
+    return ctx.ok(symbolic ? umaskSymbolic(ctx.state.umask) : ctx.state.umask.toString(8).padStart(4, '0'));
+  }
+  if (/^[0-7]{1,4}$/.test(value)) {
+    ctx.state.umask = parseInt(value, 8) & 0o777;
+    return ctx.ok();
+  }
+  if (/^[0-9]+$/.test(value)) return ctx.fail(`bash: umask: ${value}: octal number out of range`);
+  // Symbolic form (u=rwx,g=rx,o=) describes the permissions to keep
+  const allowed = applyChmod(octalToSymbolic(toOctalField(0o777 & ~ctx.state.umask)), value);
+  if (!allowed) return ctx.fail(`bash: umask: \`${value[0]}': invalid symbolic mode operator`);
+  ctx.state.umask = 0o777 & ~parseInt(String(allowed.octal % 1000).padStart(3, '0'), 8);
   return ctx.ok();
 }
 

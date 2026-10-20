@@ -79,7 +79,7 @@ export function createDefaultLinuxFs(): FileNode {
             updatedAt: '2026-10-19T00:00:00Z',
             content: `UUID=8d6a8f1e-3a9b-4c22-b5e1-8f432176b912 / ext4 defaults,noatime 0 1\nUUID=4a7b9c1d-2e3f-4a5b-6c7d-8e9f0a1b2c3d /boot ext4 defaults 0 2\nUUID=12345678-90ab-cdef-1234-567890abcdef swap swap defaults 0 0`
           },
-          resolv: {
+          'resolv.conf': {
             name: 'resolv.conf',
             type: 'file',
             permissions: 'rw-r--r--',

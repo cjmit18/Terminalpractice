@@ -174,7 +174,7 @@ function tar(ctx: LinuxContext): LinuxResult {
       nonFlags.shift();
     }
     if (!archiveName) return ctx.fail('tar: Cowardly refusing to create an empty archive', 2);
-    createNode(ctx.fs, ctx.resolve(archiveName), 'file', nonFlags.join('\n'), false, ctx.user, ctx.group, 644);
+    createNode(ctx.fs, ctx.resolve(archiveName), 'file', nonFlags.join('\n'), false, ctx.user, ctx.group, ctx.fileMode());
     return ctx.ok(hasV ? nonFlags.map(f => `a ${f}`).join('\n') : '');
   }
 

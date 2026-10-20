@@ -907,3 +907,6 @@ test('Review 8: ls -l on a file you cannot read shows its details', () => {
   assert.ok(res.stdout.includes('shadow'));
   assert.ok(run('ls /root').stderr.includes('Permission denied'));
 });
+
+// Engine test suites split by area (run through this entry point, see package.json "test")
+import './engineState.test.ts';

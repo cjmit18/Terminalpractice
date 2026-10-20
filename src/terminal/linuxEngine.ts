@@ -1,9 +1,9 @@
 import { FileNode, SystemState } from '../types/terminal';
-import { cloneFileSystem, getNodeAtPath, normalizePath, createNode, canWriteNode, getUserGroups } from './filesystem';
+import { cloneFileSystem, getNodeAtPath, normalizePath, createNode, canWriteNode, getUserGroups, writeFileContent } from './filesystem';
 import { parsePipelinedLine, splitChainedCommandLine, ParsedCommand } from './parser';
 import { runChain, StageResult } from './chain';
 import { cloneState } from './state';
-import { LinuxContext, linuxCommands } from './linux/context';
+import { LinuxContext, linuxCommands, newFileMode } from './linux/context';
 import './linux/commands/files';
 import './linux/commands/text';
 import './linux/commands/users';
@@ -75,12 +75,9 @@ function executeLinuxPipeline(
         }
         const existingErr = getNodeAtPath(activeFs, errTargetPath, false);
         if (existingErr && existingErr.type === 'file') {
-          existingErr.content = stage.stderrRedirect.type === '>>'
-            ? (existingErr.content || '') + (existingErr.content && res.stderr ? '\n' : '') + res.stderr
-            : res.stderr;
-          existingErr.updatedAt = new Date().toISOString();
+          writeFileContent(existingErr, res.stderr, stage.stderrRedirect.type === '>>');
         } else {
-          createNode(activeFs, errTargetPath, 'file', res.stderr, false, id.user, id.group, 644);
+          createNode(activeFs, errTargetPath, 'file', res.stderr, false, id.user, id.group, newFileMode(activeState));
         }
       }
       res.stderr = '';
@@ -100,12 +97,9 @@ function executeLinuxPipeline(
 
       const existing = getNodeAtPath(activeFs, targetPath, false);
       if (existing && existing.type === 'file') {
-        existing.content = stage.redirect.type === '>>'
-          ? (existing.content || '') + (existing.content ? '\n' : '') + currentInput
-          : currentInput;
-        existing.updatedAt = new Date().toISOString();
+        writeFileContent(existing, currentInput, stage.redirect.type === '>>');
       } else {
-        createNode(activeFs, targetPath, 'file', currentInput, false, id.user, id.group, 644);
+        createNode(activeFs, targetPath, 'file', currentInput, false, id.user, id.group, newFileMode(activeState));
       }
       return result('', stderr, 0);
     }

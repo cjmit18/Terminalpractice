@@ -184,6 +184,43 @@ export function checkPathTraversal(
 }
 
 /**
+ * Size of a file in bytes as shown by ls/dir. Content is the source of truth, so the
+ * size stays right after redirects and edits.
+ */
+export function fileSize(node: FileNode): number {
+  if (node.type === 'directory') return node.size || 4096;
+  return node.content !== undefined ? node.content.length : (node.size ?? 0);
+}
+
+/**
+ * Replaces or appends file content, keeping size and modification time in sync.
+ * Appending joins with `separator` when both sides are non-empty (contents are stored
+ * without a trailing newline).
+ */
+export function writeFileContent(node: FileNode, content: string, append = false, separator = '\n'): void {
+  const prev = node.content || '';
+  node.content = append ? prev + (prev && content ? separator : '') + content : content;
+  node.size = node.content.length;
+  node.updatedAt = new Date().toISOString();
+}
+
+/**
+ * Permission bits of a node as a real number (e.g. 0o4755), read from its symbolic string.
+ */
+export function modeBits(node: FileNode): number {
+  const sym = node.permissions.slice(-9);
+  const base = parseInt(String(symbolicToOctal(sym)).padStart(3, '0'), 8);
+  return (getSpecialBits(sym) << 9) | base;
+}
+
+/**
+ * Converts real mode bits (e.g. 0o640) to the decimal-looking octal field FileNode uses (640).
+ */
+export function toOctalField(mode: number): number {
+  return parseInt(mode.toString(8), 10);
+}
+
+/**
  * Deep clones a file system tree
  */
 export function cloneFileSystem(root: FileNode): FileNode {

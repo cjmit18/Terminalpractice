@@ -1,9 +1,14 @@
 import { FileNode, SystemState } from '../../types/terminal';
 import { StageResult } from '../chain';
 import { CommandRegistry } from '../registry';
-import { getNodeAtPath, normalizePath, getUserGroups } from '../filesystem';
+import { getNodeAtPath, normalizePath, getUserGroups, toOctalField } from '../filesystem';
 
 export type LinuxResult = StageResult;
+
+/** File creation mode after the umask, as a FileNode octal field. Also used for redirects. */
+export function newFileMode(state: SystemState): number {
+  return toOctalField(0o666 & ~state.umask);
+}
 
 /**
  * Everything a Linux command handler needs. The fs and state are the pipeline's private
@@ -38,6 +43,16 @@ export class LinuxContext {
   /** Looks up a node by (absolute) path. */
   node(absPath: string): FileNode | null {
     return getNodeAtPath(this.fs, absPath, false);
+  }
+
+  /** Mode for a newly created regular file: 666 minus the umask (e.g. 644 with umask 022). */
+  fileMode(): number {
+    return newFileMode(this.state);
+  }
+
+  /** Mode for a newly created directory: 777 minus the umask (e.g. 755 with umask 022). */
+  dirMode(): number {
+    return toOctalField(0o777 & ~this.state.umask);
   }
 
   result(stdout: string, stderr: string, exitCode: number, explanation?: string): LinuxResult {

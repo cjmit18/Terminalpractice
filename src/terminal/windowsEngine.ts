@@ -1,5 +1,5 @@
 import { FileNode, SystemState, TerminalShell } from '../types/terminal';
-import { cloneFileSystem, getNodeAtPath, normalizePath, createNode } from './filesystem';
+import { cloneFileSystem, getNodeAtPath, normalizePath, createNode, writeFileContent } from './filesystem';
 import { splitChainedCommandLine, parsePipelinedLine, ParsedCommand } from './parser';
 import { runChain } from './chain';
 import { cloneState } from './state';
@@ -72,8 +72,7 @@ function writeWindowsFile(fs: FileNode, targetPath: string, content: string, app
   if (norm === 'nul' || norm.endsWith('\\nul') || norm.endsWith('/nul')) return;
   const existing = getNodeAtPath(fs, targetPath, true);
   if (existing && existing.type === 'file') {
-    existing.content = append ? (existing.content || '') + (existing.content ? '\r\n' : '') + content : content;
-    existing.updatedAt = new Date().toISOString();
+    writeFileContent(existing, content, append, '\r\n');
   } else {
     createNode(fs, targetPath, 'file', content, true, 'Administrator', 'Administrators', 644);
   }

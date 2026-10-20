@@ -1,4 +1,4 @@
-import { createNode, removeNode, canReadNode, canWriteNode, canDeleteNode, checkNodePermission } from '../../filesystem';
+import { createNode, removeNode, canReadNode, canWriteNode, canDeleteNode, checkNodePermission, fileSize, writeFileContent } from '../../filesystem';
 import { LinuxContext, LinuxResult, linuxCommands } from '../context';
 
 // Navigation and file management: pwd, cd, ls, cat, mkdir, touch, rm, tee
@@ -45,8 +45,7 @@ function ls(ctx: LinuxContext): LinuxResult {
   if (node.type === 'file') {
     if (showLong) {
       const perm = '-' + node.permissions.replace(/^[d-]/, '');
-      const fileSize = node.size ?? (node.content?.length ?? 0);
-      return ctx.ok(`${perm} 1 ${node.owner} ${node.group} ${fileSize} Oct 19 10:00 ${node.name}`);
+      return ctx.ok(`${perm} 1 ${node.owner} ${node.group} ${fileSize(node)} Oct 19 10:00 ${node.name}`);
     }
     return ctx.ok(node.name);
   }
@@ -67,8 +66,7 @@ function ls(ctx: LinuxContext): LinuxResult {
     const child = children[k];
     const prefix = child.type === 'directory' ? 'd' : '-';
     const perm = prefix + child.permissions.replace(/^[d-]/, '');
-    const sizeVal = child.type === 'directory' ? (child.size || 4096) : (child.size ?? (child.content?.length ?? 0));
-    const size = sizeVal.toString().padStart(6, ' ');
+    const size = fileSize(child).toString().padStart(6, ' ');
     return `${perm} 1 ${child.owner.padEnd(8, ' ')} ${child.group.padEnd(8, ' ')} ${size} Oct 19 10:00 ${child.name}`;
   });
   return ctx.ok(lines.join('\n'));
@@ -109,7 +107,7 @@ function mkdir(ctx: LinuxContext): LinuxResult {
       if (ctx.node(p)) continue;
       const check = canWriteNode(ctx.fs, p, ctx.user, ctx.groups, false);
       if (!check.ok) return ctx.fail(`mkdir: cannot create directory '${d}': ${check.error || 'Permission denied'}`);
-      createNode(ctx.fs, p, 'directory', '', false, ctx.user, ctx.group, 755);
+      createNode(ctx.fs, p, 'directory', '', false, ctx.user, ctx.group, ctx.dirMode());
     }
   }
   return ctx.ok();
@@ -126,7 +124,7 @@ function touch(ctx: LinuxContext): LinuxResult {
     if (existing) {
       existing.updatedAt = new Date().toISOString();
     } else {
-      createNode(ctx.fs, targetPath, 'file', '', false, ctx.user, ctx.group, 644);
+      createNode(ctx.fs, targetPath, 'file', '', false, ctx.user, ctx.group, ctx.fileMode());
     }
   }
   return ctx.ok();
@@ -167,12 +165,9 @@ function tee(ctx: LinuxContext): LinuxResult {
     if (!check.ok) return ctx.result(stdin, `tee: ${f}: ${check.error || 'Permission denied'}`, 1);
     const existing = ctx.node(targetPath);
     if (existing && existing.type === 'file') {
-      existing.content = append
-        ? (existing.content || '') + (existing.content && stdin ? '\n' : '') + stdin
-        : stdin;
-      existing.updatedAt = new Date().toISOString();
+      writeFileContent(existing, stdin, append);
     } else {
-      createNode(ctx.fs, targetPath, 'file', stdin, false, ctx.user, ctx.group, 644);
+      createNode(ctx.fs, targetPath, 'file', stdin, false, ctx.user, ctx.group, ctx.fileMode());
     }
   }
   return ctx.ok(stdin);

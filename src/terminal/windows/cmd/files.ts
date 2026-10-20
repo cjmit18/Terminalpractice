@@ -1,3 +1,4 @@
+import { fileSize } from '../../filesystem';
 import { WindowsContext, WindowsResult, cmdCommands } from '../context';
 
 // CMD navigation and file commands: cd/chdir, dir, type, more
@@ -33,7 +34,7 @@ function dir(ctx: WindowsContext): WindowsResult {
       lines.push(`10/19/2026  09:30 AM    <DIR>          ${key}`);
     } else {
       fileCount++;
-      const sz = child.size || 0;
+      const sz = fileSize(child);
       totalBytes += sz;
       lines.push(`10/19/2026  09:45 AM            ${sz.toLocaleString().padStart(8, ' ')} ${key}`);
     }
