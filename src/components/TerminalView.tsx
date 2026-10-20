@@ -1,18 +1,54 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { TerminalShell, TerminalTheme, HistoryItem } from '../types/terminal';
-import { Terminal, Copy, Trash2, Sliders, Check, Sparkles } from 'lucide-react';
+import { TerminalShell, HistoryItem } from '../types/terminal';
+import { Copy, Check, Eraser, ArrowUp, ArrowDown } from 'lucide-react';
+
+/** A history entry, plus what the prompt looked like when it was typed */
+export interface TerminalLine extends HistoryItem {
+  /** User shown in the prompt (bash) */
+  user?: string;
+  /** Typed at the DISKPART> prompt */
+  inDiskpart?: boolean;
+}
 
 interface TerminalViewProps {
   shell: TerminalShell;
   cwd: string;
-  history: HistoryItem[];
+  history: TerminalLine[];
   onExecuteCommand: (command: string) => void;
   onClearHistory: () => void;
+  /** Example commands shown as a quiet "Try:" row. Leave empty in labs. */
   suggestedCommands?: string[];
   isDiskpartActive?: boolean;
   currentUser?: string;
   hostname?: string;
   readOnly?: boolean;
+}
+
+const SHELL_NAMES: Record<TerminalShell, string> = {
+  bash: 'bash',
+  cmd: 'Command Prompt',
+  powershell: 'PowerShell',
+};
+
+const BANNERS: Record<TerminalShell, string> = {
+  bash: 'Welcome to Ubuntu 22.04.3 LTS (GNU/Linux 5.15.0-101-generic x86_64)',
+  cmd: 'Microsoft Windows [Version 10.0.22621.1]',
+  powershell: 'Windows PowerShell',
+};
+
+const COMPLETIONS: Record<'linux' | 'windows', string[]> = {
+  linux: ['cat', 'cd', 'chmod', 'chown', 'df', 'dmesg', 'echo', 'fdisk', 'grep', 'id', 'ip', 'journalctl', 'ls', 'lsmod', 'lspci', 'mkdir', 'ping', 'pwd', 'sort', 'sudo', 'systemctl', 'tar', 'umask', 'uniq', 'useradd', 'usermod', 'whoami'],
+  windows: ['chkdsk', 'diskpart', 'dism', 'gpresult', 'gpupdate', 'ipconfig', 'netstat', 'nslookup', 'ping', 'sfc', 'taskkill', 'tasklist', 'tracert', 'Add-ADGroupMember', 'Get-ADUser', 'Get-Process', 'Get-Service', 'New-ADUser', 'Start-Service', 'Stop-Process', 'Test-NetConnection', 'Unlock-ADAccount'],
+};
+
+const SYMBOL_KEYS = ['|', '>', '<', '&', '/', '~', '-', '_', '.', '$', '*', '"', "'", '\\', ':'];
+
+/** /home/student -> ~, the way bash shows it */
+function tildePath(cwd: string, user: string) {
+  const home = user === 'root' ? '/root' : `/home/${user}`;
+  if (cwd === home) return '~';
+  if (cwd.startsWith(home + '/')) return '~' + cwd.slice(home.length);
+  return cwd;
 }
 
 export const TerminalView: React.FC<TerminalViewProps> = ({
@@ -28,25 +64,23 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
   readOnly = false,
 }) => {
   const [input, setInput] = useState('');
-  const [theme, setTheme] = useState<TerminalTheme>(
-    shell === 'bash' ? 'ubuntu' : shell === 'powershell' ? 'powershell' : 'cmd-classic'
-  );
-  const [crtEffect, setCrtEffect] = useState(false);
   const [copied, setCopied] = useState(false);
   const [historyIndex, setHistoryIndex] = useState<number | null>(null);
+  const [showBanner, setShowBanner] = useState(true);
 
   const inputRef = useRef<HTMLInputElement>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
+  // Keep the newest output in view without scrolling the page itself
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [history]);
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [history, showBanner]);
 
-  // Adjust default theme when shell changes
+  // A new shell starts with its own login line
   useEffect(() => {
-    if (shell === 'bash' && theme === 'powershell') setTheme('ubuntu');
-    if (shell === 'powershell' && theme === 'ubuntu') setTheme('powershell');
-    if (shell === 'cmd' && theme === 'powershell') setTheme('cmd-classic');
+    setShowBanner(true);
+    setHistoryIndex(null);
   }, [shell]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -68,8 +102,14 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
       e.preventDefault();
       completeCommand();
     } else if (e.ctrlKey && e.key.toLowerCase() === 'c') {
+      // Let a real selection copy; otherwise Ctrl+C abandons the line like a shell does
+      const el = inputRef.current;
+      if (el && el.selectionStart !== el.selectionEnd) return;
       e.preventDefault();
       cancelLine();
+    } else if (e.ctrlKey && e.key.toLowerCase() === 'l') {
+      e.preventDefault();
+      clearScreen();
     }
   };
 
@@ -92,20 +132,32 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
     }
   };
 
-  // Simple tab autocomplete for common commands
+  // Completes the command name (first word) from a short list of commands the labs use
   const completeCommand = () => {
-    const commonLinux = ['chmod', 'chown', 'ls', 'cat', 'grep', 'awk', 'tar', 'useradd', 'usermod', 'systemctl', 'journalctl', 'fdisk', 'df', 'ifconfig', 'ip', 'ping'];
-    const commonWin = ['ipconfig', 'ping', 'tracert', 'nslookup', 'netstat', 'sfc', 'dism', 'chkdsk', 'diskpart', 'gpupdate', 'gpresult', 'tasklist', 'taskkill', 'Get-Service', 'Start-Service', 'Get-Process', 'Test-NetConnection', 'Unlock-ADAccount'];
-    const pool = shell === 'bash' ? commonLinux : commonWin;
-    const match = pool.find(c => c.toLowerCase().startsWith(input.toLowerCase()));
-    if (match) {
-      setInput(match + ' ');
+    const word = input.trimStart();
+    if (!word || /\s/.test(word)) return;
+    const pool = shell === 'bash' ? COMPLETIONS.linux : COMPLETIONS.windows;
+    const matches = pool.filter(c => c.toLowerCase().startsWith(word.toLowerCase()));
+    if (matches.length === 1) {
+      setInput(matches[0] + ' ');
+    } else if (matches.length > 1) {
+      // Extend to the longest shared prefix, like bash does on the first Tab
+      let prefix = matches[0];
+      for (const m of matches) {
+        while (!m.toLowerCase().startsWith(prefix.toLowerCase())) prefix = prefix.slice(0, -1);
+      }
+      if (prefix.length > word.length) setInput(prefix);
     }
   };
 
   const cancelLine = () => {
     setInput('');
     setHistoryIndex(null);
+  };
+
+  const clearScreen = () => {
+    setShowBanner(false);
+    onClearHistory();
   };
 
   // Insert text at the caret so the toolbar works mid-line, then restore focus and caret
@@ -120,244 +172,123 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
     });
   };
 
-  const getThemeStyles = () => {
-    switch (theme) {
-      case 'ubuntu':
-        return {
-          bg: 'bg-[#300a24]',
-          text: 'text-slate-100',
-          promptUser: 'text-[#87ff5f]',
-          promptPath: 'text-[#5fd7ff]',
-          headerBg: 'bg-[#210718]',
-        };
-      case 'crt-green':
-        return {
-          bg: 'bg-[#051109]',
-          text: 'text-[#33ff33]',
-          promptUser: 'text-[#33ff33]',
-          promptPath: 'text-[#22cc22]',
-          headerBg: 'bg-[#020a05]',
-        };
-      case 'crt-amber':
-        return {
-          bg: 'bg-[#140b02]',
-          text: 'text-[#ffb000]',
-          promptUser: 'text-[#ffb000]',
-          promptPath: 'text-[#dd9900]',
-          headerBg: 'bg-[#0a0501]',
-        };
-      case 'powershell':
-        return {
-          bg: 'bg-[#012456]',
-          text: 'text-slate-100',
-          promptUser: 'text-cyan-300',
-          promptPath: 'text-yellow-300',
-          headerBg: 'bg-[#001737]',
-        };
-      case 'cmd-classic':
-      default:
-        return {
-          bg: 'bg-[#0c0c0c]',
-          text: 'text-[#cccccc]',
-          promptUser: 'text-slate-400',
-          promptPath: 'text-slate-300',
-          headerBg: 'bg-[#181818]',
-        };
+  const renderPrompt = (promptShell: TerminalShell, promptCwd: string, user: string, diskpart: boolean) => {
+    if (diskpart) {
+      return <span className="select-none text-term-text">DISKPART&gt; </span>;
     }
-  };
-
-  const styles = getThemeStyles();
-
-  const renderPrompt = () => {
-    if (isDiskpartActive) {
-      return <span className="text-amber-400 font-bold select-none mr-2">DISKPART&gt;</span>;
-    }
-
-    if (shell === 'bash') {
-      const isRoot = currentUser === 'root';
+    if (promptShell === 'bash') {
       return (
-        <span className="select-none mr-2">
-          <span className={`${styles.promptUser} font-semibold`}>
-            {currentUser}@{hostname}
-          </span>
-          <span className="text-slate-400">:</span>
-          <span className={`${styles.promptPath} font-semibold`}>{cwd}</span>
-          <span className="text-slate-400">{isRoot ? '# ' : '$ '}</span>
+        <span className="select-none">
+          <span className="text-term-user">{user}@{hostname}</span>
+          <span className="text-term-muted">:</span>
+          <span className="text-term-path">{tildePath(promptCwd, user)}</span>
+          <span className="text-term-muted">{user === 'root' ? '# ' : '$ '}</span>
         </span>
       );
     }
-
-    if (shell === 'powershell') {
+    if (promptShell === 'powershell') {
       return (
-        <span className="select-none mr-2">
-          <span className="text-blue-300 font-bold">PS </span>
-          <span className={`${styles.promptPath}`}>{cwd}</span>
-          <span className="text-slate-400">&gt; </span>
+        <span className="select-none">
+          <span className="text-term-muted">PS </span>
+          <span className="text-term-path">{promptCwd}</span>
+          <span className="text-term-muted">&gt; </span>
         </span>
       );
     }
-
-    // cmd
     return (
-      <span className="select-none mr-2">
-        <span className={`${styles.promptPath}`}>{cwd}</span>
-        <span className="text-slate-400">&gt;</span>
+      <span className="select-none">
+        <span className="text-term-path">{promptCwd}</span>
+        <span className="text-term-muted">&gt;</span>
       </span>
     );
   };
 
-  const copyTerminalOutput = () => {
+  const copyTerminalOutput = async () => {
     const text = history.map(h => `${h.command}\n${h.output}`).join('\n\n');
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard can be blocked (insecure context, permissions); nothing useful to show
+    }
   };
 
+  const iconButton =
+    'inline-flex items-center justify-center size-10 sm:size-8 rounded-sm text-term-muted hover:text-term-text hover:bg-term-line transition-colors';
+  const keyButton =
+    'h-9 min-w-9 px-2.5 inline-flex items-center justify-center rounded-sm bg-term-bg border border-term-line text-term-text text-[13px] font-mono active:bg-term-line shrink-0';
+
   return (
-    <div
-      className={`flex flex-col h-full rounded-xl overflow-hidden border border-slate-800 shadow-2xl font-mono text-xs sm:text-sm ${styles.bg} ${
-        crtEffect ? 'crt-effect' : ''
-      }`}
-      onClick={() => inputRef.current?.focus()}
-    >
-      {/* Terminal Title Bar */}
-      <div className={`flex items-center justify-between px-3 sm:px-4 py-2 sm:py-2.5 border-b border-slate-800/80 ${styles.headerBg}`}>
-        <div className="flex items-center gap-2.5">
-          <div className="flex items-center gap-1.5">
-            <div className="w-3 h-3 rounded-full bg-rose-500/80"></div>
-            <div className="w-3 h-3 rounded-full bg-amber-500/80"></div>
-            <div className="w-3 h-3 rounded-full bg-emerald-500/80"></div>
-          </div>
-          <div className="flex items-center gap-2 text-xs text-slate-300 font-medium ml-2">
-            <Terminal className="w-3.5 h-3.5 text-slate-400" />
-            <span>
-              {shell === 'bash' ? 'GNU bash, version 5.1.16' : shell === 'powershell' ? 'Windows PowerShell 7.4.1' : 'Command Prompt - cmd.exe'}
-            </span>
-          </div>
+    <div className="flex flex-col h-full min-h-0 w-full rounded-md overflow-hidden bg-term-bg border border-term-line text-term-text focus-within:border-term-muted">
+      {/* Tab bar: which shell, on which machine */}
+      <div className="flex items-center justify-between gap-3 h-11 sm:h-10 pl-3 pr-1 bg-term-bar border-b border-term-line shrink-0">
+        <div className="flex items-baseline gap-2 min-w-0 text-sm">
+          <span className="font-medium text-term-text whitespace-nowrap">
+            {SHELL_NAMES[shell]}
+            {isDiskpartActive && <span className="text-term-muted"> · DiskPart</span>}
+          </span>
+          <span className="font-mono text-[13px] text-term-muted truncate">
+            {currentUser}@{hostname}
+          </span>
         </div>
-
-        <div className="flex items-center gap-2">
-          {/* CRT Scanline Toggle */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setCrtEffect(!crtEffect);
-            }}
-            title="Toggle Vintage CRT Phosphor Scanline Filter"
-            className={`hidden sm:block px-2 py-1 rounded text-[11px] font-sans transition-colors ${
-              crtEffect ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            CRT Scan
+        <div className="flex items-center shrink-0">
+          <button type="button" onClick={copyTerminalOutput} aria-label={copied ? 'Copied' : 'Copy output'} title="Copy output" className={iconButton}>
+            {copied ? <Check className="size-4 text-term-user" aria-hidden="true" /> : <Copy className="size-4" aria-hidden="true" />}
           </button>
-
-          {/* Theme selector */}
-          <select
-            value={theme}
-            onChange={(e) => {
-              e.stopPropagation();
-              setTheme(e.target.value as TerminalTheme);
-            }}
-            onClick={(e) => e.stopPropagation()}
-            aria-label="Terminal Color Theme"
-            className="hidden sm:block bg-slate-900 border border-slate-700 text-slate-300 text-[11px] font-sans rounded px-2 py-1 focus:outline-none"
-          >
-            <option value="ubuntu">Ubuntu Purple</option>
-            <option value="powershell">PowerShell Blue</option>
-            <option value="cmd-classic">CMD Retro Dark</option>
-            <option value="crt-green">Green Phosphor</option>
-            <option value="crt-amber">Amber Phosphor</option>
-          </select>
-
-          {/* Copy Button */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              copyTerminalOutput();
-            }}
-            title="Copy Output"
-            className="p-1 text-slate-400 hover:text-slate-200 rounded transition-colors"
-          >
-            {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-          </button>
-
-          {/* Clear Button */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onClearHistory();
-            }}
-            title="Clear Terminal Buffer"
-            className="p-1 text-slate-400 hover:text-rose-400 rounded transition-colors"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
+          <button type="button" onClick={clearScreen} aria-label="Clear terminal" title="Clear terminal" className={iconButton}>
+            <Eraser className="size-4" aria-hidden="true" />
           </button>
         </div>
       </div>
 
-      {/* Terminal Output Area */}
-      <div className="flex-1 p-4 overflow-y-auto terminal-scrollbar space-y-3">
-        {history.length === 0 && (
-          <div className="text-slate-400/80 leading-relaxed space-y-1 mb-4 select-none">
-            <p>
-              {shell === 'bash'
-                ? 'Welcome to Ubuntu 22.04.3 LTS (GNU/Linux 5.15.0-101-generic x86_64)'
-                : shell === 'powershell'
-                ? 'Windows PowerShell\nCopyright (C) Microsoft Corporation. All rights reserved.'
-                : 'Microsoft Windows [Version 10.0.22621.1]\n(c) Microsoft Corporation. All rights reserved.'}
-            </p>
-            <p className="text-xs opacity-75">
-              Type your commands below. Supports pipes (<code className="text-cyan-400">|</code>), redirects (<code className="text-cyan-400">&gt;</code>), and flags. Tab for autocomplete.
-            </p>
-          </div>
-        )}
+      {/* Output and the active input line */}
+      <div
+        ref={scrollRef}
+        className="flex-1 min-h-0 overflow-y-auto terminal-scrollbar px-3 sm:px-4 py-3 font-mono text-[13px] sm:text-sm leading-relaxed"
+        onClick={() => {
+          // Clicking anywhere focuses the prompt, unless the user is selecting output to copy
+          if (!window.getSelection()?.toString()) inputRef.current?.focus();
+        }}
+      >
+        <div role="log" aria-live="polite" aria-label="Terminal output">
+          {showBanner && <p className="text-term-muted mb-2">{BANNERS[shell]}</p>}
 
-        {history.map((item) => (
-          <div key={item.id} className="space-y-1">
-            <div className="flex items-start">
-              <span className="opacity-90">{renderPrompt()}</span>
-              <span className="text-white font-medium break-all">{item.command}</span>
-            </div>
-            {item.output && (
-              <div className="pl-2 font-mono leading-relaxed space-y-0.5">
-                {item.errorOutput ? (
-                  <>
-                    {item.output !== item.errorOutput && item.output.replace(item.errorOutput, '').trim() && (
-                      <pre className={`whitespace-pre-wrap break-all ${styles.text}`}>
-                        {item.output.replace(item.errorOutput, '').trimEnd()}
-                      </pre>
-                    )}
-                    <pre className="whitespace-pre-wrap break-all text-rose-400">
-                      {item.errorOutput}
-                    </pre>
-                  </>
-                ) : (
-                  <pre
-                    className={`whitespace-pre-wrap break-all ${
-                      item.isError ? 'text-rose-400' : styles.text
-                    }`}
-                  >
-                    {item.output}
+          {history.map((item) => {
+            const stdoutText = item.errorOutput ? item.output.replace(item.errorOutput, '').trim() : item.output;
+            return (
+              <div key={item.id} className="mb-1.5">
+                <div className="break-all">
+                  {renderPrompt(item.shell, item.cwd, item.user ?? currentUser, !!item.inDiskpart)}
+                  <span>{item.command}</span>
+                </div>
+                {stdoutText && (
+                  <pre className={`whitespace-pre-wrap break-words font-mono ${item.isError && !item.errorOutput ? 'text-term-error' : ''}`}>
+                    {stdoutText}
                   </pre>
                 )}
+                {item.errorOutput && (
+                  <pre className="whitespace-pre-wrap break-words font-mono text-term-error">{item.errorOutput}</pre>
+                )}
               </div>
-            )}
-          </div>
-        ))}
+            );
+          })}
+        </div>
 
-        {/* Active Input Line */}
         {!readOnly && (
-          <div className="flex items-center pt-1">
-            {renderPrompt()}
+          <div className="flex items-baseline">
+            <span className="shrink-0 max-w-[70%] break-all">
+              {renderPrompt(shell, cwd, currentUser, isDiskpartActive)}
+            </span>
             <input
               ref={inputRef}
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              aria-label="Terminal Command Input"
+              aria-label="Command"
               autoFocus
-              className="flex-1 bg-transparent text-white focus:outline-none font-mono caret-cyan-400"
+              className="flex-1 min-w-0 bg-transparent text-term-text caret-term-text outline-none font-mono"
               spellCheck={false}
               autoComplete="off"
               autoCorrect="off"
@@ -367,22 +298,18 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
             />
           </div>
         )}
-
-        <div ref={bottomRef} />
       </div>
 
-      {/* Key toolbar: keys phone keyboards bury or lack. pointerdown keeps the keyboard open */}
+      {/* Keys that phone keyboards bury or lack. Hidden for mouse users. pointerdown keeps the keyboard open */}
       {!readOnly && (
         <div
-          className="flex items-center gap-1.5 px-2 py-1.5 bg-slate-950/80 border-t border-slate-800 overflow-x-auto shrink-0"
+          className="flex pointer-fine:hidden items-center gap-1 px-2 py-1.5 bg-term-bar border-t border-term-line overflow-x-auto shrink-0 terminal-scrollbar"
           role="toolbar"
           aria-label="Terminal keys"
         >
           {[
-            { label: 'Tab', run: completeCommand },
-            { label: 'Ctrl+C', run: cancelLine },
-            { label: '↑', aria: 'Previous command', run: historyPrev },
-            { label: '↓', aria: 'Next command', run: historyNext },
+            { label: 'Tab', aria: 'Tab, complete command', run: completeCommand },
+            { label: 'Ctrl+C', aria: 'Control C, cancel line', run: cancelLine },
           ].map(k => (
             <button
               key={k.label}
@@ -390,20 +317,26 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
               aria-label={k.aria}
               onPointerDown={(e) => e.preventDefault()}
               onClick={() => { k.run(); inputRef.current?.focus(); }}
-              className="min-w-10 h-9 px-2.5 rounded-md bg-slate-800 active:bg-slate-600 text-slate-200 text-xs font-mono border border-slate-700 shrink-0"
+              className={keyButton}
             >
               {k.label}
             </button>
           ))}
-          <span className="w-px h-5 bg-slate-700 mx-0.5 shrink-0" aria-hidden="true" />
-          {['|', '>', '<', '&', '/', '~', '-', '_', '.', '$', '*', '"', "'", '\\', ':'].map(ch => (
+          <button type="button" aria-label="Previous command" onPointerDown={(e) => e.preventDefault()} onClick={() => { historyPrev(); inputRef.current?.focus(); }} className={keyButton}>
+            <ArrowUp className="size-4" aria-hidden="true" />
+          </button>
+          <button type="button" aria-label="Next command" onPointerDown={(e) => e.preventDefault()} onClick={() => { historyNext(); inputRef.current?.focus(); }} className={keyButton}>
+            <ArrowDown className="size-4" aria-hidden="true" />
+          </button>
+          <span className="w-px h-5 bg-term-line mx-1 shrink-0" aria-hidden="true" />
+          {SYMBOL_KEYS.map(ch => (
             <button
               key={ch}
               type="button"
               aria-label={`Insert ${ch}`}
               onPointerDown={(e) => e.preventDefault()}
               onClick={() => insertAtCaret(ch)}
-              className="min-w-9 h-9 px-2 rounded-md bg-slate-800 active:bg-slate-600 text-cyan-300 text-sm font-mono border border-slate-700 shrink-0"
+              className={keyButton}
             >
               {ch}
             </button>
@@ -411,20 +344,19 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
         </div>
       )}
 
-      {/* Suggested Fast-Execution Commands (Optional Help Bar) */}
+      {/* Example commands, for the sandbox. Clicking one fills the prompt; it does not run it */}
       {suggestedCommands.length > 0 && !readOnly && (
-        <div className="px-3 py-2 bg-slate-950/70 border-t border-slate-800 flex items-center gap-2 overflow-x-auto text-xs">
-          <span className="text-slate-400 flex items-center gap-1 shrink-0 text-[11px]">
-            <Sparkles className="w-3 h-3 text-cyan-400" /> Quick Commands:
-          </span>
-          {suggestedCommands.map((cmd, i) => (
+        <div className="flex items-center gap-1 px-3 py-1.5 bg-term-bar border-t border-term-line overflow-x-auto shrink-0 text-[13px] terminal-scrollbar">
+          <span className="text-term-muted shrink-0 pr-1">Try:</span>
+          {suggestedCommands.map((cmd) => (
             <button
-              key={i}
+              key={cmd}
+              type="button"
               onClick={() => {
                 setInput(cmd);
                 inputRef.current?.focus();
               }}
-              className="px-2 py-0.5 rounded bg-slate-800/80 hover:bg-slate-700 text-slate-300 font-mono text-[11px] whitespace-nowrap transition-colors border border-slate-700/50"
+              className="px-2 py-1 rounded-sm font-mono text-term-muted hover:text-term-text hover:bg-term-line whitespace-nowrap transition-colors"
             >
               {cmd}
             </button>
