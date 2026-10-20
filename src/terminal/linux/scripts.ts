@@ -19,6 +19,24 @@ export function setLineRunner(fn: LineRunner): void {
   lineRunner = fn;
 }
 
+/**
+ * Runs one command line as a child process of the current command (find -exec, xargs):
+ * filesystem changes persist, the caller's cwd and identity do not change.
+ */
+export function runChildLine(ctx: LinuxContext, line: string): StageResult {
+  if (!lineRunner || ctx.depth >= MAX_DEPTH) return ctx.fail('bash: maximum nesting level exceeded', 1);
+  const state = ctx.isSudo ? { ...ctx.state, currentUser: 'root', currentGroup: 'root', isRootOrAdmin: true } : ctx.state;
+  const res = lineRunner(line, ctx.cwd, ctx.fs, state, ctx.depth + 1);
+  ctx.fs = res.newFs;
+  ctx.state = {
+    ...res.newState,
+    currentUser: ctx.state.currentUser,
+    currentGroup: ctx.state.currentGroup,
+    isRootOrAdmin: ctx.state.isRootOrAdmin,
+  };
+  return res;
+}
+
 /** Runs a script's lines one by one, collecting output like a child shell would. */
 function runLines(ctx: LinuxContext, text: string, subshell: boolean, args: string[] = []): StageResult {
   const depth = ctx.depth;

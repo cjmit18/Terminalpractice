@@ -9,6 +9,8 @@ import { cloneState } from './state';
 import { LinuxContext, linuxCommands, newFileMode } from './linux/context';
 import { runScriptFile, isScriptPath, setLineRunner } from './linux/scripts';
 import './linux/commands/files';
+import './linux/commands/copymove';
+import './linux/commands/find';
 import './linux/commands/text';
 import './linux/commands/users';
 import './linux/commands/system';
@@ -229,6 +231,12 @@ function runLinuxCommand(
   const ctx = new LinuxContext(name, args, stdin, cwd, fs, runState, isSudo);
   ctx.depth = depth;
   if (!name) return ctx.ok(); // a bare redirect such as "> file"
+  const assignment = name.match(/^([A-Za-z_]\w*)=(.*)$/s);
+  if (assignment && args.length === 0) {
+    // NAME=value sets a shell variable (kept with the environment so echo $NAME sees it)
+    ctx.state.envVars = { ...ctx.state.envVars, [assignment[1]]: assignment[2] };
+    return ctx.ok();
+  }
 
   let res: StageResult;
   if (isScriptPath(name)) {

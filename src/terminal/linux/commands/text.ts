@@ -175,7 +175,8 @@ function grep(ctx: LinuxContext): LinuxResult {
   }
 
   const walk = (dirNode: FileNode, absDir: string, shown: string) => {
-    if (!ctx.access(dirNode, absDir, 'r').ok || !ctx.access(dirNode, absDir, 'x').ok) {
+    const why = `Searching inside ${absDir} needs read (r) and execute (x) on it, but it`;
+    if (!ctx.access(dirNode, absDir, 'r', why).ok || !ctx.access(dirNode, absDir, 'x', why).ok) {
       err(`grep: ${shown}: Permission denied`);
       return;
     }

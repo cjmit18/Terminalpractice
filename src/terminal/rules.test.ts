@@ -912,3 +912,4 @@ test('Review 8: ls -l on a file you cannot read shows its details', () => {
 import './engineState.test.ts';
 import './explanations.test.ts';
 import './textTools.test.ts';
+import './linuxCommands.test.ts';
