@@ -11,21 +11,27 @@ export const PermissionMatrixSim: React.FC<PermissionMatrixSimProps> = ({
   initialOctal = 750,
   onApplyChmod,
 }) => {
-  const [userR, setUserR] = useState(true);
-  const [userW, setUserW] = useState(true);
-  const [userX, setUserX] = useState(true);
+  // Compute initial states from initialOctal
+  const initSpecial = initialOctal >= 1000 ? Math.floor(initialOctal / 1000) : 0;
+  const initUser = Math.floor((initialOctal % 1000) / 100);
+  const initGroup = Math.floor((initialOctal % 100) / 10);
+  const initOther = initialOctal % 10;
 
-  const [groupR, setGroupR] = useState(true);
-  const [groupW, setGroupW] = useState(false);
-  const [groupX, setGroupX] = useState(true);
+  const [userR, setUserR] = useState((initUser & 4) !== 0);
+  const [userW, setUserW] = useState((initUser & 2) !== 0);
+  const [userX, setUserX] = useState((initUser & 1) !== 0);
 
-  const [otherR, setOtherR] = useState(false);
-  const [otherW, setOtherW] = useState(false);
-  const [otherX, setOtherX] = useState(false);
+  const [groupR, setGroupR] = useState((initGroup & 4) !== 0);
+  const [groupW, setGroupW] = useState((initGroup & 2) !== 0);
+  const [groupX, setGroupX] = useState((initGroup & 1) !== 0);
 
-  const [suid, setSuid] = useState(false);
-  const [sgid, setSgid] = useState(false);
-  const [sticky, setSticky] = useState(false);
+  const [otherR, setOtherR] = useState((initOther & 4) !== 0);
+  const [otherW, setOtherW] = useState((initOther & 2) !== 0);
+  const [otherX, setOtherX] = useState((initOther & 1) !== 0);
+
+  const [suid, setSuid] = useState((initSpecial & 4) !== 0);
+  const [sgid, setSgid] = useState((initSpecial & 2) !== 0);
+  const [sticky, setSticky] = useState((initSpecial & 1) !== 0);
 
   const [umaskInput, setUmaskInput] = useState('027');
 
@@ -46,7 +52,28 @@ export const PermissionMatrixSim: React.FC<PermissionMatrixSimProps> = ({
   const isWorldWritable = otherW;
   const isDangerous = standardOctalNum === 777;
 
-  const applyPreset = (u: number, g: number, o: number, s = false, sg = false, st = false) => {
+  const applyPreset = (preset: string) => {
+    let s = false;
+    let sg = false;
+    let st = false;
+    let u = 0;
+    let g = 0;
+    let o = 0;
+
+    if (preset.length === 4) {
+      const spec = parseInt(preset[0], 10);
+      s = (spec & 4) !== 0;
+      sg = (spec & 2) !== 0;
+      st = (spec & 1) !== 0;
+      u = parseInt(preset[1], 10) || 0;
+      g = parseInt(preset[2], 10) || 0;
+      o = parseInt(preset[3], 10) || 0;
+    } else {
+      u = parseInt(preset[0], 10) || 0;
+      g = parseInt(preset[1], 10) || 0;
+      o = parseInt(preset[2], 10) || 0;
+    }
+
     setUserR((u & 4) !== 0);
     setUserW((u & 2) !== 0);
     setUserX((u & 1) !== 0);
@@ -63,7 +90,7 @@ export const PermissionMatrixSim: React.FC<PermissionMatrixSimProps> = ({
     setSgid(sg);
     setSticky(st);
 
-    onApplyChmod?.(u * 100 + g * 10 + o);
+    onApplyChmod?.(parseInt(preset, 10));
   };
 
   return (
@@ -92,37 +119,43 @@ export const PermissionMatrixSim: React.FC<PermissionMatrixSimProps> = ({
           </div>
           <div className="flex flex-wrap gap-2">
             <button
-              onClick={() => applyPreset(7, 5, 0)}
+              onClick={() => applyPreset('750')}
               className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 font-mono text-xs border border-slate-700"
             >
               750 (rwxr-x---) [Secure Dept]
             </button>
             <button
-              onClick={() => applyPreset(7, 5, 5)}
+              onClick={() => applyPreset('755')}
               className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 font-mono text-xs border border-slate-700"
             >
               755 (rwxr-xr-x) [Standard Dir]
             </button>
             <button
-              onClick={() => applyPreset(6, 4, 4)}
+              onClick={() => applyPreset('644')}
               className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 font-mono text-xs border border-slate-700"
             >
               644 (rw-r--r--) [Standard File]
             </button>
             <button
-              onClick={() => applyPreset(7, 0, 0)}
+              onClick={() => applyPreset('700')}
               className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 font-mono text-xs border border-slate-700"
             >
               700 (rwx------) [SSH Key / Root]
             </button>
             <button
-              onClick={() => applyPreset(4, 7, 5, 5, true, false, false)}
+              onClick={() => applyPreset('4755')}
               className="px-2.5 py-1 rounded bg-purple-950/60 hover:bg-purple-900 text-purple-300 font-mono text-xs border border-purple-500/30"
             >
               4755 (rwsr-xr-x) [SUID /usr/bin/passwd]
             </button>
             <button
-              onClick={() => applyPreset(1, 7, 7, 7, false, false, true)}
+              onClick={() => applyPreset('2755')}
+              className="px-2.5 py-1 rounded bg-purple-950/60 hover:bg-purple-900 text-purple-300 font-mono text-xs border border-purple-500/30"
+            >
+              2755 (rwxr-sr-x) [SGID Group Inherit]
+            </button>
+            <button
+              onClick={() => applyPreset('1777')}
               className="px-2.5 py-1 rounded bg-emerald-950/60 hover:bg-emerald-900 text-emerald-300 font-mono text-xs border border-emerald-500/30"
             >
               1777 (rwxrwxrwt) [Sticky /tmp]

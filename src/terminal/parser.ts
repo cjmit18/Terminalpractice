@@ -1,5 +1,5 @@
 /**
- * Command line tokenization and pipeline parsing
+ * Command line tokenization, quote-aware chaining, pipelines, and redirects
  */
 
 export interface ParsedCommand {
@@ -12,13 +12,13 @@ export interface ParsedCommand {
   };
 }
 
-export interface Pipeline {
-  commands: ParsedCommand[];
-  operator?: '&&' | '||' | ';';
+export interface ChainedStage {
+  commandLine: string;
+  nextOp?: '&&' | '||' | ';';
 }
 
 /**
- * Tokenizes a single command string into array of arguments handling quotes
+ * Tokenizes a single command string into an array of arguments handling quotes and escapes
  */
 export function tokenizeArgs(input: string): string[] {
   const tokens: string[] = [];
@@ -69,24 +69,153 @@ export function tokenizeArgs(input: string): string[] {
 }
 
 /**
- * Parses a single command stage, extracting redirects if present
+ * Splits a command line into chained stages separated by &&, ||, or ;
+ * strictly ignoring operators inside quotes.
+ */
+export function splitChainedCommandLine(input: string): ChainedStage[] {
+  const stages: ChainedStage[] = [];
+  let current = '';
+  let inDoubleQuote = false;
+  let inSingleQuote = false;
+  let escaped = false;
+
+  let i = 0;
+  while (i < input.length) {
+    const char = input[i];
+
+    if (escaped) {
+      current += char;
+      escaped = false;
+      i++;
+      continue;
+    }
+
+    if (char === '\\' && !inSingleQuote) {
+      escaped = true;
+      current += char;
+      i++;
+      continue;
+    }
+
+    if (char === '"' && !inSingleQuote) {
+      inDoubleQuote = !inDoubleQuote;
+      current += char;
+      i++;
+      continue;
+    }
+
+    if (char === "'" && !inDoubleQuote) {
+      inSingleQuote = !inSingleQuote;
+      current += char;
+      i++;
+      continue;
+    }
+
+    // Check for operators only outside quotes
+    if (!inDoubleQuote && !inSingleQuote) {
+      if (char === '&' && input[i + 1] === '&') {
+        stages.push({ commandLine: current.trim(), nextOp: '&&' });
+        current = '';
+        i += 2;
+        continue;
+      }
+      if (char === '|' && input[i + 1] === '|') {
+        stages.push({ commandLine: current.trim(), nextOp: '||' });
+        current = '';
+        i += 2;
+        continue;
+      }
+      if (char === ';') {
+        stages.push({ commandLine: current.trim(), nextOp: ';' });
+        current = '';
+        i++;
+        continue;
+      }
+    }
+
+    current += char;
+    i++;
+  }
+
+  if (current.trim().length > 0 || stages.length > 0) {
+    stages.push({ commandLine: current.trim() });
+  }
+
+  return stages.filter(s => s.commandLine.length > 0);
+}
+
+/**
+ * Parses a single command stage, extracting redirects if present outside quotes
  */
 export function parseSingleCommand(cmdStr: string): ParsedCommand {
   const trimmed = cmdStr.trim();
-  let redirect: { type: '>' | '>>'; target: string } | undefined;
-  let body = trimmed;
+  let inDoubleQuote = false;
+  let inSingleQuote = false;
+  let escaped = false;
+  let redirectIndex = -1;
+  let redirectType: '>' | '>>' = '>';
 
-  // Check for append >>
-  const appendMatch = trimmed.match(/^(.*?)\s*>>\s*([^\s|&;]+)(.*)$/);
-  if (appendMatch) {
-    body = appendMatch[1] + (appendMatch[3] || '');
-    redirect = { type: '>>', target: appendMatch[2] };
-  } else {
-    // Check for overwrite >
-    const overwriteMatch = trimmed.match(/^(.*?)\s*>\s*([^\s|&;]+)(.*)$/);
-    if (overwriteMatch) {
-      body = overwriteMatch[1] + (overwriteMatch[3] || '');
-      redirect = { type: '>', target: overwriteMatch[2] };
+  // Find redirect operators outside quotes
+  for (let i = 0; i < trimmed.length; i++) {
+    const char = trimmed[i];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (char === '\\' && !inSingleQuote) {
+      escaped = true;
+      continue;
+    }
+
+    if (char === '"' && !inSingleQuote) {
+      inDoubleQuote = !inDoubleQuote;
+      continue;
+    }
+
+    if (char === "'" && !inDoubleQuote) {
+      inSingleQuote = !inSingleQuote;
+      continue;
+    }
+
+    if (!inDoubleQuote && !inSingleQuote) {
+      // Check if this is a stderr redirect like 2> or 2>>
+      const isStderrRedirect = i > 0 && trimmed[i - 1] === '2' && (i === 1 || /\s/.test(trimmed[i - 2]));
+      if (isStderrRedirect) {
+        // Skip stderr redirection from capturing stdout
+        continue;
+      }
+
+      if (char === '>' && trimmed[i + 1] === '>') {
+        redirectIndex = i;
+        redirectType = '>>';
+        break;
+      } else if (char === '>') {
+        redirectIndex = i;
+        redirectType = '>';
+        break;
+      }
+    }
+  }
+
+  let body = trimmed;
+  let redirect: { type: '>' | '>>'; target: string } | undefined;
+
+  if (redirectIndex !== -1) {
+    // If preceded by 1 (e.g. 1> or 1>>), strip the 1
+    let cutPos = redirectIndex;
+    if (cutPos > 0 && trimmed[cutPos - 1] === '1' && (cutPos === 1 || /\s/.test(trimmed[cutPos - 2]))) {
+      cutPos--;
+    }
+    body = trimmed.slice(0, cutPos).trim();
+    const after = trimmed.slice(redirectIndex + (redirectType === '>>' ? 2 : 1)).trim();
+    const targetTokens = tokenizeArgs(after);
+    if (targetTokens.length > 0) {
+      redirect = {
+        type: redirectType,
+        target: targetTokens[0],
+      };
     }
   }
 
@@ -107,26 +236,57 @@ export function parseSingleCommand(cmdStr: string): ParsedCommand {
 
 /**
  * Parses a piped line (e.g. "cat /var/log/syslog | grep error | wc -l")
+ * ignoring pipes that are inside quotes or double pipes (||)
  */
 export function parsePipelinedLine(line: string): ParsedCommand[] {
-  // Split on pipe (|), ignoring pipes inside quotes
   const stages: string[] = [];
   let current = '';
   let inDoubleQuote = false;
   let inSingleQuote = false;
+  let escaped = false;
 
   for (let i = 0; i < line.length; i++) {
     const char = line[i];
-    if (char === '"' && !inSingleQuote) inDoubleQuote = !inDoubleQuote;
-    if (char === "'" && !inDoubleQuote) inSingleQuote = !inSingleQuote;
 
+    if (escaped) {
+      current += char;
+      escaped = false;
+      continue;
+    }
+
+    if (char === '\\' && !inSingleQuote) {
+      escaped = true;
+      current += char;
+      continue;
+    }
+
+    if (char === '"' && !inSingleQuote) {
+      inDoubleQuote = !inDoubleQuote;
+      current += char;
+      continue;
+    }
+
+    if (char === "'" && !inDoubleQuote) {
+      inSingleQuote = !inSingleQuote;
+      current += char;
+      continue;
+    }
+
+    // Only split on single pipe outside quotes (not part of ||)
     if (char === '|' && !inDoubleQuote && !inSingleQuote) {
+      if (line[i + 1] === '|') {
+        // Skip over the || pair
+        current += '||';
+        i++;
+        continue;
+      }
       stages.push(current);
       current = '';
     } else {
       current += char;
     }
   }
+
   if (current.trim().length > 0) {
     stages.push(current);
   }

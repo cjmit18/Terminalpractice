@@ -1,7 +1,8 @@
 import { ExamModule } from '../types/modules';
+import { SystemState } from '../types/terminal';
 import { createDefaultLinuxFs, getNodeAtPath } from '../terminal/filesystem';
 
-const baseLinuxState = {
+const baseLinuxState: SystemState = {
   hostname: 'lpi-lab01',
   currentUser: 'student',
   currentGroup: 'student',

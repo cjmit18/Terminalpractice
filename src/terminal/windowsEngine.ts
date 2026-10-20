@@ -1,6 +1,6 @@
 import { FileNode, SystemState, TerminalShell } from '../types/terminal';
 import { cloneFileSystem, getNodeAtPath, normalizePath, createNode, removeNode } from './filesystem';
-import { parseSingleCommand, tokenizeArgs } from './parser';
+import { parseSingleCommand, tokenizeArgs, splitChainedCommandLine } from './parser';
 
 export interface WindowsExecutionResult {
   stdout: string;
@@ -50,6 +50,42 @@ export function executeWindowsLine(
 
   if (shell === 'powershell') {
     return executePowerShellCommand(line, cwd, fs, state);
+  }
+
+  // Handle chaining with splitChainedCommandLine for CMD
+  const stages = splitChainedCommandLine(line);
+  if (stages.length > 1) {
+    let currentCwd = cwd;
+    let currentFs = fs;
+    let currentState = state;
+    let accumulatedStdout = '';
+    let lastExitCode = 0;
+    let lastStderr = '';
+
+    for (let i = 0; i < stages.length; i++) {
+      const stage = stages[i];
+      const prevOp = i > 0 ? stages[i - 1].nextOp : undefined;
+      if (prevOp === '&&' && lastExitCode !== 0) continue;
+      if (prevOp === '||' && lastExitCode === 0) continue;
+
+      const res = executeCmdCommand(stage.commandLine, currentCwd, currentFs, currentState);
+      currentCwd = res.newCwd;
+      currentFs = res.newFs;
+      currentState = res.newState;
+      lastExitCode = res.exitCode;
+      lastStderr = res.stderr;
+      if (res.stdout) {
+        accumulatedStdout += (accumulatedStdout ? '\n' : '') + res.stdout;
+      }
+    }
+    return {
+      stdout: accumulatedStdout,
+      stderr: lastStderr,
+      exitCode: lastExitCode,
+      newCwd: currentCwd,
+      newFs: currentFs,
+      newState: currentState,
+    };
   }
 
   return executeCmdCommand(line, cwd, fs, state);
@@ -207,7 +243,8 @@ function executeCmdCommand(
   let activeState = { ...state };
   let activeCwd = cwd;
 
-  switch (name) {
+  const runInner = (): WindowsExecutionResult => {
+    switch (name) {
     case 'cls':
       return { stdout: '\x1b[2J\x1b[0;0H', stderr: '', exitCode: 0, newCwd: activeCwd, newFs: activeFs, newState: activeState };
 
@@ -643,7 +680,29 @@ function executeCmdCommand(
         newFs: activeFs,
         newState: activeState,
       };
+    }
+  };
+
+  const res = runInner();
+
+  // Handle stdout redirection
+  if (parsed.redirect && res.exitCode === 0) {
+    const targetPath = normalizePath(parsed.redirect.target, res.newCwd, true);
+    const existing = getNodeAtPath(res.newFs, targetPath, true);
+    if (existing && existing.type === 'file') {
+      if (parsed.redirect.type === '>>') {
+        existing.content = (existing.content || '') + (existing.content ? '\r\n' : '') + res.stdout;
+      } else {
+        existing.content = res.stdout;
+      }
+      existing.updatedAt = new Date().toISOString();
+    } else {
+      createNode(res.newFs, targetPath, 'file', res.stdout, true, 'Administrator', 'Administrators', 777);
+    }
+    return { ...res, stdout: '' };
   }
+
+  return res;
 }
 
 function executePowerShellCommand(

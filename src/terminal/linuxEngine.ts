@@ -6,9 +6,14 @@ import {
   createNode, 
   removeNode, 
   octalToSymbolic, 
-  symbolicToOctal 
+  symbolicToOctal,
+  canReadNode,
+  canWriteNode,
+  canDeleteNode,
+  checkNodePermission,
+  checkPathTraversal
 } from './filesystem';
-import { parsePipelinedLine, ParsedCommand } from './parser';
+import { parsePipelinedLine, splitChainedCommandLine, ParsedCommand } from './parser';
 
 export interface LinuxExecutionResult {
   stdout: string;
@@ -30,42 +35,47 @@ export function executeLinuxLine(
     return { stdout: '', stderr: '', exitCode: 0, newCwd: cwd, newFs: fs, newState: state };
   }
 
-  // Handle chaining: e.g. "cmd1 && cmd2"
-  if (line.includes('&&')) {
-    const parts = line.split('&&');
-    let currentCwd = cwd;
-    let currentFs = fs;
-    let currentState = state;
-    let combinedStdout = '';
+  // Use quote-aware chained command splitter (handling &&, ||, ;)
+  const stages = splitChainedCommandLine(line);
+  let currentCwd = cwd;
+  let currentFs = fs;
+  let currentState = state;
+  let accumulatedStdout = '';
+  let lastExitCode = 0;
+  let lastStderr = '';
 
-    for (const part of parts) {
-      const res = executeLinuxPipeline(part.trim(), currentCwd, currentFs, currentState);
-      combinedStdout += (combinedStdout ? '\n' : '') + res.stdout;
-      currentCwd = res.newCwd;
-      currentFs = res.newFs;
-      currentState = res.newState;
-      if (res.exitCode !== 0) {
-        return {
-          stdout: combinedStdout,
-          stderr: res.stderr,
-          exitCode: res.exitCode,
-          newCwd: currentCwd,
-          newFs: currentFs,
-          newState: currentState,
-        };
-      }
+  for (let i = 0; i < stages.length; i++) {
+    const stage = stages[i];
+    const prevOp = i > 0 ? stages[i - 1].nextOp : undefined;
+
+    // Check operator conditions from previous stage
+    if (prevOp === '&&' && lastExitCode !== 0) {
+      continue;
     }
-    return {
-      stdout: combinedStdout,
-      stderr: '',
-      exitCode: 0,
-      newCwd: currentCwd,
-      newFs: currentFs,
-      newState: currentState,
-    };
+    if (prevOp === '||' && lastExitCode === 0) {
+      continue;
+    }
+
+    const res = executeLinuxPipeline(stage.commandLine, currentCwd, currentFs, currentState);
+    currentCwd = res.newCwd;
+    currentFs = res.newFs;
+    currentState = res.newState;
+    lastExitCode = res.exitCode;
+    lastStderr = res.stderr;
+
+    if (res.stdout) {
+      accumulatedStdout += (accumulatedStdout ? '\n' : '') + res.stdout;
+    }
   }
 
-  return executeLinuxPipeline(line, cwd, fs, state);
+  return {
+    stdout: accumulatedStdout,
+    stderr: lastStderr,
+    exitCode: lastExitCode,
+    newCwd: currentCwd,
+    newFs: currentFs,
+    newState: currentState,
+  };
 }
 
 function executeLinuxPipeline(
@@ -84,7 +94,6 @@ function executeLinuxPipeline(
 
   for (let i = 0; i < stages.length; i++) {
     const stage = stages[i];
-    const isFirst = i === 0;
     const isLast = i === stages.length - 1;
 
     const res = executeSingleLinuxCommand(stage, currentCwd, activeFs, activeState, currentInput);
@@ -94,10 +103,11 @@ function executeLinuxPipeline(
     exitCode = res.exitCode;
     stderr = res.stderr;
 
-    if (exitCode !== 0) {
+    // If an intermediate command failed with an actual error message, abort the pipeline
+    if (exitCode !== 0 && res.stderr) {
       return {
         stdout: '',
-        stderr: res.stderr || `Command '${stage.name}' failed with exit code ${exitCode}`,
+        stderr: res.stderr,
         exitCode,
         newCwd: currentCwd,
         newFs: activeFs,
@@ -105,21 +115,38 @@ function executeLinuxPipeline(
       };
     }
 
+    // Pass stdout to the next stage in the pipeline
     currentInput = res.stdout;
 
     // Handle stage redirection if last stage has > or >>
     if (isLast && stage.redirect) {
       const targetPath = normalizePath(stage.redirect.target, currentCwd, false);
-      const existing = getNodeAtPath(activeFs, targetPath, false);
+      const isRoot = stage.name === 'sudo' || activeState.isRootOrAdmin || activeState.currentUser === 'root';
+      const effUser = isRoot ? 'root' : activeState.currentUser;
+      const effGroup = isRoot ? 'root' : activeState.currentGroup;
 
+      const check = canWriteNode(activeFs, targetPath, effUser, effGroup, false);
+      if (!check.ok) {
+        return {
+          stdout: '',
+          stderr: `bash: ${stage.redirect.target}: ${check.error || 'Permission denied'}`,
+          exitCode: 1,
+          newCwd: currentCwd,
+          newFs: activeFs,
+          newState: activeState,
+        };
+      }
+
+      const existing = getNodeAtPath(activeFs, targetPath, false);
       if (existing && existing.type === 'file') {
         if (stage.redirect.type === '>>') {
           existing.content = (existing.content || '') + (existing.content ? '\n' : '') + currentInput;
         } else {
           existing.content = currentInput;
         }
+        existing.updatedAt = new Date().toISOString();
       } else {
-        createNode(activeFs, targetPath, 'file', currentInput, false, activeState.currentUser, activeState.currentGroup, 644);
+        createNode(activeFs, targetPath, 'file', currentInput, false, effUser, effGroup, 644);
       }
       return {
         stdout: '',
@@ -181,8 +208,30 @@ function executeSingleLinuxCommand(
     args = args.slice(1);
   }
 
+  // Determine root & effective user/group
+  const isRoot = isSudo || activeState.isRootOrAdmin || activeState.currentUser === 'root';
+  const effUser = isRoot ? 'root' : activeState.currentUser;
+  const effGroup = isRoot ? 'root' : activeState.currentGroup;
+
   // Built-in commands
   switch (name) {
+    case 'su': {
+      activeState.currentUser = 'root';
+      activeState.currentGroup = 'root';
+      activeState.isRootOrAdmin = true;
+      return { stdout: '', stderr: '', exitCode: 0, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+    }
+
+    case 'exit': {
+      if (activeState.currentUser === 'root' || activeState.isRootOrAdmin) {
+        activeState.currentUser = 'student';
+        activeState.currentGroup = 'student';
+        activeState.isRootOrAdmin = false;
+        return { stdout: 'exit', stderr: '', exitCode: 0, newCwd: '/home/student', newFs: activeFs, newState: activeState };
+      }
+      return { stdout: 'exit', stderr: '', exitCode: 0, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+    }
+
     case 'pwd':
       return { stdout: activeCwd, stderr: '', exitCode: 0, newCwd: activeCwd, newFs: activeFs, newState: activeState };
 
@@ -190,10 +239,10 @@ function executeSingleLinuxCommand(
       return { stdout: '\x1b[2J\x1b[0;0H', stderr: '', exitCode: 0, newCwd: activeCwd, newFs: activeFs, newState: activeState };
 
     case 'whoami':
-      return { stdout: isSudo ? 'root' : activeState.currentUser, stderr: '', exitCode: 0, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+      return { stdout: effUser, stderr: '', exitCode: 0, newCwd: activeCwd, newFs: activeFs, newState: activeState };
 
     case 'id': {
-      const u = isSudo ? 'root' : activeState.currentUser;
+      const u = effUser;
       const uid = u === 'root' ? 0 : 1000;
       const gid = u === 'root' ? 0 : 1000;
       const groups = u === 'root' 
@@ -276,6 +325,9 @@ function executeSingleLinuxCommand(
       if (node.type !== 'directory') {
         return { stdout: '', stderr: `cd: ${target}: Not a directory`, exitCode: 1, newCwd: activeCwd, newFs: activeFs, newState: activeState };
       }
+      if (!isRoot && !checkNodePermission(node, effUser, effGroup, 'x')) {
+        return { stdout: '', stderr: `bash: cd: ${target}: Permission denied`, exitCode: 1, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+      }
       return { stdout: '', stderr: '', exitCode: 0, newCwd: resolved, newFs: activeFs, newState: activeState };
     }
 
@@ -288,6 +340,10 @@ function executeSingleLinuxCommand(
 
       if (!node) {
         return { stdout: '', stderr: `ls: cannot access '${targetPath}': No such file or directory`, exitCode: 2, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+      }
+
+      if (!isRoot && !checkNodePermission(node, effUser, effGroup, 'r')) {
+        return { stdout: '', stderr: `ls: cannot open directory '${targetPath}': Permission denied`, exitCode: 2, newCwd: activeCwd, newFs: activeFs, newState: activeState };
       }
 
       if (node.type === 'file') {
@@ -343,6 +399,10 @@ function executeSingleLinuxCommand(
         if (node.type === 'directory') {
           return { stdout: '', stderr: `cat: ${arg}: Is a directory`, exitCode: 1, newCwd: activeCwd, newFs: activeFs, newState: activeState };
         }
+        const readCheck = canReadNode(activeFs, targetPath, effUser, effGroup, false);
+        if (!readCheck.ok) {
+          return { stdout: '', stderr: `cat: ${arg}: ${readCheck.error || 'Permission denied'}`, exitCode: 1, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+        }
         outputs.push(node.content || '');
       }
       return { stdout: outputs.join('\n'), stderr: '', exitCode: 0, newCwd: activeCwd, newFs: activeFs, newState: activeState };
@@ -367,6 +427,10 @@ function executeSingleLinuxCommand(
         const node = getNodeAtPath(activeFs, targetPath, false);
         if (!node || node.type !== 'file') {
           return { stdout: '', stderr: `head: cannot open '${filename}'`, exitCode: 1, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+        }
+        const readCheck = canReadNode(activeFs, targetPath, effUser, effGroup, false);
+        if (!readCheck.ok) {
+          return { stdout: '', stderr: `head: cannot open '${filename}': ${readCheck.error || 'Permission denied'}`, exitCode: 1, newCwd: activeCwd, newFs: activeFs, newState: activeState };
         }
         content = node.content || '';
       }
@@ -394,6 +458,10 @@ function executeSingleLinuxCommand(
         if (!node || node.type !== 'file') {
           return { stdout: '', stderr: `tail: cannot open '${filename}'`, exitCode: 1, newCwd: activeCwd, newFs: activeFs, newState: activeState };
         }
+        const readCheck = canReadNode(activeFs, targetPath, effUser, effGroup, false);
+        if (!readCheck.ok) {
+          return { stdout: '', stderr: `tail: cannot open '${filename}': ${readCheck.error || 'Permission denied'}`, exitCode: 1, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+        }
         content = node.content || '';
       }
       const allLines = content.split('\n');
@@ -412,14 +480,17 @@ function executeSingleLinuxCommand(
     }
 
     case 'mkdir': {
-      const hasP = args.includes('-p');
       const dirs = args.filter(a => !a.startsWith('-'));
       if (dirs.length === 0) {
         return { stdout: '', stderr: 'mkdir: missing operand', exitCode: 1, newCwd: activeCwd, newFs: activeFs, newState: activeState };
       }
       for (const d of dirs) {
         const targetPath = normalizePath(d, activeCwd, false);
-        createNode(activeFs, targetPath, 'directory', '', false, activeState.currentUser, activeState.currentGroup, 755);
+        const check = canWriteNode(activeFs, targetPath, effUser, effGroup, false);
+        if (!check.ok) {
+          return { stdout: '', stderr: `mkdir: cannot create directory '${d}': ${check.error || 'Permission denied'}`, exitCode: 1, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+        }
+        createNode(activeFs, targetPath, 'directory', '', false, effUser, effGroup, 755);
       }
       return { stdout: '', stderr: '', exitCode: 0, newCwd: activeCwd, newFs: activeFs, newState: activeState };
     }
@@ -431,11 +502,15 @@ function executeSingleLinuxCommand(
       }
       for (const f of files) {
         const targetPath = normalizePath(f, activeCwd, false);
+        const check = canWriteNode(activeFs, targetPath, effUser, effGroup, false);
+        if (!check.ok) {
+          return { stdout: '', stderr: `touch: cannot touch '${f}': ${check.error || 'Permission denied'}`, exitCode: 1, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+        }
         const existing = getNodeAtPath(activeFs, targetPath, false);
         if (existing) {
           existing.updatedAt = new Date().toISOString();
         } else {
-          createNode(activeFs, targetPath, 'file', '', false, activeState.currentUser, activeState.currentGroup, 644);
+          createNode(activeFs, targetPath, 'file', '', false, effUser, effGroup, 644);
         }
       }
       return { stdout: '', stderr: '', exitCode: 0, newCwd: activeCwd, newFs: activeFs, newState: activeState };
@@ -448,6 +523,10 @@ function executeSingleLinuxCommand(
       }
       for (const t of targets) {
         const targetPath = normalizePath(t, activeCwd, false);
+        const check = canDeleteNode(activeFs, targetPath, effUser, effGroup, false);
+        if (!check.ok) {
+          return { stdout: '', stderr: `rm: cannot remove '${t}': ${check.error || 'Permission denied'}`, exitCode: 1, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+        }
         removeNode(activeFs, targetPath, false);
       }
       return { stdout: '', stderr: '', exitCode: 0, newCwd: activeCwd, newFs: activeFs, newState: activeState };
@@ -459,13 +538,18 @@ function executeSingleLinuxCommand(
         return { stdout: '', stderr: 'chmod: missing operand', exitCode: 1, newCwd: activeCwd, newFs: activeFs, newState: activeState };
       }
       const modeArg = args[0];
-      const targetPaths = args.slice(1);
+      const targetPaths = args.slice(1).filter(a => !a.startsWith('-'));
 
       for (const p of targetPaths) {
         const resolved = normalizePath(p, activeCwd, false);
         const node = getNodeAtPath(activeFs, resolved, false);
         if (!node) {
           return { stdout: '', stderr: `chmod: cannot access '${p}': No such file or directory`, exitCode: 1, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+        }
+
+        // Only file owner or root can change mode in Linux
+        if (!isRoot && effUser !== node.owner) {
+          return { stdout: '', stderr: `chmod: changing permissions of '${p}': Operation not permitted`, exitCode: 1, newCwd: activeCwd, newFs: activeFs, newState: activeState };
         }
 
         if (/^[0-7]{3,4}$/.test(modeArg)) {
@@ -487,6 +571,9 @@ function executeSingleLinuxCommand(
       // e.g. chown root:finance /path or chown student /path
       if (args.length < 2) {
         return { stdout: '', stderr: 'chown: missing operand', exitCode: 1, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+      }
+      if (!isRoot) {
+        return { stdout: '', stderr: `chown: changing ownership of '${args[1]}': Operation not permitted`, exitCode: 1, newCwd: activeCwd, newFs: activeFs, newState: activeState };
       }
       const spec = args[0];
       const targetPaths = args.slice(1);
@@ -538,6 +625,10 @@ function executeSingleLinuxCommand(
         const node = getNodeAtPath(activeFs, targetPath, false);
         if (!node || node.type !== 'file') {
           return { stdout: '', stderr: `grep: ${fileArg}: No such file or directory`, exitCode: 2, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+        }
+        const check = canReadNode(activeFs, targetPath, effUser, effGroup, false);
+        if (!check.ok) {
+          return { stdout: '', stderr: `grep: ${fileArg}: ${check.error || 'Permission denied'}`, exitCode: 2, newCwd: activeCwd, newFs: activeFs, newState: activeState };
         }
         content = node.content || '';
       }
@@ -642,7 +733,7 @@ function executeSingleLinuxCommand(
         const node = getNodeAtPath(activeFs, targetPath, false);
         if (node && node.type === 'file') content = node.content || '';
       }
-      const lines = content.split('\n').length - (content.endsWith('\n') ? 1 : 0);
+      const lines = content.length === 0 ? 0 : (content.split('\n').length - (content.endsWith('\n') ? 1 : 0));
       const words = content.trim().split(/\s+/).filter(Boolean).length;
       const bytes = content.length;
 
@@ -691,7 +782,11 @@ function executeSingleLinuxCommand(
         return { stdout: `● ${srvName}.service - Service\n   Active: active (running)`, stderr: '', exitCode: 0, newCwd: activeCwd, newFs: activeFs, newState: activeState };
       }
 
-      if (sub === 'restart' || sub === 'start' || sub === 'reload') {
+      if ((sub === 'restart' || sub === 'start' || sub === 'stop' || sub === 'reload' || sub === 'enable' || sub === 'disable') && !isRoot) {
+        return { stdout: '', stderr: `Failed to ${sub} ${srvName}: Interactive authentication required or root privileges needed (try 'sudo systemctl ${sub} ${srvName}')`, exitCode: 1, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+      }
+
+      if (sub === 'restart' || sub === 'start' || sub === 'reload' || sub === 'stop') {
         return { stdout: '', stderr: '', exitCode: 0, newCwd: activeCwd, newFs: activeFs, newState: activeState };
       }
       return { stdout: '', stderr: '', exitCode: 0, newCwd: activeCwd, newFs: activeFs, newState: activeState };
@@ -757,6 +852,9 @@ function executeSingleLinuxCommand(
     }
 
     case 'fdisk': {
+      if (!args.includes('-l') && !isRoot) {
+        return { stdout: '', stderr: 'fdisk: cannot open /dev/sda: Permission denied', exitCode: 1, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+      }
       if (args.includes('-l')) {
         const out = [
           'Disk /dev/sda: 50 GiB, 53687091200 bytes, 104857600 sectors',
@@ -779,6 +877,16 @@ function executeSingleLinuxCommand(
     case 'apt':
     case 'apt-get': {
       const sub = args[0];
+      if ((sub === 'update' || sub === 'install' || sub === 'upgrade' || sub === 'remove') && !isRoot) {
+        return {
+          stdout: '',
+          stderr: 'E: Could not open lock file /var/lib/dpkg/lock-frontend - open (13: Permission denied)\nE: Unable to acquire the dpkg frontend lock, are you root?',
+          exitCode: 100,
+          newCwd: activeCwd,
+          newFs: activeFs,
+          newState: activeState,
+        };
+      }
       if (sub === 'update') {
         const out = [
           'Hit:1 http://archive.ubuntu.com/ubuntu jammy InRelease',
@@ -809,6 +917,9 @@ function executeSingleLinuxCommand(
     }
 
     case 'useradd': {
+      if (!isRoot) {
+        return { stdout: '', stderr: 'useradd: Permission denied.', exitCode: 1, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+      }
       // Handles useradd -m -G developers sarah
       const username = args[args.length - 1];
       if (!username || username.startsWith('-')) {
@@ -825,6 +936,9 @@ function executeSingleLinuxCommand(
     }
 
     case 'usermod': {
+      if (!isRoot) {
+        return { stdout: '', stderr: 'usermod: Permission denied.', exitCode: 1, newCwd: activeCwd, newFs: activeFs, newState: activeState };
+      }
       // Handles usermod -aG developers sarah
       return { stdout: '', stderr: '', exitCode: 0, newCwd: activeCwd, newFs: activeFs, newState: activeState };
     }

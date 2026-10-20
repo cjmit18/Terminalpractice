@@ -37,6 +37,71 @@ export function symbolicToOctal(symbolic: string): number {
 }
 
 /**
+ * Checks if a user/group has permission (r, w, or x) on a given node
+ */
+export function checkNodePermission(
+  node: FileNode,
+  user: string,
+  group: string,
+  mode: 'r' | 'w' | 'x'
+): boolean {
+  if (user === 'root') {
+    if (mode === 'x' && node.type === 'file') {
+      return node.permissions.includes('x') || node.permissions.includes('s');
+    }
+    return true;
+  }
+
+  const p = node.permissions.slice(-9);
+  if (p.length < 9) return true;
+
+  if (user === node.owner) {
+    if (mode === 'r') return p[0] === 'r';
+    if (mode === 'w') return p[1] === 'w';
+    if (mode === 'x') return p[2] === 'x' || p[2] === 's';
+  } else if (group === node.group) {
+    if (mode === 'r') return p[3] === 'r';
+    if (mode === 'w') return p[4] === 'w';
+    if (mode === 'x') return p[5] === 'x' || p[5] === 's';
+  } else {
+    if (mode === 'r') return p[6] === 'r';
+    if (mode === 'w') return p[7] === 'w';
+    if (mode === 'x') return p[8] === 'x' || p[8] === 't';
+  }
+  return false;
+}
+
+/**
+ * Checks if a path can be traversed (x permission on all parent directories)
+ */
+export function checkPathTraversal(
+  root: FileNode,
+  path: string,
+  user: string,
+  group: string,
+  isWindows = false
+): boolean {
+  if (isWindows || user === 'root') return true;
+
+  const parts = path.split('/').filter(Boolean);
+  let current: FileNode = root;
+
+  // Root directory traversal
+  if (!checkNodePermission(current, user, group, 'x')) return false;
+
+  for (let i = 0; i < parts.length - 1; i++) {
+    const seg = parts[i];
+    if (!current.children || !current.children[seg]) return false;
+    current = current.children[seg];
+    if (current.type === 'directory' && !checkNodePermission(current, user, group, 'x')) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/**
  * Deep clones a file system tree
  */
 export function cloneFileSystem(root: FileNode): FileNode {
@@ -214,6 +279,101 @@ export function removeNode(root: FileNode, path: string, isWindows = false): boo
 }
 
 /**
+ * Validates read access on a path for a given user/group
+ */
+export function canReadNode(
+  root: FileNode,
+  path: string,
+  user: string,
+  group: string,
+  isWindows = false
+): { ok: boolean; error?: string } {
+  if (isWindows || user === 'root') return { ok: true };
+  if (!checkPathTraversal(root, path, user, group, isWindows)) {
+    return { ok: false, error: 'Permission denied' };
+  }
+  const node = getNodeAtPath(root, path, isWindows);
+  if (!node) return { ok: false, error: 'No such file or directory' };
+  if (!checkNodePermission(node, user, group, 'r')) {
+    return { ok: false, error: 'Permission denied' };
+  }
+  return { ok: true };
+}
+
+/**
+ * Validates write access on a path for a given user/group
+ */
+export function canWriteNode(
+  root: FileNode,
+  path: string,
+  user: string,
+  group: string,
+  isWindows = false
+): { ok: boolean; error?: string } {
+  if (isWindows || user === 'root') return { ok: true };
+  if (!checkPathTraversal(root, path, user, group, isWindows)) {
+    return { ok: false, error: 'Permission denied' };
+  }
+  const node = getNodeAtPath(root, path, isWindows);
+  if (node) {
+    if (!checkNodePermission(node, user, group, 'w')) {
+      return { ok: false, error: 'Permission denied' };
+    }
+    return { ok: true };
+  }
+
+  // File does not exist yet: check parent directory write and search permissions
+  const parts = path.split('/').filter(Boolean);
+  const parentPath = '/' + parts.slice(0, parts.length - 1).join('/');
+  const parent = getNodeAtPath(root, parentPath, isWindows);
+  if (!parent || parent.type !== 'directory') {
+    return { ok: false, error: 'No such file or directory' };
+  }
+  if (!checkNodePermission(parent, user, group, 'w')) {
+    return { ok: false, error: 'Permission denied' };
+  }
+  return { ok: true };
+}
+
+/**
+ * Validates deletion access on a path for a given user/group (including sticky bit enforcement)
+ */
+export function canDeleteNode(
+  root: FileNode,
+  path: string,
+  user: string,
+  group: string,
+  isWindows = false
+): { ok: boolean; error?: string } {
+  if (isWindows || user === 'root') return { ok: true };
+  const parts = path.split('/').filter(Boolean);
+  if (parts.length === 0) return { ok: false, error: 'Cannot remove root directory' };
+
+  const parentPath = '/' + parts.slice(0, parts.length - 1).join('/');
+  const parent = getNodeAtPath(root, parentPath, isWindows);
+  if (!parent || parent.type !== 'directory') {
+    return { ok: false, error: 'No such file or directory' };
+  }
+
+  if (!checkNodePermission(parent, user, group, 'w')) {
+    return { ok: false, error: 'Permission denied' };
+  }
+
+  const node = getNodeAtPath(root, path, isWindows);
+  if (!node) return { ok: false, error: 'No such file or directory' };
+
+  // Sticky bit (t) on parent directory: only file owner or directory owner (or root) may delete
+  const isSticky = parent.permissions.endsWith('t') || parent.permissions.endsWith('T');
+  if (isSticky) {
+    if (user !== node.owner && user !== parent.owner) {
+      return { ok: false, error: 'Operation not permitted' };
+    }
+  }
+
+  return { ok: true };
+}
+
+/**
  * Creates default Linux root filesystem
  */
 export function createDefaultLinuxFs(): FileNode {
@@ -269,6 +429,16 @@ export function createDefaultLinuxFs(): FileNode {
             group: 'root',
             updatedAt: '2026-10-19T00:00:00Z',
             content: `root:x:0:\nsudo:x:27:student\nstudent:x:1000:\nfinance:x:1002:\ndevelopers:x:1003:\nnginx:x:1001:`
+          },
+          shadow: {
+            name: 'shadow',
+            type: 'file',
+            permissions: '----------',
+            octal: 0,
+            owner: 'root',
+            group: 'shadow',
+            updatedAt: '2026-10-19T00:00:00Z',
+            content: `root:$6$rounds=4096$salt$hashedpassword:19000:0:99999:7:::\nstudent:$6$rounds=4096$salt$studentpasshash:19000:0:99999:7:::\nnginx:*:19000:0:99999:7:::`
           },
           fstab: {
             name: 'fstab',
@@ -394,6 +564,27 @@ export function createDefaultLinuxFs(): FileNode {
                 content: `Oct 19 09:00:01 lpi-lab CRON[1844]: pam_unix(cron:session): session opened for user root\nOct 19 09:12:33 lpi-lab sshd[1902]: Failed password for invalid user admin from 198.51.100.44 port 54122 ssh2\nOct 19 09:12:35 lpi-lab sshd[1904]: Failed password for invalid user admin from 198.51.100.44 port 54124 ssh2\nOct 19 09:12:38 lpi-lab sshd[1906]: Failed password for root from 198.51.100.44 port 54128 ssh2\nOct 19 09:15:20 lpi-lab sudo: student : TTY=pts/0 ; PWD=/home/student ; USER=root ; COMMAND=/usr/bin/apt update`
               }
             }
+          }
+        }
+      },
+      root: {
+        name: 'root',
+        type: 'directory',
+        permissions: 'rwx------',
+        octal: 700,
+        owner: 'root',
+        group: 'root',
+        updatedAt: '2026-10-19T00:00:00Z',
+        children: {
+          '.bashrc': {
+            name: '.bashrc',
+            type: 'file',
+            permissions: 'rw-r--r--',
+            octal: 644,
+            owner: 'root',
+            group: 'root',
+            updatedAt: '2026-10-19T00:00:00Z',
+            content: '# ~/.bashrc: executed by bash(1) for non-login shells.\nexport PATH=$PATH:/usr/sbin',
           }
         }
       },

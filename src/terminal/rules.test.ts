@@ -229,3 +229,148 @@ test('Exam Objectives: LPI and CompTIA modules have valid objectives and verifie
     assert.ok(pbq.solutionWalkthrough.length >= 2, `PBQ ${pbq.id} should have solution steps`);
   }
 });
+
+test('Linux Engine: enforces POSIX permissions and sudo elevation', () => {
+  const fs = createDefaultLinuxFs();
+  const state = {
+    hostname: 'lpi-lab01',
+    currentUser: 'student',
+    currentGroup: 'student',
+    isRootOrAdmin: false,
+    umask: 0o022,
+    interfaces: [],
+    processes: [],
+    services: [],
+    disks: [],
+    adUsers: [],
+    adGroups: [],
+    gpos: [],
+    installedPackages: [],
+    systemIntegrityCorrupted: false,
+    dismRepaired: false,
+    sfcRepaired: false,
+    dnsWorking: true,
+    gatewayWorking: true,
+    firewallBlockedPorts: [],
+    diskpartSelectedDisk: null,
+    diskpartSelectedPartition: null,
+    envVars: {},
+  };
+
+  // Student cannot delete /etc
+  const r1 = executeLinuxLine('rm -rf /etc', '/home/student', fs, state);
+  assert.equal(r1.exitCode, 1);
+  assert.match(r1.stderr, /Permission denied/);
+  assert.ok(getNodeAtPath(r1.newFs, '/etc', false) !== null, '/etc should not have been deleted');
+
+  // Student cannot write into /root
+  const r2 = executeLinuxLine('touch /root/hacked.txt', '/home/student', fs, state);
+  assert.equal(r2.exitCode, 1);
+  assert.match(r2.stderr, /Permission denied/);
+
+  // Student cannot cd into /root (mode 700 owned by root)
+  const r3 = executeLinuxLine('cd /root', '/home/student', fs, state);
+  assert.equal(r3.exitCode, 1);
+  assert.match(r3.stderr, /Permission denied/);
+
+  // Student cannot read /etc/shadow
+  const r4 = executeLinuxLine('cat /etc/shadow', '/home/student', fs, state);
+  assert.equal(r4.exitCode, 1);
+  assert.match(r4.stderr, /Permission denied/);
+
+  // Student cannot chmod root files
+  const r5 = executeLinuxLine('chmod 777 /etc/passwd', '/home/student', fs, state);
+  assert.equal(r5.exitCode, 1);
+  assert.match(r5.stderr, /Operation not permitted/);
+
+  // Student cannot chown
+  const r6 = executeLinuxLine('chown root:root /home/student/notes.txt', '/home/student', fs, state);
+  assert.equal(r6.exitCode, 1);
+  assert.match(r6.stderr, /Operation not permitted/);
+
+  // Student CAN chmod own files
+  const r7 = executeLinuxLine('chmod 600 /home/student/notes.txt', '/home/student', fs, state);
+  assert.equal(r7.exitCode, 0);
+  const noteNode = getNodeAtPath(r7.newFs, '/home/student/notes.txt', false);
+  assert.equal(noteNode?.permissions, 'rw-------');
+
+  // sudo allows root operations
+  const r8 = executeLinuxLine('sudo cat /etc/shadow', '/home/student', fs, state);
+  assert.equal(r8.exitCode, 0);
+  assert.match(r8.stdout, /root:\$6\$/);
+
+  // sudo allows chown
+  const r9 = executeLinuxLine('sudo chown root:finance /home/student/notes.txt', '/home/student', fs, state);
+  assert.equal(r9.exitCode, 0);
+  const chowned = getNodeAtPath(r9.newFs, '/home/student/notes.txt', false);
+  assert.equal(chowned?.owner, 'root');
+  assert.equal(chowned?.group, 'finance');
+
+  // su switches to root and exit switches back
+  const rSu = executeLinuxLine('su', '/home/student', fs, state);
+  assert.equal(rSu.newState.currentUser, 'root');
+  assert.equal(rSu.newState.isRootOrAdmin, true);
+
+  const rExit = executeLinuxLine('exit', '/home/student', fs, rSu.newState);
+  assert.equal(rExit.newState.currentUser, 'student');
+  assert.equal(rExit.newState.isRootOrAdmin, false);
+});
+
+test('Shell Parser & Engine: handles quote safety, operators (&&, ||, ;), and grep pipeline', () => {
+  const fs = createDefaultLinuxFs();
+  const state = {
+    hostname: 'lpi-lab01',
+    currentUser: 'student',
+    currentGroup: 'student',
+    isRootOrAdmin: false,
+    umask: 0o022,
+    interfaces: [],
+    processes: [],
+    services: [],
+    disks: [],
+    adUsers: [],
+    adGroups: [],
+    gpos: [],
+    installedPackages: [],
+    systemIntegrityCorrupted: false,
+    dismRepaired: false,
+    sfcRepaired: false,
+    dnsWorking: true,
+    gatewayWorking: true,
+    firewallBlockedPorts: [],
+    diskpartSelectedDisk: null,
+    diskpartSelectedPartition: null,
+    envVars: {},
+  };
+
+  // echo "a > b" does not redirect
+  const rQuoteRedirect = executeLinuxLine('echo "a > b"', '/home/student', fs, state);
+  assert.equal(rQuoteRedirect.stdout, 'a > b');
+  assert.equal(rQuoteRedirect.exitCode, 0);
+
+  // echo "x && y" does not split
+  const rQuoteAnd = executeLinuxLine('echo "x && y"', '/home/student', fs, state);
+  assert.equal(rQuoteAnd.stdout, 'x && y');
+  assert.equal(rQuoteAnd.exitCode, 0);
+
+  // grep with no match returns empty output and exit code 1 without artificial failure message
+  const rGrepMiss = executeLinuxLine('grep nonexisting /etc/passwd', '/home/student', fs, state);
+  assert.equal(rGrepMiss.stdout, '');
+  assert.equal(rGrepMiss.stderr, '');
+  assert.equal(rGrepMiss.exitCode, 1);
+
+  // grep with no match piped to wc -l produces 0
+  const rGrepPipe = executeLinuxLine('grep nonexisting /etc/passwd | wc -l', '/home/student', fs, state);
+  assert.equal(rGrepPipe.stdout.trim(), '0');
+
+  // Chained operators: && and ||
+  const rChainSuccess = executeLinuxLine('echo first && echo second', '/home/student', fs, state);
+  assert.equal(rChainSuccess.stdout, 'first\nsecond');
+
+  const rChainOr = executeLinuxLine('grep nonexisting /etc/passwd || echo "fallback message"', '/home/student', fs, state);
+  assert.equal(rChainOr.stdout, 'fallback message');
+
+  const rSemicolon = executeLinuxLine('echo step1 ; echo step2', '/home/student', fs, state);
+  assert.equal(rSemicolon.stdout, 'step1\nstep2');
+});
+

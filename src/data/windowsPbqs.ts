@@ -1,7 +1,8 @@
 import { ExamModule } from '../types/modules';
+import { SystemState } from '../types/terminal';
 import { createDefaultWindowsFs, getNodeAtPath } from '../terminal/filesystem';
 
-const baseWindowsState = {
+const baseWindowsState: SystemState = {
   hostname: 'WIN-CLIENT01',
   currentUser: 'Administrator',
   currentGroup: 'Administrators',
@@ -313,7 +314,7 @@ export const WINDOWS_PBQS: ExamModule[] = [
         verifier: (_, state) => {
           const user = state.adUsers.find(u => u.sAMAccountName.toLowerCase() === 'alex');
           const group = state.adGroups.find(g => g.name === 'Domain Admins');
-          return !!user && (user.memberOf.includes('Domain Admins') || (group && group.members.includes('alex')));
+          return Boolean(user && (user.memberOf.includes('Domain Admins') || (group && group.members.includes('alex'))));
         },
       },
     ],
