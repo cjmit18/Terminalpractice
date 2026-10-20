@@ -30,6 +30,8 @@ export interface ExamModule {
   examCode: string;
   topicNumber: string; // e.g. "Topic 101.1" or "PBQ 1"
   title: string;
+  /** One plain sentence for the lab list */
+  summary: string;
   difficulty: 'Beginner' | 'Intermediate' | 'Advanced';
   estimatedMinutes: number;
   scenarioDescription: string;

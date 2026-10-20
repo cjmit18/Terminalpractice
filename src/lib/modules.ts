@@ -24,12 +24,7 @@ export function topicLabel(mod: ExamModule): string {
   return mod.topicNumber.replace(/^(topic|comptia)\s+/i, '').trim();
 }
 
-/**
- * One sentence for the catalog. Uses the scenario text without a leading
- * "Security Audit Warning:"-style label, cut at the first sentence end.
- */
+/** One sentence for the catalog. */
 export function moduleSummary(mod: ExamModule): string {
-  const text = mod.scenarioDescription.replace(/^[A-Z][\w &/#+()-]{0,48}:\s+/, '').trim();
-  const match = text.match(/^.+?[.?](?=\s+[A-Z"(]|$)/);
-  return (match ? match[0] : text).trim();
+  return mod.summary;
 }
