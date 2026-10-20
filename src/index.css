@@ -2,8 +2,8 @@
 
 @layer base {
   :root {
-    --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
-    --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+    --font-sans: 'Plus Jakarta Sans Variable', system-ui, -apple-system, sans-serif;
+    --font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, monospace;
   }
 
   body {

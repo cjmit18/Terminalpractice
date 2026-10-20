@@ -32,7 +32,7 @@ export const CommandEncyclopedia: React.FC<CommandEncyclopediaProps> = ({
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-65px)] bg-slate-950 overflow-hidden font-sans">
+    <div className="flex flex-col h-full bg-slate-950 overflow-hidden font-sans">
       {/* Search & Filter Header */}
       <div className="p-6 bg-slate-900/60 border-b border-slate-800 shrink-0 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-4">

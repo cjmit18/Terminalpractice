@@ -44,6 +44,7 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
   const [completedObjectives, setCompletedObjectives] = useState<{ [key: string]: boolean }>({});
   const [activeSideTab, setActiveSideTab] = useState<'objectives' | 'visualizer' | 'concepts' | 'solution'>('objectives');
   const [revealedHints, setRevealedHints] = useState<{ [key: string]: boolean }>({});
+  const [mobilePane, setMobilePane] = useState<'lab' | 'terminal'>('lab');
   const [lastResult, setLastResult] = useState<CommandContext | undefined>(undefined);
 
   // Reset state when module changes
@@ -58,6 +59,7 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
     setRevealedHints({});
     setLastResult(undefined);
     setActiveSideTab('objectives');
+    setMobilePane('lab');
   }, [module.id]);
 
   // Live Objective Verification Evaluation
@@ -73,8 +75,9 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
             updated[obj.id] = true;
             hasChanges = true;
           }
-        } catch {
-          // Ignore verifier exceptions during active typing
+        } catch (err) {
+          // A throwing verifier leaves the objective incomplete; surface it in development
+          if (import.meta.env.DEV) console.error(`Verifier for "${obj.id}" threw`, err);
         }
       }
     });
@@ -191,11 +194,11 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-65px)] overflow-hidden bg-slate-950 font-sans">
+    <div className="flex flex-col flex-1 min-h-0 h-full overflow-hidden bg-slate-950 font-sans">
       {/* Module Sub-Header Banner */}
-      <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-3 bg-slate-900/60 border-b border-slate-800 shrink-0">
+      <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-4 px-3 sm:px-6 py-2 sm:py-3 bg-slate-900/60 border-b border-slate-800 shrink-0">
         <div className="flex items-center gap-3">
-          <span className={`px-2.5 py-0.5 rounded text-xs font-mono font-bold uppercase tracking-wider ${
+          <span className={`hidden sm:inline px-2.5 py-0.5 rounded text-xs font-mono font-bold uppercase tracking-wider ${
             module.track === 'lpi' 
               ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' 
               : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
@@ -203,7 +206,7 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
             {module.topicNumber}
           </span>
           <div>
-            <h1 className="text-base font-bold text-white tracking-tight flex items-center gap-2">
+            <h1 className="text-sm sm:text-base font-bold text-white tracking-tight flex items-center gap-2">
               <span>{module.title}</span>
               {isModuleComplete && (
                 <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-xs font-medium border border-emerald-500/40">
@@ -253,9 +256,26 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
       </div>
 
       {/* Main Split Grid (Scenario/Visualizer vs Live Terminal) */}
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 p-4 overflow-hidden">
+      {/* Phone-only switch between the lab panel and the terminal */}
+      <div className="lg:hidden flex shrink-0 gap-1 p-2 pb-0" role="tablist" aria-label="Lab view">
+        {(['lab', 'terminal'] as const).map(pane => (
+          <button
+            key={pane}
+            role="tab"
+            aria-selected={mobilePane === pane}
+            onClick={() => setMobilePane(pane)}
+            className={`flex-1 py-2 rounded-lg text-xs font-semibold transition-colors ${
+              mobilePane === pane ? 'bg-cyan-500/20 text-cyan-200 border border-cyan-500/40' : 'bg-slate-900 text-slate-400 border border-slate-800'
+            }`}
+          >
+            {pane === 'lab' ? `Lab (${passedObjectives}/${totalObjectives})` : 'Terminal'}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-12 gap-4 p-2 sm:p-4 overflow-hidden">
         {/* Left Panel: Scenario, Visualizer, Concepts & Solution (5 cols) */}
-        <div className="lg:col-span-5 flex flex-col h-full overflow-hidden bg-slate-900/60 rounded-xl border border-slate-800">
+        <div className={`${mobilePane === 'lab' ? 'flex' : 'hidden'} lg:flex lg:col-span-5 flex-col h-full min-h-0 overflow-hidden bg-slate-900/60 rounded-xl border border-slate-800`}>
           {/* Side Tabs Bar */}
           <div className="flex items-center border-b border-slate-800 bg-slate-950/70 px-2 pt-2 gap-1 shrink-0 overflow-x-auto">
             <button
@@ -457,7 +477,7 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
         </div>
 
         {/* Right Panel: Interactive Terminal Console (7 cols) */}
-        <div className="lg:col-span-7 flex flex-col h-full overflow-hidden">
+        <div className={`${mobilePane === 'terminal' ? 'flex' : 'hidden'} lg:flex lg:col-span-7 flex-col h-full min-h-0 overflow-hidden`}>
           <TerminalView
             shell={activeShell}
             cwd={cwd}

@@ -164,7 +164,7 @@ export function splitChainedCommandLine(input: string, shell: 'bash' | 'cmd' = '
         i += 2;
         continue;
       }
-      if (shell === 'cmd' && char === '&' && input[i + 1] !== '&') {
+      if (shell === 'cmd' && char === '&' && input[i + 1] !== '&' && input[i - 1] !== '>') {
         stages.push({ commandLine: current.trim(), nextOp: ';' });
         current = '';
         i++;
