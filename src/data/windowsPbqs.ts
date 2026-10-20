@@ -180,7 +180,7 @@ export const WINDOWS_PBQS: ExamModule[] = [
   {
     id: 'win-pbq-network-troubleshoot',
     track: 'comptia-windows',
-    examCode: 'CompTIA A+ 220-1102, Network+ N10-009',
+    examCode: 'CompTIA A+ 220-1202, Network+ N10-009',
     topicNumber: 'CompTIA PBQ 1',
     title: 'Troubleshoot a workstation with an APIPA address',
     difficulty: 'Intermediate',
@@ -277,7 +277,7 @@ export const WINDOWS_PBQS: ExamModule[] = [
   {
     id: 'win-pbq-active-directory-mgmt',
     track: 'comptia-windows',
-    examCode: 'CompTIA A+ 220-1102, Security+ SY0-701',
+    examCode: 'CompTIA A+ 220-1202, Security+ SY0-701',
     topicNumber: 'CompTIA PBQ 2',
     title: 'Unlock an account and add a domain admin',
     difficulty: 'Intermediate',
@@ -353,7 +353,7 @@ export const WINDOWS_PBQS: ExamModule[] = [
   {
     id: 'win-pbq-group-policy-mgmt',
     track: 'comptia-windows',
-    examCode: 'CompTIA A+ 220-1102, Security+ SY0-701',
+    examCode: 'CompTIA A+ 220-1202, Security+ SY0-701',
     topicNumber: 'CompTIA PBQ 3',
     title: 'Apply Group Policy and check the result',
     difficulty: 'Intermediate',
@@ -405,7 +405,7 @@ export const WINDOWS_PBQS: ExamModule[] = [
   {
     id: 'win-pbq-diskpart-partitioning',
     track: 'comptia-windows',
-    examCode: 'CompTIA A+ 220-1102',
+    examCode: 'CompTIA A+ 220-1202',
     topicNumber: 'CompTIA PBQ 4',
     title: 'Partition and format a new disk with diskpart',
     difficulty: 'Advanced',
@@ -558,7 +558,7 @@ export const WINDOWS_PBQS: ExamModule[] = [
   {
     id: 'win-pbq-sfc-dism-recovery',
     track: 'comptia-windows',
-    examCode: 'CompTIA A+ 220-1102',
+    examCode: 'CompTIA A+ 220-1202',
     topicNumber: 'CompTIA PBQ 6',
     title: 'Repair system files with SFC and DISM',
     difficulty: 'Intermediate',
@@ -615,7 +615,7 @@ export const WINDOWS_PBQS: ExamModule[] = [
   {
     id: 'win-pbq-powershell-automation',
     track: 'comptia-windows',
-    examCode: 'CompTIA A+ 220-1102',
+    examCode: 'CompTIA A+ 220-1202',
     topicNumber: 'CompTIA PBQ 7',
     title: 'Start a stopped service with PowerShell',
     difficulty: 'Intermediate',

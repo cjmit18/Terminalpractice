@@ -177,7 +177,7 @@ export const COMMAND_REFERENCE: CommandRefEntry[] = [
   {
     name: 'ipconfig',
     platform: 'windows',
-    exam: 'CompTIA A+ 220-1102, Network+ N10-009',
+    exam: 'CompTIA A+ 220-1202, Network+ N10-009',
     category: 'Networking',
     summary: 'Shows the IP configuration of each network adapter, and renews DHCP leases or clears the DNS cache.',
     syntax: 'ipconfig [/allcompartments] [/all | /release | /renew | /flushdns | /registerdns | /displaydns]',
@@ -199,7 +199,7 @@ export const COMMAND_REFERENCE: CommandRefEntry[] = [
   {
     name: 'diskpart',
     platform: 'windows',
-    exam: 'CompTIA A+ 220-1102',
+    exam: 'CompTIA A+ 220-1202',
     category: 'Disks and storage',
     summary: 'Command-line tool for managing disks, partitions and volumes.',
     syntax: 'diskpart [/s scriptname]',
@@ -226,7 +226,7 @@ export const COMMAND_REFERENCE: CommandRefEntry[] = [
   {
     name: 'sfc',
     platform: 'windows',
-    exam: 'CompTIA A+ 220-1102',
+    exam: 'CompTIA A+ 220-1202',
     category: 'System recovery',
     summary: 'System File Checker: checks the protected Windows system files and replaces damaged ones.',
     syntax: 'sfc [/scannow] [/verifyonly] [/scanfile=<file>] [/offbootdir=<dir> /offwindir=<dir>]',
@@ -244,7 +244,7 @@ export const COMMAND_REFERENCE: CommandRefEntry[] = [
   {
     name: 'dism',
     platform: 'windows',
-    exam: 'CompTIA A+ 220-1102',
+    exam: 'CompTIA A+ 220-1202',
     category: 'System recovery',
     summary: 'Deployment Image Servicing and Management: services Windows images, including repairing the component store of the running system.',
     syntax: 'dism /online /cleanup-image [/checkhealth | /scanhealth | /restorehealth]',
@@ -263,7 +263,7 @@ export const COMMAND_REFERENCE: CommandRefEntry[] = [
   {
     name: 'gpupdate',
     platform: 'windows',
-    exam: 'CompTIA A+ 220-1102',
+    exam: 'CompTIA A+ 220-1202',
     category: 'Group Policy',
     summary: 'Applies Group Policy on the local computer now instead of waiting for the background refresh.',
     syntax: 'gpupdate [/target:{computer | user}] [/force] [/wait:<value>] [/logoff] [/boot]',
@@ -283,7 +283,7 @@ export const COMMAND_REFERENCE: CommandRefEntry[] = [
   {
     name: 'gpresult',
     platform: 'windows',
-    exam: 'CompTIA A+ 220-1102',
+    exam: 'CompTIA A+ 220-1202',
     category: 'Group Policy',
     summary: 'Shows which Group Policy settings apply to a user and computer (the Resultant Set of Policy).',
     syntax: 'gpresult [/s system] [/user targetusername] [/scope {user | computer}] [/r | /v | /z | /h <file>]',
@@ -304,7 +304,7 @@ export const COMMAND_REFERENCE: CommandRefEntry[] = [
   {
     name: 'netstat',
     platform: 'both',
-    exam: 'CompTIA A+ 220-1102, Network+ N10-009, Security+ SY0-701',
+    exam: 'CompTIA A+ 220-1202, Network+ N10-009, Security+ SY0-701',
     category: 'Networking',
     summary: 'Lists network connections and listening ports, and can show the routing table.',
     syntax: 'netstat [-a] [-b] [-e] [-n] [-o] [-p proto] [-r] [-s] [interval]',
@@ -325,7 +325,7 @@ export const COMMAND_REFERENCE: CommandRefEntry[] = [
   {
     name: 'taskkill',
     platform: 'windows',
-    exam: 'CompTIA A+ 220-1102, Security+ SY0-701',
+    exam: 'CompTIA A+ 220-1202, Security+ SY0-701',
     category: 'Processes',
     summary: 'Ends processes by process ID or image name.',
     syntax: 'taskkill [/s system] [/u username [/p password]]] { [/fi filter] [/pid processid | /im imagename] } [/f] [/t]',
