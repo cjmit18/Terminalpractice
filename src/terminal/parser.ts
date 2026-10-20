@@ -2,6 +2,8 @@
  * Command line tokenization, quote-aware chaining, pipelines, and redirects
  */
 
+export type StderrRedirect = { type: '>' | '>>'; target: string } | { type: 'merge' };
+
 export interface ParsedCommand {
   raw: string;
   name: string;
@@ -10,6 +12,7 @@ export interface ParsedCommand {
     type: '>' | '>>';
     target: string;
   };
+  stderrRedirect?: StderrRedirect;
 }
 
 export interface ChainedStage {
@@ -69,10 +72,46 @@ export function tokenizeArgs(input: string): string[] {
 }
 
 /**
+ * Extracts stderr redirect (2>, 2>>, 2>&1) outside quotes
+ */
+export function extractStderrRedirect(cmd: string): { body: string; stderr?: StderrRedirect } {
+  let inD = false;
+  let inS = false;
+  for (let i = 0; i < cmd.length; i++) {
+    const ch = cmd[i];
+    if (ch === '\\' && !inS) {
+      i++;
+      continue;
+    }
+    if (ch === '"' && !inS) {
+      inD = !inD;
+      continue;
+    }
+    if (ch === "'" && !inD) {
+      inS = !inS;
+      continue;
+    }
+    if (inD || inS) continue;
+
+    if (ch === '2' && cmd[i + 1] === '>' && (i === 0 || /\s/.test(cmd[i - 1]))) {
+      const m = cmd.slice(i).match(/^2>(>?)\s*(&1|[^\s|&;]+)/);
+      if (!m) continue;
+      const body = (cmd.slice(0, i) + cmd.slice(i + m[0].length)).trim();
+      const stderr: StderrRedirect = m[2] === '&1'
+        ? { type: 'merge' }
+        : { type: m[1] ? '>>' : '>', target: m[2] };
+      return { body, stderr };
+    }
+  }
+  return { body: cmd };
+}
+
+/**
  * Splits a command line into chained stages separated by &&, ||, or ;
  * strictly ignoring operators inside quotes.
+ * Supports shell parameter: in cmd, single & is sequence operator, and ; is literal text.
  */
-export function splitChainedCommandLine(input: string): ChainedStage[] {
+export function splitChainedCommandLine(input: string, shell: 'bash' | 'cmd' = 'bash'): ChainedStage[] {
   const stages: ChainedStage[] = [];
   let current = '';
   let inDoubleQuote = false;
@@ -125,7 +164,13 @@ export function splitChainedCommandLine(input: string): ChainedStage[] {
         i += 2;
         continue;
       }
-      if (char === ';') {
+      if (shell === 'cmd' && char === '&' && input[i + 1] !== '&') {
+        stages.push({ commandLine: current.trim(), nextOp: ';' });
+        current = '';
+        i++;
+        continue;
+      }
+      if (shell === 'bash' && char === ';') {
         stages.push({ commandLine: current.trim(), nextOp: ';' });
         current = '';
         i++;
@@ -145,17 +190,20 @@ export function splitChainedCommandLine(input: string): ChainedStage[] {
 }
 
 /**
- * Parses a single command stage, extracting redirects if present outside quotes
+ * Parses a single command stage, extracting stderr and stdout redirects if present outside quotes
  */
 export function parseSingleCommand(cmdStr: string): ParsedCommand {
-  const trimmed = cmdStr.trim();
+  const extracted = extractStderrRedirect(cmdStr);
+  const trimmed = extracted.body.trim();
+  const stderrRedirect = extracted.stderr;
+
   let inDoubleQuote = false;
   let inSingleQuote = false;
   let escaped = false;
   let redirectIndex = -1;
   let redirectType: '>' | '>>' = '>';
 
-  // Find redirect operators outside quotes
+  // Find stdout redirect operators outside quotes
   for (let i = 0; i < trimmed.length; i++) {
     const char = trimmed[i];
 
@@ -180,13 +228,6 @@ export function parseSingleCommand(cmdStr: string): ParsedCommand {
     }
 
     if (!inDoubleQuote && !inSingleQuote) {
-      // Check if this is a stderr redirect like 2> or 2>>
-      const isStderrRedirect = i > 0 && trimmed[i - 1] === '2' && (i === 1 || /\s/.test(trimmed[i - 2]));
-      if (isStderrRedirect) {
-        // Skip stderr redirection from capturing stdout
-        continue;
-      }
-
       if (char === '>' && trimmed[i + 1] === '>') {
         redirectIndex = i;
         redirectType = '>>';
@@ -219,18 +260,16 @@ export function parseSingleCommand(cmdStr: string): ParsedCommand {
     }
   }
 
-  // Remove common stderr suppressions like 2>/dev/null or 2>&1
-  body = body.replace(/2>\s*\/dev\/null/g, '').replace(/2>&1/g, '').trim();
-
   const tokens = tokenizeArgs(body);
   const name = tokens.length > 0 ? tokens[0] : '';
   const args = tokens.slice(1);
 
   return {
-    raw: trimmed,
+    raw: cmdStr.trim(),
     name,
     args,
     redirect,
+    stderrRedirect,
   };
 }
 

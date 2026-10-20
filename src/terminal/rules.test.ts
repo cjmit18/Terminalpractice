@@ -7,9 +7,13 @@ import {
   createDefaultLinuxFs, 
   createDefaultWindowsFs, 
   getNodeAtPath, 
-  createNode 
+  createNode,
+  applyChmod,
+  applySpecialBits,
+  getSpecialBits,
+  getUserGroups,
 } from './filesystem.ts';
-import { parsePipelinedLine, tokenizeArgs } from './parser.ts';
+import { parsePipelinedLine, tokenizeArgs, extractStderrRedirect, splitChainedCommandLine } from './parser.ts';
 import { executeLinuxLine } from './linuxEngine.ts';
 import { executeWindowsLine } from './windowsEngine.ts';
 import { LPI_MODULES } from '../data/lpiModules.ts';
@@ -372,5 +376,422 @@ test('Shell Parser & Engine: handles quote safety, operators (&&, ||, ;), and gr
 
   const rSemicolon = executeLinuxLine('echo step1 ; echo step2', '/home/student', fs, state);
   assert.equal(rSemicolon.stdout, 'step1\nstep2');
+});
+
+test('Findings 1 & 2: chmod special bits and symbolic mode resolution', () => {
+  // SUID, SGID, Sticky in octal
+  const suid = applyChmod('rwxr-xr-x', '4755');
+  assert.equal(suid?.sym, 'rwsr-xr-x');
+  assert.equal(suid?.octal, 4755);
+
+  const sgid = applyChmod('rwxr-xr-x', '2755');
+  assert.equal(sgid?.sym, 'rwxr-sr-x');
+  assert.equal(sgid?.octal, 2755);
+
+  const sticky = applyChmod('rwxrwxrwx', '1777');
+  assert.equal(sticky?.sym, 'rwxrwxrwt');
+  assert.equal(sticky?.octal, 1777);
+
+  const stickyNoExec = applyChmod('rw-rw-rw-', '1666');
+  assert.equal(stickyNoExec?.sym, 'rw-rw-rwT');
+  assert.equal(stickyNoExec?.octal, 1666);
+
+  // Symbolic modes
+  assert.equal(applyChmod('rw-r--r--', 'u+x')?.sym, 'rwxr--r--');
+  assert.equal(applyChmod('rwxrwxrwx', 'g-w')?.sym, 'rwxr-xrwx');
+  assert.equal(applyChmod('rwxrwxrwx', 'o=r')?.sym, 'rwxrwxr--');
+  assert.equal(applyChmod('rwxr-xr-x', 'u+s')?.sym, 'rwsr-xr-x');
+  assert.equal(applyChmod('rwsr-xr-x', 'u-s')?.sym, 'rwxr-xr-x');
+  assert.equal(applyChmod('rwxrwxrwx', '+t')?.sym, 'rwxrwxrwt');
+  assert.equal(applyChmod('rw-rw-rw-', 'a+x')?.sym, 'rwxrwxrwx');
+  assert.equal(applyChmod('rw-r--r--', 'u+x,g-r,o-rx')?.sym, 'rwx------');
+
+  // Verify inside Linux engine
+  const fs = createDefaultLinuxFs();
+  const state = {
+    hostname: 'lpi-lab01',
+    currentUser: 'student',
+    currentGroup: 'student',
+    isRootOrAdmin: false,
+    umask: 0o022,
+    interfaces: [],
+    processes: [],
+    services: [],
+    disks: [],
+    adUsers: [],
+    adGroups: [],
+    gpos: [],
+    installedPackages: [],
+    systemIntegrityCorrupted: false,
+    dismRepaired: false,
+    sfcRepaired: false,
+    dnsWorking: true,
+    gatewayWorking: true,
+    firewallBlockedPorts: [],
+    diskpartSelectedDisk: null,
+    diskpartSelectedPartition: null,
+    envVars: {},
+  };
+
+  createNode(fs, '/home/student/myscript.sh', 'file', '#!/bin/bash', false, 'student', 'student', 755);
+  const rChmod = executeLinuxLine('chmod 4755 myscript.sh', '/home/student', fs, state);
+  assert.equal(rChmod.exitCode, 0);
+  const node = getNodeAtPath(rChmod.newFs, '/home/student/myscript.sh', false);
+  assert.equal(node?.permissions, 'rwsr-xr-x');
+  assert.equal(node?.octal, 4755);
+});
+
+test('Finding 3: Sudo redirection trap vs sudo tee', () => {
+  const fs = createDefaultLinuxFs();
+  const state = {
+    hostname: 'lpi-lab01',
+    currentUser: 'student',
+    currentGroup: 'student',
+    isRootOrAdmin: false,
+    umask: 0o022,
+    interfaces: [],
+    processes: [],
+    services: [],
+    disks: [],
+    adUsers: [],
+    adGroups: [],
+    gpos: [],
+    installedPackages: [],
+    systemIntegrityCorrupted: false,
+    dismRepaired: false,
+    sfcRepaired: false,
+    dnsWorking: true,
+    gatewayWorking: true,
+    firewallBlockedPorts: [],
+    diskpartSelectedDisk: null,
+    diskpartSelectedPartition: null,
+    envVars: {},
+  };
+
+  // sudo echo hi > /root/test.txt should fail because shell opens redirect as student
+  const rTrap = executeLinuxLine('sudo echo hi > /root/trap.txt', '/home/student', fs, state);
+  assert.equal(rTrap.exitCode, 1);
+  assert.match(rTrap.stderr, /Permission denied/);
+  assert.equal(getNodeAtPath(rTrap.newFs, '/root/trap.txt', false), null);
+
+  // echo hi | sudo tee /root/safe.txt succeeds and creates file as root
+  const rTee = executeLinuxLine('echo hi | sudo tee /root/safe.txt', '/home/student', fs, state);
+  assert.equal(rTee.exitCode, 0);
+  assert.equal(rTee.stdout.trim(), 'hi');
+  const safeNode = getNodeAtPath(rTee.newFs, '/root/safe.txt', false);
+  assert.ok(safeNode);
+  assert.equal(safeNode.content, 'hi');
+  assert.equal(safeNode.owner, 'root');
+});
+
+test('Finding 4: Stderr redirection parsing and execution', () => {
+  // Parser check: quoted 2> remains untouched
+  const extQuoted = extractStderrRedirect('echo "2> x"');
+  assert.equal(extQuoted.body, 'echo "2> x"');
+  assert.equal(extQuoted.stderr, undefined);
+
+  // Parser check: 2> err.txt extracted
+  const extNormal = extractStderrRedirect('cat /nope 2> err.txt');
+  assert.equal(extNormal.body, 'cat /nope');
+  assert.deepEqual(extNormal.stderr, { type: '>', target: 'err.txt' });
+
+  // Parser check: 2>&1 merge
+  const extMerge = extractStderrRedirect('ls /nope 2>&1');
+  assert.equal(extMerge.body, 'ls /nope');
+  assert.deepEqual(extMerge.stderr, { type: 'merge' });
+
+  const fs = createDefaultLinuxFs();
+  const state = {
+    hostname: 'lpi-lab01',
+    currentUser: 'student',
+    currentGroup: 'student',
+    isRootOrAdmin: false,
+    umask: 0o022,
+    interfaces: [],
+    processes: [],
+    services: [],
+    disks: [],
+    adUsers: [],
+    adGroups: [],
+    gpos: [],
+    installedPackages: [],
+    systemIntegrityCorrupted: false,
+    dismRepaired: false,
+    sfcRepaired: false,
+    dnsWorking: true,
+    gatewayWorking: true,
+    firewallBlockedPorts: [],
+    diskpartSelectedDisk: null,
+    diskpartSelectedPartition: null,
+    envVars: {},
+  };
+
+  // cat nonexisting 2> /dev/null suppresses stderr
+  const rDevNull = executeLinuxLine('cat nonexisting 2>/dev/null', '/home/student', fs, state);
+  assert.equal(rDevNull.stderr, '');
+
+  // cat nonexisting 2>&1 puts error in stdout
+  const rMerged = executeLinuxLine('cat nonexisting 2>&1', '/home/student', fs, state);
+  assert.match(rMerged.stdout, /cat: nonexisting: No such file or directory/);
+  assert.equal(rMerged.stderr, '');
+
+  // cat nonexisting 2> err.txt writes stderr to file
+  const rErrFile = executeLinuxLine('cat nonexisting 2> err.txt', '/home/student', fs, state);
+  assert.equal(rErrFile.stderr, '');
+  const errNode = getNodeAtPath(rErrFile.newFs, '/home/student/err.txt', false);
+  assert.ok(errNode);
+  assert.match(errNode.content || '', /No such file or directory/);
+});
+
+test('Finding 5: mkdir -p and existing directories', () => {
+  const fs = createDefaultLinuxFs();
+  const state = {
+    hostname: 'lpi-lab01',
+    currentUser: 'student',
+    currentGroup: 'student',
+    isRootOrAdmin: false,
+    umask: 0o022,
+    interfaces: [],
+    processes: [],
+    services: [],
+    disks: [],
+    adUsers: [],
+    adGroups: [],
+    gpos: [],
+    installedPackages: [],
+    systemIntegrityCorrupted: false,
+    dismRepaired: false,
+    sfcRepaired: false,
+    dnsWorking: true,
+    gatewayWorking: true,
+    firewallBlockedPorts: [],
+    diskpartSelectedDisk: null,
+    diskpartSelectedPartition: null,
+    envVars: {},
+  };
+
+  // mkdir -p a/b/c creates deep path
+  const rParents = executeLinuxLine('mkdir -p a/b/c', '/home/student', fs, state);
+  assert.equal(rParents.exitCode, 0);
+  assert.ok(getNodeAtPath(rParents.newFs, '/home/student/a/b/c', false));
+
+  // mkdir single directory
+  const rOnce = executeLinuxLine('mkdir single', '/home/student', rParents.newFs, state);
+  assert.equal(rOnce.exitCode, 0);
+
+  // mkdir again without -p fails with File exists
+  const rTwice = executeLinuxLine('mkdir single', '/home/student', rOnce.newFs, state);
+  assert.equal(rTwice.exitCode, 1);
+  assert.match(rTwice.stderr, /File exists/);
+
+  // mkdir with -p on existing directory succeeds silently
+  const rExistP = executeLinuxLine('mkdir -p single', '/home/student', rOnce.newFs, state);
+  assert.equal(rExistP.exitCode, 0);
+  assert.equal(rExistP.stderr, '');
+});
+
+test('Finding 6: Chained command errors are preserved', () => {
+  const fs = createDefaultLinuxFs();
+  const state = {
+    hostname: 'lpi-lab01',
+    currentUser: 'student',
+    currentGroup: 'student',
+    isRootOrAdmin: false,
+    umask: 0o022,
+    interfaces: [],
+    processes: [],
+    services: [],
+    disks: [],
+    adUsers: [],
+    adGroups: [],
+    gpos: [],
+    installedPackages: [],
+    systemIntegrityCorrupted: false,
+    dismRepaired: false,
+    sfcRepaired: false,
+    dnsWorking: true,
+    gatewayWorking: true,
+    firewallBlockedPorts: [],
+    diskpartSelectedDisk: null,
+    diskpartSelectedPartition: null,
+    envVars: {},
+  };
+
+  const rChain = executeLinuxLine('cat /does_not_exist ; echo after', '/home/student', fs, state);
+  assert.equal(rChain.stdout.trim(), 'after');
+  assert.match(rChain.stderr, /No such file or directory/);
+});
+
+test('Finding 7: CMD chaining & and CMD pipes to findstr', () => {
+  const fs = createDefaultWindowsFs();
+  const state = {
+    hostname: 'WIN-CLIENT01',
+    currentUser: 'Student',
+    currentGroup: 'Users',
+    isRootOrAdmin: false,
+    umask: 0o022,
+    interfaces: [],
+    processes: [],
+    services: [],
+    disks: [],
+    adUsers: [],
+    adGroups: [],
+    gpos: [],
+    installedPackages: [],
+    systemIntegrityCorrupted: false,
+    dismRepaired: false,
+    sfcRepaired: false,
+    dnsWorking: true,
+    gatewayWorking: true,
+    firewallBlockedPorts: [],
+    diskpartSelectedDisk: null,
+    diskpartSelectedPartition: null,
+    envVars: {},
+  };
+
+  // CMD chaining with single &
+  const rChain = executeWindowsLine('echo hello & echo world', 'C:\\Users\\Student', fs, state, 'cmd');
+  assert.equal(rChain.stdout.trim(), 'hello\nworld');
+
+  // CMD piping: ipconfig | findstr IPv4
+  const rPipe = executeWindowsLine('ipconfig | findstr IPv4', 'C:\\Users\\Student', fs, state, 'cmd');
+  assert.equal(rPipe.exitCode, 0);
+  assert.match(rPipe.stdout, /IPv4 Address/);
+
+  // findstr /i and /v
+  const rFindstrI = executeWindowsLine('echo Hello World | findstr /i world', 'C:\\Users\\Student', fs, state, 'cmd');
+  assert.equal(rFindstrI.exitCode, 0);
+  assert.match(rFindstrI.stdout, /Hello World/);
+
+  const rFindstrV = executeWindowsLine('echo Hello World | findstr /v Hello', 'C:\\Users\\Student', fs, state, 'cmd');
+  assert.equal(rFindstrV.exitCode, 1);
+  assert.equal(rFindstrV.stdout.trim(), '');
+});
+
+test('Finding 8: rm and directory safety checks', () => {
+  const fs = createDefaultLinuxFs();
+  const state = {
+    hostname: 'lpi-lab01',
+    currentUser: 'student',
+    currentGroup: 'student',
+    isRootOrAdmin: false,
+    umask: 0o022,
+    interfaces: [],
+    processes: [],
+    services: [],
+    disks: [],
+    adUsers: [],
+    adGroups: [],
+    gpos: [],
+    installedPackages: [],
+    systemIntegrityCorrupted: false,
+    dismRepaired: false,
+    sfcRepaired: false,
+    dnsWorking: true,
+    gatewayWorking: true,
+    firewallBlockedPorts: [],
+    diskpartSelectedDisk: null,
+    diskpartSelectedPartition: null,
+    envVars: {},
+  };
+
+  createNode(fs, '/home/student/myfolder', 'directory', '', false, 'student', 'student', 755);
+
+  // rm on directory without -r fails with "Is a directory"
+  const rNoRec = executeLinuxLine('rm myfolder', '/home/student', fs, state);
+  assert.equal(rNoRec.exitCode, 1);
+  assert.match(rNoRec.stderr, /Is a directory/);
+  assert.ok(getNodeAtPath(rNoRec.newFs, '/home/student/myfolder', false));
+
+  // rm -r on directory succeeds
+  const rRec = executeLinuxLine('rm -r myfolder', '/home/student', fs, state);
+  assert.equal(rRec.exitCode, 0);
+  assert.equal(getNodeAtPath(rRec.newFs, '/home/student/myfolder', false), null);
+
+  // rm -f on non-existent file exits 0 silently
+  const rForce = executeLinuxLine('rm -f does_not_exist', '/home/student', fs, state);
+  assert.equal(rForce.exitCode, 0);
+  assert.equal(rForce.stderr, '');
+});
+
+test('Finding 9: Supplementary groups from /etc/group', () => {
+  const fs = createDefaultLinuxFs();
+  const groups = getUserGroups(fs, 'student', 'student');
+  assert.ok(groups.includes('student'));
+  assert.ok(groups.includes('sudo'));
+
+  const state = {
+    hostname: 'lpi-lab01',
+    currentUser: 'student',
+    currentGroup: 'student',
+    isRootOrAdmin: false,
+    umask: 0o022,
+    interfaces: [],
+    processes: [],
+    services: [],
+    disks: [],
+    adUsers: [],
+    adGroups: [],
+    gpos: [],
+    installedPackages: [],
+    systemIntegrityCorrupted: false,
+    dismRepaired: false,
+    sfcRepaired: false,
+    dnsWorking: true,
+    gatewayWorking: true,
+    firewallBlockedPorts: [],
+    diskpartSelectedDisk: null,
+    diskpartSelectedPartition: null,
+    envVars: {},
+  };
+
+  // Add student to developers in /etc/group (e.g. simulated usermod -aG developers student)
+  const grpNode = getNodeAtPath(fs, '/etc/group', false);
+  if (grpNode && grpNode.content) {
+    grpNode.content = grpNode.content.replace('developers:x:1003:', 'developers:x:1003:student');
+  }
+
+  const updatedGroups = getUserGroups(fs, 'student', 'student');
+  assert.ok(updatedGroups.includes('developers'));
+
+  // Create file owned by developers with mode 060 (only group can read/write)
+  createNode(fs, '/home/student/dev.txt', 'file', 'developer secret', false, 'otheruser', 'developers', 0o060);
+  const rRead = executeLinuxLine('cat dev.txt', '/home/student', fs, state);
+  assert.equal(rRead.exitCode, 0);
+  assert.equal(rRead.stdout.trim(), 'developer secret');
+});
+
+test('Finding 10: Windows redirect files mode', () => {
+  const fs = createDefaultWindowsFs();
+  const state = {
+    hostname: 'WIN-CLIENT01',
+    currentUser: 'Student',
+    currentGroup: 'Users',
+    isRootOrAdmin: false,
+    umask: 0o022,
+    interfaces: [],
+    processes: [],
+    services: [],
+    disks: [],
+    adUsers: [],
+    adGroups: [],
+    gpos: [],
+    installedPackages: [],
+    systemIntegrityCorrupted: false,
+    dismRepaired: false,
+    sfcRepaired: false,
+    dnsWorking: true,
+    gatewayWorking: true,
+    firewallBlockedPorts: [],
+    diskpartSelectedDisk: null,
+    diskpartSelectedPartition: null,
+    envVars: {},
+  };
+
+  const rRedirect = executeWindowsLine('echo test > out.txt', 'C:\\Users\\Student', fs, state, 'cmd');
+  assert.equal(rRedirect.exitCode, 0);
+  const node = getNodeAtPath(rRedirect.newFs, 'C:\\Users\\Student\\out.txt', true);
+  assert.ok(node);
+  assert.equal(node.octal, 644);
 });
 

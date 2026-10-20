@@ -37,17 +37,97 @@ export function symbolicToOctal(symbolic: string): number {
 }
 
 /**
+ * Applies special bits (SUID, SGID, Sticky) to a 9-char symbolic mode string
+ */
+export function applySpecialBits(sym: string, special: number): string {
+  const c = sym.split('');
+  if (special & 4) c[2] = c[2] === 'x' ? 's' : 'S';
+  if (special & 2) c[5] = c[5] === 'x' ? 's' : 'S';
+  if (special & 1) c[8] = c[8] === 'x' ? 't' : 'T';
+  return c.join('');
+}
+
+/**
+ * Extracts special bits (SUID=4, SGID=2, Sticky=1) from symbolic mode string
+ */
+export function getSpecialBits(sym: string): number {
+  return (/[sS]/.test(sym[2] || '') ? 4 : 0) | (/[sS]/.test(sym[5] || '') ? 2 : 0) | (/[tT]/.test(sym[8] || '') ? 1 : 0);
+}
+
+/**
+ * Applies octal (3 or 4 digits) or symbolic modes (e.g. u+x, g-w, o=r, u+s, +t, comma lists)
+ * and returns the new symbolic string and octal value, or null if invalid
+ */
+export function applyChmod(current: string, mode: string): { sym: string; octal: number } | null {
+  let special = getSpecialBits(current);
+  let digits = String(symbolicToOctal(current)).padStart(3, '0').split('').map(Number);
+
+  if (/^[0-7]{3,4}$/.test(mode)) {
+    const m = mode.padStart(4, '0');
+    special = Number(m[0]);
+    digits = m.slice(1).split('').map(Number);
+  } else {
+    for (const clause of mode.split(',')) {
+      const match = clause.match(/^([ugoa]*)([+\-=])([rwxst]*)$/);
+      if (!match) return null;
+      const [, whoRaw, op, perms] = match;
+      const who = whoRaw === '' || whoRaw.includes('a') ? 'ugo' : whoRaw;
+      const rwx = (perms.includes('r') ? 4 : 0) | (perms.includes('w') ? 2 : 0) | (perms.includes('x') ? 1 : 0);
+      let sp = 0;
+      if (perms.includes('s')) sp |= (who.includes('u') ? 4 : 0) | (who.includes('g') ? 2 : 0);
+      if (perms.includes('t')) sp |= 1;
+
+      ['u', 'g', 'o'].forEach((cls, i) => {
+        if (!who.includes(cls)) return;
+        if (op === '+') digits[i] |= rwx;
+        else if (op === '-') digits[i] &= ~rwx;
+        else digits[i] = rwx;
+      });
+
+      if (op === '+') special |= sp;
+      else if (op === '-') special &= ~sp;
+      else {
+        const mask = (who.includes('u') ? 4 : 0) | (who.includes('g') ? 2 : 0) | (who.includes('o') ? 1 : 0);
+        special = (special & ~mask) | sp;
+      }
+    }
+  }
+
+  const base = parseInt(digits.join(''), 10);
+  return {
+    sym: applySpecialBits(octalToSymbolic(base), special),
+    octal: special * 1000 + base,
+  };
+}
+
+/**
+ * Retrieves supplementary groups for a user from /etc/group
+ */
+export function getUserGroups(fs: FileNode, user: string, primary: string): string[] {
+  const lines = (getNodeAtPath(fs, '/etc/group', false)?.content ?? '').split('\n');
+  const extra = lines
+    .filter(l => (l.split(':')[3] ?? '').split(',').map(s => s.trim()).includes(user))
+    .map(l => l.split(':')[0].trim())
+    .filter(Boolean);
+  return Array.from(new Set([primary, ...extra]));
+}
+
+/**
  * Checks if a user/group has permission (r, w, or x) on a given node
  */
 export function checkNodePermission(
   node: FileNode,
   user: string,
-  group: string,
+  group: string | string[],
   mode: 'r' | 'w' | 'x'
 ): boolean {
   if (user === 'root') {
     if (mode === 'x' && node.type === 'file') {
-      return node.permissions.includes('x') || node.permissions.includes('s');
+      return (
+        node.permissions.includes('x') ||
+        node.permissions.includes('s') ||
+        node.permissions.includes('t')
+      );
     }
     return true;
   }
@@ -55,11 +135,13 @@ export function checkNodePermission(
   const p = node.permissions.slice(-9);
   if (p.length < 9) return true;
 
+  const groups = Array.isArray(group) ? group : [group];
+
   if (user === node.owner) {
     if (mode === 'r') return p[0] === 'r';
     if (mode === 'w') return p[1] === 'w';
     if (mode === 'x') return p[2] === 'x' || p[2] === 's';
-  } else if (group === node.group) {
+  } else if (groups.includes(node.group)) {
     if (mode === 'r') return p[3] === 'r';
     if (mode === 'w') return p[4] === 'w';
     if (mode === 'x') return p[5] === 'x' || p[5] === 's';
@@ -78,7 +160,7 @@ export function checkPathTraversal(
   root: FileNode,
   path: string,
   user: string,
-  group: string,
+  group: string | string[],
   isWindows = false
 ): boolean {
   if (isWindows || user === 'root') return true;
@@ -91,7 +173,7 @@ export function checkPathTraversal(
 
   for (let i = 0; i < parts.length - 1; i++) {
     const seg = parts[i];
-    if (!current.children || !current.children[seg]) return false;
+    if (!current.children || !current.children[seg]) return true; // caller reports "No such file or directory"
     current = current.children[seg];
     if (current.type === 'directory' && !checkNodePermission(current, user, group, 'x')) {
       return false;
@@ -285,7 +367,7 @@ export function canReadNode(
   root: FileNode,
   path: string,
   user: string,
-  group: string,
+  group: string | string[],
   isWindows = false
 ): { ok: boolean; error?: string } {
   if (isWindows || user === 'root') return { ok: true };
@@ -307,7 +389,7 @@ export function canWriteNode(
   root: FileNode,
   path: string,
   user: string,
-  group: string,
+  group: string | string[],
   isWindows = false
 ): { ok: boolean; error?: string } {
   if (isWindows || user === 'root') return { ok: true };
@@ -342,7 +424,7 @@ export function canDeleteNode(
   root: FileNode,
   path: string,
   user: string,
-  group: string,
+  group: string | string[],
   isWindows = false
 ): { ok: boolean; error?: string } {
   if (isWindows || user === 'root') return { ok: true };
