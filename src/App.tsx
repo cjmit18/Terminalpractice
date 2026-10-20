@@ -19,7 +19,8 @@ import { ArrowLeft } from 'lucide-react';
 export default function App() {
   const [activeTab, setActiveTab] = useState<AppTab>('lpi');
   const [selectedModule, setSelectedModule] = useState<ExamModule | null>(LPI_MODULES[0]);
-  const [completedModuleIds, setCompletedModuleIds] = useState<string[]>([]);
+  // moduleId -> completed objective ids
+  const [progress, setProgress] = useState<Record<string, string[]>>({});
 
   // Shared state for the simulators hub
   const [sharedSimState, setSharedSimState] = useState<SystemState>({
@@ -146,11 +147,17 @@ export default function App() {
   const allModules = [...LPI_MODULES, ...WINDOWS_PBQS];
   const totalObjectivesCount = allModules.reduce((acc, m) => acc + m.objectives.length, 0);
 
-  const handleCompleteModule = (moduleId: string) => {
-    if (!completedModuleIds.includes(moduleId)) {
-      setCompletedModuleIds(prev => [...prev, moduleId]);
-    }
+  const handleObjectiveComplete = (moduleId: string, objectiveId: string) => {
+    setProgress(prev => {
+      const done = prev[moduleId] ?? [];
+      return done.includes(objectiveId) ? prev : { ...prev, [moduleId]: [...done, objectiveId] };
+    });
   };
+
+  const completedModuleIds = allModules
+    .filter(m => m.objectives.every(o => progress[m.id]?.includes(o.id)))
+    .map(m => m.id);
+  const completedObjectivesCount = Object.values(progress).reduce((acc, ids) => acc + ids.length, 0);
 
   const handleNavTab = (tab: AppTab) => {
     setActiveTab(tab);
@@ -169,7 +176,7 @@ export default function App() {
       <Header
         activeTab={activeTab}
         setActiveTab={handleNavTab}
-        completedObjectivesCount={completedModuleIds.length * 3}
+        completedObjectivesCount={completedObjectivesCount}
         totalObjectivesCount={totalObjectivesCount}
       />
 
@@ -205,7 +212,8 @@ export default function App() {
               </div>
               <ModuleRunner
                 module={selectedModule}
-                onCompleteModule={handleCompleteModule}
+                completedObjectiveIds={progress[selectedModule.id] ?? []}
+                onObjectiveComplete={handleObjectiveComplete}
               />
             </div>
           ) : (
@@ -248,7 +256,8 @@ export default function App() {
               </div>
               <ModuleRunner
                 module={selectedModule}
-                onCompleteModule={handleCompleteModule}
+                completedObjectiveIds={progress[selectedModule.id] ?? []}
+                onObjectiveComplete={handleObjectiveComplete}
               />
             </div>
           ) : (

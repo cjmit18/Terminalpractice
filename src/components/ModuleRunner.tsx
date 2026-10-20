@@ -26,12 +26,16 @@ import {
 
 interface ModuleRunnerProps {
   module: ExamModule;
-  onCompleteModule?: (moduleId: string) => void;
+  /** Objectives already completed for this module (persisted by the app) */
+  completedObjectiveIds: string[];
+  /** Called once per objective, the first time it passes */
+  onObjectiveComplete: (moduleId: string, objectiveId: string) => void;
 }
 
 export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
   module,
-  onCompleteModule,
+  completedObjectiveIds,
+  onObjectiveComplete,
 }) => {
   const [activeShell, setActiveShell] = useState<TerminalShell>(module.defaultShell);
   const [fs, setFs] = useState<FileNode>(module.initialFs);
@@ -41,7 +45,9 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
   );
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [isDiskpartActive, setIsDiskpartActive] = useState(false);
-  const [completedObjectives, setCompletedObjectives] = useState<{ [key: string]: boolean }>({});
+  const [completedObjectives, setCompletedObjectives] = useState<{ [key: string]: boolean }>(
+    () => Object.fromEntries(completedObjectiveIds.map(id => [id, true]))
+  );
   const [activeSideTab, setActiveSideTab] = useState<'objectives' | 'visualizer' | 'concepts' | 'solution'>('objectives');
   const [revealedHints, setRevealedHints] = useState<{ [key: string]: boolean }>({});
   const [mobilePane, setMobilePane] = useState<'lab' | 'terminal'>('lab');
@@ -55,7 +61,7 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
     setCwd(module.track === 'lpi' ? '/home/student' : 'C:\\Users\\Student');
     setHistory([]);
     setIsDiskpartActive(false);
-    setCompletedObjectives({});
+    setCompletedObjectives(Object.fromEntries(completedObjectiveIds.map(id => [id, true])));
     setRevealedHints({});
     setLastResult(undefined);
     setActiveSideTab('objectives');
@@ -84,10 +90,7 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
 
     if (hasChanges) {
       setCompletedObjectives(updated);
-      const allPassed = module.objectives.every(o => updated[o.id]);
-      if (allPassed) {
-        onCompleteModule?.(module.id);
-      }
+      module.objectives.filter(o => updated[o.id] && !completedObjectives[o.id]).forEach(o => onObjectiveComplete(module.id, o.id));
     }
   }, [fs, state, lastResult, module]);
 
@@ -151,7 +154,8 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
     setCwd(module.track === 'lpi' ? '/home/student' : 'C:\\Users\\Student');
     setHistory([]);
     setIsDiskpartActive(false);
-    setCompletedObjectives({});
+    // Resetting restores the environment; objectives already earned stay earned
+    setCompletedObjectives(Object.fromEntries(completedObjectiveIds.map(id => [id, true])));
     setLastResult(undefined);
   };
 
