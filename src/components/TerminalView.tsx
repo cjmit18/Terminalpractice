@@ -26,6 +26,10 @@ interface TerminalViewProps {
   resetKey?: number;
   /** Learning facts noticed at the prompt: 'tab' (Tab completed a name), 'history' (an earlier command recalled) */
   onActivity?: (facts: string[]) => void;
+  /** bash prompt layout (the Sandbox lets learners pick one); 'standard' is user@host:~$ */
+  promptStyle?: 'standard' | 'bracket' | 'short' | 'host-first';
+  /** An extra line under the login banner (the Sandbox lets learners pick one) */
+  bannerLine?: string;
 }
 
 const SHELL_NAMES: Record<TerminalShell, string> = {
@@ -80,6 +84,8 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
   readOnly = false,
   resetKey = 0,
   onActivity,
+  promptStyle = 'standard',
+  bannerLine,
 }) => {
   const [input, setInput] = useState('');
   const [copied, setCopied] = useState(false);
@@ -218,6 +224,37 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
     if (diskpart) {
       return <span className="select-none text-term-text">DISKPART&gt; </span>;
     }
+    if (promptShell === 'bash' && promptStyle !== 'standard') {
+      const path = tildePath(promptCwd, user);
+      const end = user === 'root' ? '# ' : '$ ';
+      if (promptStyle === 'bracket') {
+        return (
+          <span className="select-none">
+            <span className="text-term-muted">[</span>
+            <span className="text-term-user">{user}@{hostname}</span>{' '}
+            <span className="text-term-path">{path === '~' || path === '/' ? path : path.split('/').pop()}</span>
+            <span className="text-term-muted">]{end}</span>
+          </span>
+        );
+      }
+      if (promptStyle === 'short') {
+        return (
+          <span className="select-none">
+            <span className="text-term-path">{path}</span>
+            <span className="text-term-muted"> {end}</span>
+          </span>
+        );
+      }
+      return (
+        <span className="select-none">
+          <span className="text-term-user">{hostname}</span>
+          <span className="text-term-muted">:</span>
+          <span className="text-term-path">{path}</span>{' '}
+          <span className="text-term-user">{user}</span>
+          <span className="text-term-muted">{end}</span>
+        </span>
+      );
+    }
     if (promptShell === 'bash') {
       return (
         <span className="select-none">
@@ -294,7 +331,12 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
         }}
       >
         <div role="log" aria-live="polite" aria-label="Terminal output">
-          {showBanner && <p className="text-term-muted mb-2">{BANNERS[shell]}</p>}
+          {showBanner && (
+            <div className="mb-2">
+              <p className="text-term-muted">{BANNERS[shell]}</p>
+              {bannerLine && <p className="text-term-text">{bannerLine}</p>}
+            </div>
+          )}
 
           {history.map((item) => {
             const stdoutText = item.errorOutput ? item.output.replace(item.errorOutput, '').trim() : item.output;
