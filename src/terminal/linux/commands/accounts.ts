@@ -149,9 +149,10 @@ function chage(ctx: LinuxContext): LinuxResult {
   const expires = last && max < 99999 ? last + max : null;
   const line = (label: string, value: string) => `${label.padEnd(56)}: ${value}`;
   return ctx.ok([
-    line('Last password change', last === 0 ? 'password must be changed' : chageDate(last)),
-    line('Password expires', expires === null ? 'never' : chageDate(expires)),
-    line('Password inactive', expires === null || inactive < 0 ? 'never' : chageDate(expires + inactive)),
+    line('Last password change', row[2] === '' ? 'never' : last === 0 ? 'password must be changed' : chageDate(last)),
+    // A last-change day of 0 (chage -d 0, passwd -e) forces a change at the next login
+    line('Password expires', last === 0 && row[2] !== '' ? 'password must be changed' : expires === null ? 'never' : chageDate(expires)),
+    line('Password inactive', last === 0 && row[2] !== '' ? 'password must be changed' : expires === null || inactive < 0 ? 'never' : chageDate(expires + inactive)),
     line('Account expires', row[7] ? chageDate(Number(row[7])) : 'never'),
     line('Minimum number of days between password change', row[3] || '0'),
     line('Maximum number of days between password change', String(max)),

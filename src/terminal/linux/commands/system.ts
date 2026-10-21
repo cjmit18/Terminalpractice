@@ -1,8 +1,8 @@
 import { SystemState, WindowsService } from '../../../types/terminal';
-import { createNode, describeIdentity } from '../../filesystem';
+import { describeIdentity } from '../../filesystem';
 import { parseOptions, optionValue, padNum } from '../../textUtils';
-import { LinuxContext, LinuxResult, linuxCommands } from '../context';
-import { DEFAULT_LINUX_DISKS, KERNEL_RELEASE, KERNEL_VERSION, MEMORY_KIB, MODULES } from '../virtualFs';
+import { LinuxContext, LinuxResult, linuxCommands, createInDir } from '../context';
+import { DEFAULT_LINUX_DISKS, partitionLayout, KERNEL_RELEASE, KERNEL_VERSION, MEMORY_KIB, MODULES } from '../virtualFs';
 
 // System, hardware, processes, services, packages and archives
 
@@ -10,22 +10,56 @@ const DMESG = [
   '[    0.000000] Linux version 5.15.0-101-generic (buildd@lcy02-amd64-072) (gcc version 11.4.0)',
   '[    0.000000] Command line: BOOT_IMAGE=/vmlinuz-5.15.0-101-generic root=UUID=8d6a8f1e ro quiet splash',
   '[    0.412891] ACPI: Core revision 20210604',
-  '[    1.120542] pci 0000:00:1f.2: [8086:2922] SATA AHCI controller',
+  '[    1.120542] ahci 0000:00:1f.2: AHCI 0001.0000 32 slots 6 ports 1.5 Gbps 0x3f impl SATA mode',
   '[    2.341209] e1000e: Intel(R) PRO/1000 Network Driver',
   '[    2.341512] e1000e 0000:00:19.0 eth0: (PCI Express:2.5GT/s:Width x1) 52:54:00:12:34:56',
   '[    3.150221] systemd[1]: Inserted module \'autofs4\'',
   '[    4.201944] EXT4-fs (sda3): mounted filesystem with ordered data mode. Opts: (null)',
 ].join('\n');
 
-const LSPCI = [
-  '00:00.0 Host bridge: Intel Corporation 440FX - 82441FX PMC [Natoma]',
-  '00:01.0 ISA bridge: Intel Corporation 82371SB PIIX3 ISA [Natoma/Triton II]',
-  '00:01.1 IDE interface: Intel Corporation 82371SB PIIX3 IDE [Natoma/Triton II]',
-  '00:02.0 VGA compatible controller: Red Hat, Inc. QXL paravirtual graphic card',
-  '00:19.0 Ethernet controller: Intel Corporation 82574L Gigabit Network Connection',
-  '00:1f.2 SATA controller: Intel Corporation 82801IR/IO/IH (ICH9R/DO/DH) 6 port SATA Controller [AHCI mode] (rev 02)',
-  '00:04.0 USB controller: Intel Corporation 82801I (ICH9 Family) USB UHCI Controller #1',
-].join('\n');
+/** PCI devices, in bus order as lspci prints them, with the driver bound to each. */
+const PCI: { addr: string; cls: string; desc: string; ids: string; sub: string; irq: number; driver?: string; modules?: string }[] = [
+  { addr: '00:00.0', cls: 'Host bridge', desc: 'Intel Corporation 440FX - 82441FX PMC [Natoma]', ids: '[0600]: Intel Corporation 440FX - 82441FX PMC [Natoma] [8086:1237]', sub: 'Red Hat, Inc. Qemu virtual machine', irq: 0 },
+  { addr: '00:01.0', cls: 'ISA bridge', desc: 'Intel Corporation 82371SB PIIX3 ISA [Natoma/Triton II]', ids: '[0601]: Intel Corporation 82371SB PIIX3 ISA [Natoma/Triton II] [8086:7000]', sub: 'Red Hat, Inc. Qemu virtual machine', irq: 0 },
+  { addr: '00:01.1', cls: 'IDE interface', desc: 'Intel Corporation 82371SB PIIX3 IDE [Natoma/Triton II]', ids: '[0101]: Intel Corporation 82371SB PIIX3 IDE [Natoma/Triton II] [8086:7010]', sub: 'Red Hat, Inc. Qemu virtual machine', irq: 0, driver: 'ata_piix', modules: 'pata_acpi' },
+  { addr: '00:02.0', cls: 'VGA compatible controller', desc: 'Red Hat, Inc. QXL paravirtual graphic card', ids: '[0300]: Red Hat, Inc. QXL paravirtual graphic card [1b36:0100] (rev 05)', sub: 'Red Hat, Inc. QEMU Virtual Machine', irq: 10, driver: 'qxl', modules: 'qxl' },
+  { addr: '00:04.0', cls: 'USB controller', desc: 'Intel Corporation 82801I (ICH9 Family) USB UHCI Controller #1', ids: '[0c03]: Intel Corporation 82801I (ICH9 Family) USB UHCI Controller #1 [8086:2934] (rev 03)', sub: 'Red Hat, Inc. QEMU Virtual Machine', irq: 11, driver: 'uhci_hcd' },
+  { addr: '00:19.0', cls: 'Ethernet controller', desc: 'Intel Corporation 82574L Gigabit Network Connection', ids: '[0200]: Intel Corporation 82574L Gigabit Network Connection [8086:10d3]', sub: 'Intel Corporation Gigabit CT Desktop Adapter', irq: 11, driver: 'e1000e', modules: 'e1000e' },
+  { addr: '00:1f.2', cls: 'SATA controller', desc: 'Intel Corporation 82801IR/IO/IH (ICH9R/DO/DH) 6 port SATA Controller [AHCI mode] (rev 02)', ids: '[0106]: Intel Corporation 82801IR/IO/IH (ICH9R/DO/DH) 6 port SATA Controller [AHCI mode] [8086:2922] (rev 02)', sub: 'Red Hat, Inc. QEMU Virtual Machine', irq: 10, driver: 'ahci', modules: 'ahci' },
+];
+
+/** lspci [-k] [-v] [-nn] [-s [[bus]:][slot][.func]] */
+function lspci(ctx: LinuxContext): LinuxResult {
+  const nn = ctx.args.includes('-nn');
+  const opts = parseOptions(ctx.args.filter(a => a !== '-nn'), 'sd');
+  const f = opts.flags;
+  const verbose = f.has('v');
+  const kernel = f.has('k') || verbose;
+  const numeric = nn || f.has('n');
+  let devices = PCI;
+  const slot = optionValue(opts, 's');
+  if (slot !== undefined) {
+    const m = slot.match(/^(?:([0-9a-f]{0,2}):)?([0-9a-f]{0,2})(?:\.([0-7]))?$/i);
+    if (!m) return ctx.fail('lspci: -s: Invalid slot number', 1);
+    const [, bus, dev, fn] = m;
+    const hex = (x: string) => parseInt(x, 16);
+    devices = devices.filter(d => {
+      const [b, rest] = d.addr.split(':');
+      const [dv, fu] = rest.split('.');
+      return (!bus || hex(bus) === hex(b)) && (!dev || hex(dev) === hex(dv)) && (fn === undefined || fn === fu);
+    });
+  }
+  const out = devices.map(d => {
+    const lines = [`${d.addr} ${numeric ? `${d.cls} ${d.ids}` : `${d.cls}: ${d.desc}`}`];
+    if (verbose) lines.push(`\tSubsystem: ${d.sub}`, `\tFlags: ${d.driver ? 'bus master, ' : ''}fast devsel, latency 0${d.irq ? `, IRQ ${d.irq}` : ''}`);
+    if (kernel && d.driver) lines.push(`\tKernel driver in use: ${d.driver}`);
+    if (kernel && d.modules) lines.push(`\tKernel modules: ${d.modules}`);
+    return lines.join('\n');
+  });
+  // -v leaves a blank line after each device
+  return ctx.ok(out.join(verbose ? '\n\n' : '\n'));
+}
+
 
 const LSMOD = ['Module                  Size  Used by',
   ...MODULES.map(([n, size, count, users]) => `${n.padEnd(19)}${String(size).padStart(9)}  ${count}${users.length ? ` ${users.join(',')}` : ''}`)].join('\n');
@@ -72,21 +106,99 @@ function uname(ctx: LinuxContext): LinuxResult {
   return ctx.ok([...order].map(f => fields[f]).join(' '));
 }
 
+const SIGNALS = [
+  'HUP', 'INT', 'QUIT', 'ILL', 'TRAP', 'ABRT', 'BUS', 'FPE', 'KILL', 'USR1', 'SEGV', 'USR2', 'PIPE', 'ALRM', 'TERM', 'STKFLT',
+  'CHLD', 'CONT', 'STOP', 'TSTP', 'TTIN', 'TTOU', 'URG', 'XCPU', 'XFSZ', 'VTALRM', 'PROF', 'WINCH', 'IO', 'PWR', 'SYS',
+];
+/** Signal numbers and names as bash's kill -l lists them (32 and 33 are reserved by glibc). */
+const SIGNAL_TABLE: [number, string][] = [
+  ...SIGNALS.map((n, i) => [i + 1, `SIG${n}`] as [number, string]),
+  [34, 'SIGRTMIN'],
+  ...Array.from({ length: 15 }, (_, i) => [35 + i, `SIGRTMIN+${i + 1}`] as [number, string]),
+  ...Array.from({ length: 14 }, (_, i) => [50 + i, `SIGRTMAX-${14 - i}`] as [number, string]),
+  [64, 'SIGRTMAX'],
+];
+
+function killList(ctx: LinuxContext, specs: string[]): LinuxResult {
+  if (specs.length === 0) {
+    const cells = SIGNAL_TABLE.map(([n, name]) => `${String(n).padStart(2)}) ${name}`);
+    const rows: string[] = [];
+    for (let i = 0; i < cells.length; i += 5) rows.push(cells.slice(i, i + 5).join('\t'));
+    return ctx.ok(rows.join('\n'));
+  }
+  const out: string[] = [];
+  for (const s of specs) {
+    // A number gives the name; a name gives the number (an exit status above 128 means 128 + signal)
+    const n = /^\d+$/.test(s) ? (Number(s) > 128 ? Number(s) - 128 : Number(s)) : null;
+    const entry = n !== null ? SIGNAL_TABLE.find(([k]) => k === n) : SIGNAL_TABLE.find(([, name]) => name === s.toUpperCase() || name === `SIG${s.toUpperCase()}`);
+    if (!entry) return ctx.fail(`bash: kill: ${s}: invalid signal specification`, 1);
+    out.push(n !== null ? entry[1].replace(/^SIG/, '') : String(entry[0]));
+  }
+  return ctx.ok(out.join('\n'));
+}
+
+/** Process table plus the ps process itself and the other commands of its pipeline (ps aux | grep x shows the grep). */
+function psRows(ctx: LinuxContext) {
+  const tty = (cmd: string) => (cmd === 'bash' ? 'pts/0' : '?');
+  const procs = ctx.state.processes.map(p => ({ ...p, ppid: p.pid === 1 ? 0 : p.command === 'bash' ? 1450 : 1, tty: tty(p.command) }));
+  const shell = ctx.state.processes.find(p => p.command === 'bash')?.pid ?? 2100;
+  const mine = (ctx.pipeline.length ? ctx.pipeline : [['ps', ...ctx.args].join(' ')]).map((cmd, i) => ({
+    pid: 2400 + i, user: ctx.user, cpu: 0, mem: 0.1, command: cmd, ppid: shell, tty: 'pts/0',
+  }));
+  return [...procs, ...mine];
+}
+
 function ps(ctx: LinuxContext): LinuxResult {
-  const header = 'USER       PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND';
-  const rows = ctx.state.processes.map(p =>
-    `${p.user.padEnd(8, ' ')} ${p.pid.toString().padStart(5, ' ')}  ${p.cpu.toFixed(1)}  ${p.mem.toFixed(1)}  24500  4210 ?        Ss   10:00   0:01 ${p.command}`);
-  return ctx.ok(`${header}\n${rows.join('\n')}`);
+  const raw = ctx.args.join(' ');
+  const bsd = ctx.args.some(a => !a.startsWith('-') && /^[auxef]+$/.test(a));
+  const opts = parseOptions(ctx.args.filter(a => a.startsWith('-')), 'upCo', { user: 'u', pid: 'p' });
+  const f = opts.flags;
+  let rows = psRows(ctx);
+  const userFilter = optionValue(opts, 'u');
+  const pidFilter = optionValue(opts, 'p');
+  const cmdFilter = optionValue(opts, 'C');
+  const all = bsd ? /a/.test(raw) || /x/.test(raw) : f.has('e') || f.has('A');
+  if (userFilter) rows = rows.filter(p => userFilter.split(',').includes(p.user));
+  else if (pidFilter) rows = rows.filter(p => pidFilter.split(',').map(Number).includes(p.pid));
+  else if (cmdFilter) rows = rows.filter(p => p.command.split(' ')[0].split('/').pop() === cmdFilter);
+  else if (!all) rows = rows.filter(p => p.tty === 'pts/0');
+
+  const time = (p: { cpu: number }) => (p.cpu > 1 ? '00:00:12' : '00:00:00');
+  if (bsd && /u/.test(raw)) {
+    const header = 'USER         PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND';
+    return ctx.ok([header, ...rows.map(p =>
+      `${p.user.padEnd(8)} ${String(p.pid).padStart(7)} ${p.cpu.toFixed(1).padStart(4)} ${p.mem.toFixed(1).padStart(4)} ${String(24500).padStart(6)} ${String(4210).padStart(5)} ${p.tty.padEnd(8)} ${(p.tty === '?' ? 'Ss' : p.pid >= 2400 ? 'R+' : 'Ss').padEnd(4)} 10:00   0:01 ${p.command}`)].join('\n'));
+  }
+  if (f.has('f') || (bsd && /f/.test(raw))) {
+    const header = 'UID          PID    PPID  C STIME TTY          TIME CMD';
+    return ctx.ok([header, ...rows.map(p =>
+      `${p.user.padEnd(8)} ${String(p.pid).padStart(7)} ${String(p.ppid).padStart(7)} ${String(Math.round(p.cpu)).padStart(2)} 10:00 ${p.tty.padEnd(8)} ${time(p)} ${p.command}`)].join('\n'));
+  }
+  const header = '    PID TTY          TIME CMD';
+  return ctx.ok([header, ...rows.map(p =>
+    `${String(p.pid).padStart(7)} ${p.tty.padEnd(8)} ${time(p)} ${p.command.split(' ')[0].split('/').pop()}`)].join('\n'));
 }
 
 function kill(ctx: LinuxContext): LinuxResult {
-  const targets = ctx.args.filter(a => !a.startsWith('-') && a !== 'KILL' && a !== 'TERM');
+  if (ctx.args[0] === '-l' || ctx.args[0] === '-L' || ctx.args[0] === '--list') return killList(ctx, ctx.args.slice(1));
+  const args = [...ctx.args];
+  // -9, -KILL, -SIGKILL, -s KILL, -n 9
+  if (args[0] === '-s' || args[0] === '-n') args.splice(0, 2);
+  else if (args[0]?.startsWith('-') && args[0] !== '--') {
+    const spec = args[0].slice(1);
+    const known = /^\d+$/.test(spec) ? SIGNAL_TABLE.some(([n]) => n === Number(spec)) || spec === '0'
+      : SIGNAL_TABLE.some(([, name]) => name === spec.toUpperCase() || name === `SIG${spec.toUpperCase()}`);
+    if (!known) return ctx.fail(`bash: kill: ${spec}: invalid signal specification`, 1);
+    args.shift();
+  }
+  if (args[0] === '--') args.shift();
+  const targets = args;
   if (targets.length === 0) return ctx.fail('kill: usage: kill [-s sigspec | -n signum | -sigspec] pid | jobspec ... or kill -l [sigspec]', 2);
   const errors: string[] = [];
   for (const t of targets) {
     const pid = parseInt(t, 10);
     const proc = ctx.state.processes.find(p => p.pid === pid);
-    if (isNaN(pid)) { errors.push(`bash: kill: ${t}: arguments must be process or job IDs`); continue; }
+    if (isNaN(pid) || !/^-?\d+$/.test(t)) { errors.push(`bash: kill: ${t}: arguments must be process or job IDs`); continue; }
     if (!proc) { errors.push(`bash: kill: (${pid}) - No such process`); continue; }
     if (!ctx.isRoot && proc.user !== ctx.user) {
       errors.push(`bash: kill: (${pid}) - Operation not permitted`);
@@ -160,7 +272,7 @@ function tar(ctx: LinuxContext): LinuxResult {
       nonFlags.shift();
     }
     if (!archiveName) return ctx.fail('tar: Cowardly refusing to create an empty archive', 2);
-    createNode(ctx.fs, ctx.resolve(archiveName), 'file', nonFlags.join('\n'), false, ctx.user, ctx.group, ctx.fileMode());
+    createInDir(ctx.fs, ctx.resolve(archiveName), 'file', nonFlags.join('\n'), ctx.user, ctx.group, ctx.fileMode());
     return ctx.ok(hasV ? nonFlags.map(f => `a ${f}`).join('\n') : '');
   }
 
@@ -273,15 +385,22 @@ function systemctl(ctx: LinuxContext): LinuxResult {
 
 // ---------- disks (derived from state.disks so fdisk, df and lsblk agree) ----------
 
-interface Part { dev: string; sizeMB: number; fsType: string; mount?: string; typeName: string }
+interface Part {
+  dev: string; sizeMB: number; start: number; end: number; sectors: number;
+  fsType: string; mount?: string; typeName: string;
+}
 
 function linuxDisks(ctx: LinuxContext) {
   const disks = ctx.state.disks.length ? ctx.state.disks : DEFAULT_DISKS;
   return disks.map(d => {
     const name = `sd${String.fromCharCode(97 + d.diskNumber)}`;
-    const parts: Part[] = d.partitions.filter(p => p.fsType !== 'Unallocated').map(p => ({
+    const layout = partitionLayout(d);
+    const parts: Part[] = d.partitions.filter(p => p.fsType !== 'Unallocated').map((p, i) => ({
       dev: `/dev/${name}${p.id}`,
-      sizeMB: p.sizeMB,
+      sizeMB: layout[i].sectors / 2048,
+      start: layout[i].start,
+      end: layout[i].end,
+      sectors: layout[i].sectors,
       fsType: p.fsType === 'swap' ? 'swap' : p.fsType.toLowerCase(),
       mount: p.fsType === 'swap' ? '[SWAP]' : p.mountPoint,
       typeName: p.fsType === 'swap' ? 'Linux swap' : p.fsType === 'FAT32' || p.mountPoint === '/boot/efi' ? 'EFI System' : 'Linux filesystem',
@@ -292,14 +411,24 @@ function linuxDisks(ctx: LinuxContext) {
 
 const DEFAULT_DISKS = DEFAULT_LINUX_DISKS;
 
-/** Human-readable size like df -h / lsblk (1024-based, one decimal under 10). */
+/** Size as lsblk and fdisk print it: 1024-based, one decimal unless whole (512M, 4G, 45.5G). */
 function human(mb: number, suffix = ''): string {
   const units = ['M', 'G', 'T'];
   let v = mb;
   let i = 0;
   while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
-  const s = v < 10 && !Number.isInteger(v) ? v.toFixed(1) : String(Math.round(v));
-  return `${s}${units[i]}${suffix}`;
+  const r = Math.round(v * 10) / 10;
+  return `${Number.isInteger(r) ? String(r) : r.toFixed(1)}${units[i]}${suffix}`;
+}
+
+/** Size as df -h prints it: rounded up, one decimal below 10 (4.0K, 497M, 45G). */
+function dfHuman(kib: number): string {
+  if (kib === 0) return '0';
+  const units = ['K', 'M', 'G', 'T'];
+  let v = kib;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return v < 10 ? `${(Math.ceil(v * 10) / 10).toFixed(1)}${units[i]}` : `${Math.ceil(v)}${units[i]}`;
 }
 
 function fdisk(ctx: LinuxContext): LinuxResult {
@@ -327,18 +456,14 @@ function fdisk(ctx: LinuxContext): LinuxResult {
   }
   const blocks = (known ? [known] : disks).map(d => {
     const bytes = d.sizeMB * 1024 * 1024;
-    let start = 2048;
-    const rows = d.parts.map(p => {
-      const sectors = p.sizeMB * 2048;
-      const row = `${p.dev.padEnd(10)} ${String(start).padStart(9)} ${String(start + sectors - 1).padStart(9)} ${String(sectors).padStart(9)} ${human(p.sizeMB).padStart(5)} ${p.typeName}`;
-      start += sectors;
-      return row;
-    });
+    const rows = d.parts.map(p =>
+      `${p.dev.padEnd(10)} ${String(p.start).padStart(9)} ${String(p.end).padStart(9)} ${String(p.sectors).padStart(9)} ${human(p.sizeMB).padStart(5)} ${p.typeName}`);
     return [
       `Disk ${d.dev}: ${human(d.sizeMB).replace(/([MGT])$/, ' $1iB')}, ${bytes} bytes, ${bytes / 512} sectors`,
       `Disk model: ${d.model}`,
       'Units: sectors of 1 * 512 = 512 bytes',
       'Sector size (logical/physical): 512 bytes / 512 bytes',
+      'I/O size (minimum/optimal): 512 bytes / 512 bytes',
       `Disklabel type: ${d.gpt ? 'gpt' : 'dos'}`,
       'Disk identifier: B7413988-E29B-4D14-884E-512E098F03C1',
       ...(rows.length ? ['', 'Device         Start       End   Sectors  Size Type', ...rows] : []),
@@ -347,39 +472,105 @@ function fdisk(ctx: LinuxContext): LinuxResult {
   return ctx.ok(blocks.join('\n\n'));
 }
 
+/** Pads a table like df: text columns left-aligned, numeric ones right-aligned, one space apart. */
+function alignTable(rows: string[][], rightAligned: boolean[], minWidths: number[] = []): string[] {
+  const widths = rows[0].map((_, c) => Math.max(minWidths[c] ?? 0, ...rows.map(r => r[c].length)));
+  return rows.map(r => r.map((cell, c) => {
+    if (c === r.length - 1) return cell;
+    return rightAligned[c] ? cell.padStart(widths[c]) : cell.padEnd(widths[c]);
+  }).join(' '));
+}
+
 function df(ctx: LinuxContext): LinuxResult {
-  const opts = parseOptions(ctx.args, 't', { 'human-readable': 'h', 'print-type': 'T' });
-  const h = opts.flags.has('h');
-  const showType = opts.flags.has('T') || h;
-  const rows: string[][] = [];
+  const opts = parseOptions(ctx.args, 't', { 'human-readable': 'h', 'print-type': 'T', inodes: 'i', type: 't', all: 'a' });
+  const f = opts.flags;
+  const h = f.has('h');
+  const showType = f.has('T');
+  const inodes = f.has('i');
+  interface Fs { dev: string; type: string; kib: number; usedKib: number; inodes: number; iused: number; mount: string }
+  const all: Fs[] = [];
   for (const d of linuxDisks(ctx)) {
     for (const p of d.parts) {
       if (!p.mount || p.mount === '[SWAP]') continue;
-      const used = Math.round(p.sizeMB * (p.mount === '/' ? 0.31 : 0.24));
-      const avail = Math.round(p.sizeMB * 0.95) - used;
-      rows.push([p.dev, p.fsType, p.sizeMB, used, avail, p.mount] as unknown as string[]);
+      // ext4 keeps part of the partition for its own tables and journal, so df shows a bit less
+      const kib = Math.floor(p.sectors / 2 * 0.97);
+      const usedKib = Math.round(kib * (p.mount === '/' ? 0.31 : 0.24));
+      const total = Math.floor(p.sectors * 512 / 16384);
+      all.push({ dev: p.dev, type: p.fsType, kib, usedKib, inodes: total, iused: p.mount === '/' ? 312455 : 320, mount: p.mount });
     }
   }
-  rows.push(['tmpfs', 'tmpfs', 3994, 0, 3994, '/dev/shm'] as unknown as string[]);
-  const fmt = (mb: unknown) => (h ? (Number(mb) === 0 ? '0' : human(Number(mb))) : String(Number(mb) * 1024));
-  const header = `${'Filesystem'.padEnd(14)} ${showType ? 'Type  ' : ''}${h ? ' Size  Used Avail' : '1K-blocks     Used Available'} Use% Mounted on`;
-  const lines = rows.map(([dev, type, size, used, avail, mount]) => {
-    const pct = Number(size) ? Math.ceil((Number(used) / (Number(used) + Number(avail))) * 100) : 0;
-    const cols = h
-      ? `${fmt(size).padStart(5)} ${fmt(used).padStart(5)} ${fmt(avail).padStart(5)}`
-      : `${fmt(size).padStart(9)} ${fmt(used).padStart(8)} ${fmt(avail).padStart(9)}`;
-    return `${String(dev).padEnd(14)} ${showType ? String(type).padEnd(6) : ''}${cols} ${`${pct}%`.padStart(4)} ${mount}`;
+  all.push({ dev: 'tmpfs', type: 'tmpfs', kib: 4074116, usedKib: 0, inodes: 1018529, iused: 1, mount: '/dev/shm' });
+  const typeFilter = opts.values.get('t');
+  let shown = typeFilter ? all.filter(x => typeFilter.includes(x.type)) : all;
+
+  // Operands: the file system each named file lives on (the longest matching mount point)
+  const errors: string[] = [];
+  if (opts.operands.length) {
+    shown = [];
+    for (const op of opts.operands) {
+      const path = ctx.resolve(op);
+      if (!ctx.node(path)) { errors.push(`df: ${op}: No such file or directory`); continue; }
+      const dev = all.find(x => x.dev === path);
+      const fsFor = dev ?? [...all].filter(x => path === x.mount || path.startsWith(x.mount === '/' ? '/' : `${x.mount}/`))
+        .sort((a, b) => b.mount.length - a.mount.length)[0];
+      if (fsFor) shown.push(fsFor);
+    }
+  }
+
+  const header = ['Filesystem', ...(showType ? ['Type'] : []),
+    ...(inodes ? ['Inodes', 'IUsed', 'IFree', 'IUse%'] : h ? ['Size', 'Used', 'Avail', 'Use%'] : ['1K-blocks', 'Used', 'Available', 'Use%']),
+    'Mounted on'];
+  const num = (n: number) => String(n);
+  const rows = shown.map(x => {
+    const cols: string[] = [x.dev, ...(showType ? [x.type] : [])];
+    if (inodes) {
+      const ifree = x.inodes - x.iused;
+      const pct = x.inodes ? `${Math.ceil(x.iused / x.inodes * 100)}%` : '-';
+      const fmt = (n: number) => (h ? (n < 1024 ? String(n) : dfHuman(n / 1024).replace(/[KMGT]$/, c => c)) : num(n));
+      cols.push(fmt(x.inodes), fmt(x.iused), fmt(ifree), pct);
+    } else {
+      const avail = Math.round(x.kib * 0.95) - x.usedKib;
+      const pct = x.kib ? `${Math.ceil(x.usedKib / (x.usedKib + avail) * 100)}%` : '-';
+      const fmt = (k: number) => (h ? dfHuman(k) : num(k));
+      cols.push(fmt(x.kib), fmt(x.usedKib), fmt(Math.max(0, avail)), pct);
+    }
+    cols.push(x.mount);
+    return cols;
   });
-  return ctx.ok([header, ...lines].join('\n'));
+  const right = header.map((col, i) => i > (showType ? 1 : 0) && col !== 'Mounted on');
+  // GNU df gives human-readable number columns at least 5 characters, and the device column 14 or more
+  const mins = header.map((col, i) => (i === 0 ? 14 : h && right[i] && col !== 'Use%' && col !== 'IUse%' ? 5 : 0));
+  const lines = alignTable([header, ...rows], right, mins);
+  return ctx.result(rows.length || !errors.length ? lines.join('\n') : '', errors.join('\n'), errors.length ? 1 : 0);
 }
 
 function lsblk(ctx: LinuxContext): LinuxResult {
+  const opts = parseOptions(ctx.args, '', { fs: 'f' });
+  const withFs = opts.flags.has('f');
+  const disks = linuxDisks(ctx);
+  if (withFs) {
+    const uuids: Record<string, string> = {
+      '/': '8d6a8f1e-3a9b-4c22-b5e1-8f432176b912', '/boot': '4a7b9c1d-2e3f-4a5b-6c7d-8e9f0a1b2c3d', '[SWAP]': '12345678-90ab-cdef-1234-567890abcdef',
+    };
+    const rows: string[][] = [['NAME', 'FSTYPE', 'FSVER', 'LABEL', 'UUID', 'FSAVAIL', 'FSUSE%', 'MOUNTPOINTS']];
+    for (const d of disks) {
+      rows.push([d.name, '', '', '', '', '', '', '']);
+      d.parts.forEach((p, j) => {
+        const branch = j === d.parts.length - 1 ? '└─' : '├─';
+        const isSwap = p.mount === '[SWAP]';
+        const avail = p.mount && !isSwap ? dfHuman(Math.round(p.sectors / 2 * 0.97 * (p.mount === '/' ? 0.64 : 0.71))) : '';
+        rows.push([branch + p.dev.slice(5), p.fsType, isSwap ? '1' : '1.0', '', uuids[p.mount ?? ''] ?? '', avail,
+          p.mount && !isSwap ? (p.mount === '/' ? '31%' : '24%') : '', p.mount ?? '']);
+      });
+    }
+    return ctx.ok(alignTable(rows, rows[0].map(() => false)).map(l => l.trimEnd()).join('\n'));
+  }
   const lines = ['NAME   MAJ:MIN RM  SIZE RO TYPE MOUNTPOINTS'];
-  linuxDisks(ctx).forEach((d, i) => {
-    lines.push(`${d.name.padEnd(6)}   8:${i * 16}    0 ${human(d.sizeMB).padStart(4)}  0 disk `);
+  disks.forEach((d, i) => {
+    lines.push(`${d.name.padEnd(6)}   8:${i * 16}    0 ${human(d.sizeMB).padStart(5)}  0 disk `);
     d.parts.forEach((p, j) => {
       const branch = j === d.parts.length - 1 ? '└─' : '├─';
-      lines.push(`${(branch + p.dev.slice(5)).padEnd(6)}   8:${i * 16 + j + 1}    0 ${human(p.sizeMB).padStart(4)}  0 part ${p.mount ?? ''}`);
+      lines.push(`${(branch + p.dev.slice(5)).padEnd(6)}   8:${i * 16 + j + 1}    0 ${human(p.sizeMB).padStart(5)}  0 part ${p.mount ?? ''}`);
     });
   });
   return ctx.ok(lines.join('\n'));
@@ -521,7 +712,7 @@ linuxCommands.registerAll({
   hostname: ctx => ctx.ok(ctx.state.hostname),
   uname,
   dmesg: ctx => ctx.ok(DMESG),
-  lspci: ctx => ctx.ok(LSPCI),
+  lspci,
   lsmod: ctx => ctx.ok(LSMOD),
   journalctl,
   df,

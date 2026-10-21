@@ -3,7 +3,7 @@ import { StageResult } from '../chain';
 import { CommandRegistry } from '../registry';
 import {
   getNodeAtPath, normalizePath, getUserGroups, toOctalField, AccessCheck, canReadNode, canWriteNode,
-  canDeleteNode, checkAccess, findTraversalDenial, describeIdentity,
+  canDeleteNode, checkAccess, findTraversalDenial, describeIdentity, createNode, applySpecialBits,
 } from '../filesystem';
 
 export type LinuxResult = StageResult;
@@ -11,6 +11,26 @@ export type LinuxResult = StageResult;
 /** File creation mode after the umask, as a FileNode octal field. Also used for redirects. */
 export function newFileMode(state: SystemState): number {
   return toOctalField(0o666 & ~state.umask);
+}
+
+/**
+ * Creates a file or directory the way the Linux kernel does: inside a setgid directory the new
+ * node takes the directory's group, and a new subdirectory inherits the setgid bit too.
+ */
+export function createInDir(
+  fs: FileNode, path: string, type: 'file' | 'directory', content: string, owner: string, group: string, octal: number
+): boolean {
+  const parentPath = path.slice(0, path.lastIndexOf('/')) || '/';
+  const parent = getNodeAtPath(fs, parentPath, false);
+  const setgid = !!parent && parent.type === 'directory' && /[sS]/.test(parent.permissions.slice(-9)[5] ?? '');
+  if (!createNode(fs, path, type, content, false, owner, setgid ? parent!.group : group, octal % 1000)) return false;
+  const special = Math.floor(octal / 1000) | (setgid && type === 'directory' ? 2 : 0);
+  if (special) {
+    const node = getNodeAtPath(fs, path, false)!;
+    node.permissions = applySpecialBits(node.permissions, special);
+    node.octal = special * 1000 + (octal % 1000);
+  }
+  return true;
 }
 
 /**
@@ -56,6 +76,9 @@ export class LinuxContext {
 
   /** Script nesting level (0 for a line typed at the prompt). */
   depth = 0;
+
+  /** The commands of the pipeline this one runs in, as typed (ps lists them as processes). */
+  pipeline: string[] = [];
 
   private record(check: AccessCheck): AccessCheck {
     if (!check.ok && check.explanation && !this.denials.includes(check.explanation)) {
