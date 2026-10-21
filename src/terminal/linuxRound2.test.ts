@@ -113,3 +113,59 @@ test('A3: syntax errors stop the whole line with bash\'s message and status 2', 
   assert.equal(run('echo "$(echo "a b")" `echo c` $((1+(2))) \'x;y\' e\\;f # | ;;').stdout, 'a b c 3 x;y e;f');
   assert.equal(run('echo a; echo b &').stdout, 'a\nb');
 });
+
+// ---------- A5: unknown options (texts from coreutils 9 / GNU grep 3) ----------
+
+test('A5: an unknown option stops the command before it does anything', () => {
+  const run = linuxSession();
+  run('touch h');
+  let res = run('rm -Q h');
+  assert.equal(res.exitCode, 1);
+  assert.equal(res.stderr, "rm: invalid option -- 'Q'\nTry 'rm --help' for more information.");
+  assert.equal(run('ls h').stdout, 'h');
+  res = run('rm --bogus h');
+  assert.equal(res.exitCode, 1);
+  assert.equal(res.stderr, "rm: unrecognized option '--bogus'\nTry 'rm --help' for more information.");
+  assert.equal(run('ls h').stdout, 'h');
+  res = run('ls --hlep');
+  assert.equal(res.exitCode, 2);
+  assert.equal(res.stdout, '');
+  assert.equal(res.stderr, "ls: unrecognized option '--hlep'\nTry 'ls --help' for more information.");
+  res = run('grep -Q x notes.txt');
+  assert.equal(res.exitCode, 2);
+  assert.equal(res.stderr, "grep: invalid option -- 'Q'\nUsage: grep [OPTION]... PATTERNS [FILE]...\nTry 'grep --help' for more information.");
+  assert.equal(run('sort -Q notes.txt').exitCode, 2);
+  assert.equal(run('mkdir -Q dd').exitCode, 1);
+  assert.equal(run('ls dd').exitCode, 2);
+  assert.equal(run('cp -Q h h2').exitCode, 1);
+  assert.equal(run('ls h2').exitCode, 2);
+  assert.equal(run('chmod -Q 600 h').stderr, "chmod: invalid option -- 'Q'\nTry 'chmod --help' for more information.");
+  assert.equal(run('head -n').stderr, "head: option requires an argument -- 'n'\nTry 'head --help' for more information.");
+  assert.equal(run('sort --key').stderr, "sort: option '--key' requires an argument\nTry 'sort --help' for more information.");
+  assert.match(run('ls --s').stderr, /^ls: option '--s' is ambiguous; possibilities: /);
+  assert.equal(run('sudo rm -Q h').exitCode, 1);
+  assert.equal(run('ls h').stdout, 'h');
+});
+
+test('A5: valid options, including combined, numeric, valued and abbreviated ones, still work', () => {
+  const run = linuxSession();
+  assert.match(run('ls -la').stdout, /^total \d+\ndrwx/);
+  run('mkdir -p d/e');
+  assert.equal(run('rm -rf d').exitCode, 0);
+  assert.equal(run('ls d').exitCode, 2);
+  assert.equal(run('printf "3\\n1\\n2\\n" | sort -nr').stdout, '3\n2\n1');
+  assert.equal(run('sort -t: -k3n /etc/passwd | head -1').stdout, 'root:x:0:0:root:/root:/bin/bash');
+  assert.equal(run('head -1 notes.txt').stdout, 'LPIC-1 Study Notes:');
+  assert.equal(run('tail -n +2 notes.txt | head -n1').stdout, '- Remember: chmod 755 gives rwxr-xr-x');
+  assert.equal(run('chmod -w notes.txt').exitCode, 0);
+  assert.match(run('ls -l notes.txt').stdout, /^-r--r--r-- /);
+  assert.equal(run('ls --rec scripts').stdout.split('\n')[0], 'scripts:');
+  assert.equal(run('ls --color=auto -C').stdout, 'finance  notes.txt  scripts');
+});
+
+test('A5: cat -A / -E / -T / -s / -b show what is in the file', () => {
+  const run = linuxSession();
+  assert.equal(run('cat -A /etc/hostname').stdout, 'lpi-lab01$');
+  assert.equal(run('printf "a\\tb\\n\\n\\nc\\n" | cat -sbT').stdout, '     1\ta^Ib\n\n     2\tc');
+  assert.equal(run('printf "x\\ty\\n" | cat -E').stdout, 'x\ty$');
+});

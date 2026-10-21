@@ -26,6 +26,7 @@ import './linux/commands/extra';
 import { helpOptionOutput } from './linux/commands/help';
 import { syncKernelFiles } from './linux/virtualFs';
 import { expandArgs } from './linux/glob';
+import { checkOptions } from './linux/options';
 import { isNotSimulatedLinux } from './notSimulated';
 import { suggestLinux } from './suggest';
 
@@ -412,7 +413,9 @@ function runLinuxCommand(
     }
     // --help is answered here, from the docs, so the command itself never runs
     const help = helpOptionOutput(name, args);
-    res = help ? ctx.result(help.stdout, help.stderr, help.exitCode) : handler(ctx);
+    // An option the real command does not know stops it before it does anything
+    const invalid = help ? null : checkOptions(name, args);
+    res = help ? ctx.result(help.stdout, help.stderr, help.exitCode) : invalid ? ctx.fail(invalid.stderr, invalid.code) : handler(ctx);
   }
 
   if (asUserState) {

@@ -125,8 +125,6 @@ function ls(ctx: LinuxContext): LinuxResult {
     // Like GNU ls, one name per line unless stdout is a terminal (or -C / -x ask for columns)
     one: f.has('1') || (!ctx.tty && !f.has('C') && !f.has('x')), sortTime: f.has('t'), sortSize: f.has('S'), reverse: f.has('r'),
   };
-  const bad = [...f].find(c => c.length === 1 && !'aAdhRFinrlg1tSxCU'.includes(c));
-  if (bad) return ctx.fail(`ls: invalid option -- '${bad}'\nTry 'ls --help' for more information.`, 2);
   const all = f.has('a');
   const almostAll = f.has('A') && !all;
   const dirSelf = f.has('d');

@@ -1,5 +1,6 @@
 import { StageResult } from '../chain';
 import { LinuxContext, linuxCommands } from './context';
+import { checkOptions } from './options';
 
 // Running files: ./script.sh, /usr/bin/ls, bash script.sh, bash -c "...", source / .
 
@@ -101,7 +102,8 @@ export function runScriptFile(ctx: LinuxContext, name: string, needsExec: boolea
     const builtin = linuxCommands.get(base);
     if (BIN_DIRS.includes(dir) && builtin) {
       ctx.name = base;
-      return builtin(ctx);
+      const invalid = checkOptions(base, ctx.args);
+      return invalid ? ctx.fail(invalid.stderr, invalid.code) : builtin(ctx);
     }
   }
   if (!ctx.access(node, path, 'r').ok) return ctx.fail(`bash: ${name}: Permission denied`, needsExec ? 126 : 1);
