@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { windowsSession } from './testUtils.ts';
+import { linuxSession, windowsSession } from './testUtils.ts';
 
 // Engine gaps found while writing lessons (DiskPart, AD, counts, filters, accounts ...)
 
@@ -44,4 +44,61 @@ test('DiskPart: create partition primary size= leaves the rest free', () => {
   assert.match(run('list disk').stdout, /\* Disk 1 +Online +250 GB +150 GB/);
   run('create partition primary');
   assert.match(run('list partition').stdout, /Partition 2 +Primary +150 GB +100 GB/);
+});
+
+test('Get-ADUser honours -Identity, -Filter and -Properties', () => {
+  const run = windowsSession('powershell');
+  const one = run('Get-ADUser jdoe');
+  assert.equal(one.exitCode, 0);
+  assert.match(one.stdout, /SamAccountName +: jdoe/);
+  assert.equal((one.stdout.match(/SamAccountName/g) ?? []).length, 1, 'only the requested user');
+  assert.doesNotMatch(one.stdout, /LockedOut/, 'extended properties need -Properties');
+  assert.equal(run('Get-ADUser -Identity jdoe').stdout, one.stdout);
+  const props = run('Get-ADUser -Identity jdoe -Properties LockedOut,MemberOf').stdout;
+  assert.match(props, /LockedOut +: (True|False)/);
+  assert.match(props, /MemberOf +: \{CN=/);
+  assert.match(run('Get-ADUser jdoe -Properties *').stdout, /EmailAddress +: jdoe@corp\.local/);
+  const missing = run('Get-ADUser nobody');
+  assert.equal(missing.exitCode, 1);
+  assert.match(missing.stderr, /Cannot find an object with identity: 'nobody' under: 'DC=corp,DC=local'\./);
+  const all = run('Get-ADUser -Filter *').stdout;
+  assert.equal((all.match(/SamAccountName/g) ?? []).length, run.state().adUsers.length);
+  assert.match(run("Get-ADUser -Filter 'SamAccountName -eq \"jdoe\"'").stdout, /SamAccountName +: jdoe/);
+});
+
+test('ping counts: Linux -c and Windows -n', () => {
+  const linux = linuxSession();
+  const l = linux('ping -c 3 8.8.8.8');
+  assert.match(l.stdout, /^PING 8\.8\.8\.8 \(8\.8\.8\.8\) 56\(84\) bytes of data\./);
+  assert.equal((l.stdout.match(/icmp_seq=/g) ?? []).length, 3);
+  assert.match(l.stdout, /3 packets transmitted, 3 received/);
+  assert.match(linux('ping -c 1 localhost').stdout, /1 packets transmitted/);
+  assert.match(linux('ping').stderr, /Destination address required/);
+
+  const win = windowsSession('cmd');
+  win('ipconfig /renew');
+  const w = win('ping -n 2 8.8.8.8');
+  assert.equal((w.stdout.match(/Reply from/g) ?? []).length, 2);
+  assert.match(w.stdout, /Sent = 2, Received = 2, Lost = 0/);
+  assert.match(win('ping /n 1 -l 64 8.8.8.8').stdout, /with 64 bytes of data:\nReply from 8\.8\.8\.8: bytes=64/);
+  assert.equal((win('ping 8.8.8.8').stdout.match(/Reply from/g) ?? []).length, 4);
+});
+
+test('uname options, ip filtering by device, journalctl -u', () => {
+  const run = linuxSession();
+  assert.equal(run('uname -r').stdout, '5.15.0-101-generic');
+  assert.equal(run('uname').stdout, 'Linux');
+  assert.match(run('uname -a').stdout, /^Linux \S+ 5\.15\.0-101-generic #111-Ubuntu SMP .* x86_64 GNU\/Linux$/);
+  assert.equal(run('uname -m').stdout, 'x86_64');
+  const eth0 = run('ip a show eth0').stdout;
+  assert.match(eth0, /eth0:/);
+  assert.doesNotMatch(eth0, /\blo:/);
+  assert.equal(run('ip addr show dev eth0').stdout, eth0);
+  assert.match(run('ip a show nosuch').stderr, /Device "nosuch" does not exist\./);
+  assert.match(run('ip a').stdout, /lo:[\s\S]*eth0:|eth0:[\s\S]*lo:/);
+  const ssh = run('journalctl -u ssh').stdout.split('\n').slice(1);
+  assert.ok(ssh.length >= 2);
+  assert.ok(ssh.every(l => /sshd|Secure Shell/.test(l)), ssh.join('\n'));
+  assert.doesNotMatch(run('journalctl -u ssh.service').stdout, /nginx/);
+  assert.match(run('journalctl -u nosuch').stdout, /-- No entries --/);
 });

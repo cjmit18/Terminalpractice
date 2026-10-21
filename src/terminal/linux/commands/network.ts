@@ -1,5 +1,5 @@
 import { LinuxContext, LinuxResult, linuxCommands } from '../context';
-import { parseOptions } from '../../textUtils';
+import { parseOptions, optionValue } from '../../textUtils';
 
 // Networking: ip, ifconfig, ping, ss, netstat
 
@@ -13,20 +13,46 @@ function broadcast(ip: string, mask: string): string {
   return octets(ip).map((o, i) => (o & m[i]) | (~m[i] & 255)).join('.');
 }
 
+const ADDR_OBJECTS = ['a', 'ad', 'add', 'addr', 'addre', 'addres', 'address'];
+const LINK_OBJECTS = ['l', 'li', 'lin', 'link'];
+const ROUTE_OBJECTS = ['r', 'ro', 'rou', 'rout', 'route'];
+
 function ip(ctx: LinuxContext): LinuxResult {
-  const sub = ctx.args[0];
-  if (sub === 'addr' || sub === 'a') {
-    return ctx.ok(ctx.state.interfaces.map((iface, idx) => {
-      if (iface.name === 'lo') {
-        return `${idx + 1}: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN\n    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00\n    inet ${iface.ip}/${prefixLength(iface.netmask)} scope host lo`;
-      }
-      return `${idx + 1}: ${iface.name}: <BROADCAST,MULTICAST,${iface.status}> mtu 1500 qdisc fq_codel state ${iface.status}\n    link/ether ${iface.mac} brd ff:ff:ff:ff:ff:ff\n    inet ${iface.ip}/${prefixLength(iface.netmask)} brd ${broadcast(iface.ip, iface.netmask)} scope global ${iface.name}`;
-    }).join('\n'));
-  }
-  if (sub === 'route' || sub === 'r') {
+  const args = [...ctx.args];
+  const flags = new Set<string>();
+  while (args[0]?.startsWith('-')) flags.add(args.shift()!.replace(/^-+/, ''));
+  const [object, ...rest] = args;
+  const brief = flags.has('br') || flags.has('brief');
+  if (!object) return ctx.fail('Usage: ip [ OPTIONS ] OBJECT { COMMAND | help }\nwhere  OBJECT := { address | link | route | neigh | rule | netns ... }', 255);
+
+  if (ROUTE_OBJECTS.includes(object)) {
     return ctx.ok('default via 192.168.1.1 dev eth0 proto dhcp src 192.168.1.105 metric 100\n192.168.1.0/24 dev eth0 proto kernel scope link src 192.168.1.105');
   }
-  return ctx.ok('Usage: ip [ OPTIONS ] OBJECT { COMMAND | help }');
+  const isAddr = ADDR_OBJECTS.includes(object);
+  if (!isAddr && !LINK_OBJECTS.includes(object)) return ctx.fail(`Object "${object}" is unknown, try "ip help".`, 1);
+
+  // [show|list] [dev] NAME
+  const words = rest.filter(w => !['show', 'list', 'ls', 'lst', 'sh', 'dev'].includes(w));
+  const dev = words[0];
+  const all = ctx.state.interfaces.map((iface, idx) => ({ iface, idx }));
+  const chosen = dev ? all.filter(x => x.iface.name === dev) : all;
+  if (dev && !chosen.length) return ctx.fail(`Device "${dev}" does not exist.`, 1);
+
+  return ctx.ok(chosen.map(({ iface, idx }) => {
+    const lo = iface.name === 'lo';
+    const prefix = `${iface.ip}/${prefixLength(iface.netmask)}`;
+    if (brief) {
+      const state = lo ? 'UNKNOWN' : iface.status;
+      return isAddr ? `${iface.name.padEnd(16)} ${state.padEnd(14)} ${prefix}` : `${iface.name.padEnd(16)} ${state.padEnd(14)} ${lo ? '00:00:00:00:00:00' : iface.mac}`;
+    }
+    const head = lo
+      ? `${idx + 1}: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN`
+      : `${idx + 1}: ${iface.name}: <BROADCAST,MULTICAST,${iface.status === 'UP' ? 'UP,LOWER_UP' : 'DOWN'}> mtu 1500 qdisc fq_codel state ${iface.status}`;
+    const link = lo ? '    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00' : `    link/ether ${iface.mac} brd ff:ff:ff:ff:ff:ff`;
+    if (!isAddr) return `${head}\n${link}`;
+    const inet = lo ? `    inet ${prefix} scope host lo` : `    inet ${prefix} brd ${broadcast(iface.ip, iface.netmask)} scope global ${iface.name}`;
+    return `${head}\n${link}\n${inet}`;
+  }).join('\n'));
 }
 
 function ifconfig(ctx: LinuxContext): LinuxResult {
@@ -36,17 +62,27 @@ function ifconfig(ctx: LinuxContext): LinuxResult {
 }
 
 function ping(ctx: LinuxContext): LinuxResult {
-  const host = ctx.args.find(a => !a.startsWith('-')) || 'localhost';
+  const opts = parseOptions(ctx.args, 'ciIlmMNpQsStTwW', { count: 'c', interval: 'i', size: 's' });
+  const host = opts.operands[0];
+  if (!host) return ctx.fail('ping: usage error: Destination address required', 1);
+  const countArg = optionValue(opts, 'c');
+  const count = countArg === undefined ? 4 : Number(countArg);
+  if (!Number.isInteger(count) || count < 1) return ctx.fail(`ping: invalid argument: '${countArg}': out of range: 1 <= value <= 9223372036854775807`, 1);
+  const sizeArg = optionValue(opts, 's');
+  const size = sizeArg === undefined ? 56 : Number(sizeArg);
+  const ip = host === 'localhost' ? '127.0.0.1' : /^\d+(\.\d+){3}$/.test(host) ? host : '192.168.1.1';
+  const times = Array.from({ length: count }, (_, i) => [14.2, 13.8, 14.0, 14.1][i % 4]);
+  const min = Math.min(...times);
+  const max = Math.max(...times);
+  const avg = times.reduce((a, b) => a + b, 0) / count;
+  const mdev = Math.sqrt(times.reduce((a, t) => a + (t - avg) ** 2, 0) / count);
   return ctx.ok([
-    `PING ${host} (${host === '8.8.8.8' ? '8.8.8.8' : '192.168.1.1'}) 56(84) bytes of data.`,
-    `64 bytes from ${host}: icmp_seq=1 ttl=117 time=14.2 ms`,
-    `64 bytes from ${host}: icmp_seq=2 ttl=117 time=13.8 ms`,
-    `64 bytes from ${host}: icmp_seq=3 ttl=117 time=14.0 ms`,
-    `64 bytes from ${host}: icmp_seq=4 ttl=117 time=14.1 ms`,
+    `PING ${host} (${ip}) ${size}(${size + 28}) bytes of data.`,
+    ...times.map((t, i) => `${size + 8} bytes from ${ip === host ? host : `${host} (${ip})`}: icmp_seq=${i + 1} ttl=117 time=${t.toFixed(1)} ms`),
     '',
     `--- ${host} ping statistics ---`,
-    '4 packets transmitted, 4 received, 0% packet loss, time 3004ms',
-    'rtt min/avg/max/mdev = 13.811/14.025/14.212/0.141 ms',
+    `${count} packets transmitted, ${count} received, 0% packet loss, time ${(count - 1) * 1001}ms`,
+    `rtt min/avg/max/mdev = ${min.toFixed(3)}/${avg.toFixed(3)}/${max.toFixed(3)}/${mdev.toFixed(3)} ms`,
   ].join('\n'));
 }
 

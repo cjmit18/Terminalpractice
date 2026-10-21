@@ -37,14 +37,47 @@ const LSMOD = [
   'libahci                49152  1 ahci',
 ].join('\n');
 
-const JOURNAL = [
-  '-- Journal begins at Sun 2026-10-19 08:00:00 UTC, ends at Sun 2026-10-19 10:25:00 UTC. --',
-  'Oct 19 09:30:12 lpi-lab systemd[1]: Starting Network Time Synchronization...',
-  'Oct 19 09:30:13 lpi-lab systemd[1]: Started Network Time Synchronization.',
-  'Oct 19 09:45:00 lpi-lab kernel: [ 120.40] EXT4-fs (sda3): re-mounted. Opts: errors=remount-ro',
-  'Oct 19 10:00:22 lpi-lab sshd[1450]: Accepted publickey for student from 192.168.1.100 port 51220 ssh2',
-  'Oct 19 10:15:30 lpi-lab nginx[2100]: [notice] configuration file /etc/nginx/nginx.conf test is successful',
-].join('\n');
+const JOURNAL_HEAD = '-- Journal begins at Sun 2026-10-19 08:00:00 UTC, ends at Sun 2026-10-19 10:25:00 UTC. --';
+
+/** Journal entries with the systemd unit that logged them (kernel lines have none). */
+const JOURNAL: { unit?: string; line: string }[] = [
+  { unit: 'systemd-timesyncd', line: 'Oct 19 09:30:12 lpi-lab systemd[1]: Starting Network Time Synchronization...' },
+  { unit: 'systemd-timesyncd', line: 'Oct 19 09:30:13 lpi-lab systemd[1]: Started Network Time Synchronization.' },
+  { unit: 'ssh', line: 'Oct 19 09:30:14 lpi-lab systemd[1]: Starting OpenBSD Secure Shell server...' },
+  { unit: 'ssh', line: 'Oct 19 09:30:14 lpi-lab sshd[1420]: Server listening on 0.0.0.0 port 22.' },
+  { unit: 'ssh', line: 'Oct 19 09:30:14 lpi-lab systemd[1]: Started OpenBSD Secure Shell server.' },
+  { line: 'Oct 19 09:45:00 lpi-lab kernel: EXT4-fs (sda3): re-mounted. Opts: errors=remount-ro' },
+  { unit: 'ssh', line: 'Oct 19 10:00:22 lpi-lab sshd[1450]: Accepted publickey for student from 192.168.1.100 port 51220 ssh2' },
+  { unit: 'nginx', line: 'Oct 19 10:15:30 lpi-lab nginx[2100]: [notice] configuration file /etc/nginx/nginx.conf test is successful' },
+];
+
+function journalctl(ctx: LinuxContext): LinuxResult {
+  const opts = parseOptions(ctx.args, 'unpbS', { unit: 'u', lines: 'n', priority: 'p', dmesg: 'k', boot: 'b', 'no-pager': 'P', follow: 'f', since: 'S' });
+  const units = (opts.values.get('u') ?? []).map(u => u.replace(/\.service$/, ''));
+  let entries = JOURNAL;
+  if (opts.flags.has('k')) entries = entries.filter(e => !e.unit);
+  if (units.length) entries = entries.filter(e => e.unit && units.includes(e.unit));
+  const n = optionValue(opts, 'n');
+  if (n !== undefined) entries = entries.slice(-Math.max(0, Number(n) || 0));
+  const head = opts.flags.has('k') || opts.flags.has('b') ? '-- Boot 6c1f0a3e2b7d4e5f8a9b0c1d2e3f4a5b --' : JOURNAL_HEAD;
+  return ctx.ok([head, ...(entries.length ? entries.map(e => e.line.replace(' lpi-lab ', ` ${ctx.state.hostname} `)) : ['-- No entries --'])].join('\n'));
+}
+
+const KERNEL = { r: '5.15.0-101-generic', v: '#111-Ubuntu SMP Tue Mar 5 20:16:58 UTC 2024' };
+
+function uname(ctx: LinuxContext): LinuxResult {
+  const opts = parseOptions(ctx.args, '', {
+    all: 'a', 'kernel-name': 's', nodename: 'n', 'kernel-release': 'r', 'kernel-version': 'v', machine: 'm',
+    processor: 'p', 'hardware-platform': 'i', 'operating-system': 'o',
+  });
+  const bad = [...opts.flags].find(f => !'asnrvmpio'.includes(f));
+  if (bad) return ctx.fail(`uname: invalid option -- '${bad}'\nTry 'uname --help' for more information.`);
+  const fields: Record<string, string> = {
+    s: 'Linux', n: ctx.state.hostname, r: KERNEL.r, v: KERNEL.v, m: 'x86_64', p: 'x86_64', i: 'x86_64', o: 'GNU/Linux',
+  };
+  const order = opts.flags.has('a') ? 'snrvmpio' : [...'snrvmpio'].filter(f => opts.flags.has(f)).join('') || 's';
+  return ctx.ok([...order].map(f => fields[f]).join(' '));
+}
 
 function ps(ctx: LinuxContext): LinuxResult {
   const header = 'USER       PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND';
@@ -499,13 +532,11 @@ linuxCommands.registerAll({
   false: ctx => ctx.fail('', 1),
   clear: ctx => ctx.ok('\x1b[2J\x1b[0;0H'),
   hostname: ctx => ctx.ok(ctx.state.hostname),
-  uname: ctx => ctx.ok(ctx.args.includes('-a')
-    ? `Linux ${ctx.state.hostname} 5.15.0-101-generic #111-Ubuntu SMP x86_64 GNU/Linux`
-    : 'Linux'),
+  uname,
   dmesg: ctx => ctx.ok(DMESG),
   lspci: ctx => ctx.ok(LSPCI),
   lsmod: ctx => ctx.ok(LSMOD),
-  journalctl: ctx => ctx.ok(JOURNAL),
+  journalctl,
   df,
   lsblk,
   free,

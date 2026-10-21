@@ -1,4 +1,4 @@
-import { WindowsService } from '../../types/terminal';
+import { ADUser, WindowsService } from '../../types/terminal';
 import { globToRegex } from '../textUtils';
 import { WindowsContext, WindowsResult, psCommands } from './context';
 import { bindParams, psError, badParameter } from './psUtil';
@@ -200,22 +200,81 @@ function stopProcess(ctx: WindowsContext): WindowsResult | null {
   return ctx.ok();
 }
 
+/** Properties Get-ADUser returns for a user, by name (the default set plus extended ones). */
+function adUserProps(u: ADUser): Record<string, string> {
+  const dn = `CN=${u.displayName},${u.ou}`;
+  const rid = 1100 + [...u.sAMAccountName].reduce((n, c) => n + c.charCodeAt(0), 0);
+  return {
+    DistinguishedName: dn,
+    Enabled: u.enabled ? 'True' : 'False',
+    GivenName: u.givenName,
+    Name: u.displayName,
+    ObjectClass: 'user',
+    ObjectGUID: `${rid.toString(16).padStart(8, '0')}-3c1e-4b7a-9f02-5d6e7a8b9c0d`,
+    SamAccountName: u.sAMAccountName,
+    SID: `S-1-5-21-3623811015-3361044348-30300820-${rid}`,
+    Surname: u.surname,
+    UserPrincipalName: `${u.sAMAccountName}@corp.local`,
+    // extended properties, only shown when asked for with -Properties
+    Department: u.department,
+    DisplayName: u.displayName,
+    EmailAddress: u.email,
+    LockedOut: u.locked ? 'True' : 'False',
+    MemberOf: `{${u.memberOf.map(g => `CN=${g},CN=Users,DC=corp,DC=local`).join(', ')}}`,
+    PasswordNeverExpires: u.passwordNeverExpires ? 'True' : 'False',
+  };
+}
+
+const AD_DEFAULT = ['DistinguishedName', 'Enabled', 'GivenName', 'Name', 'ObjectClass', 'ObjectGUID', 'SamAccountName', 'SID', 'Surname', 'UserPrincipalName'];
+
+/** Matches -Filter text: *, or Prop -eq/-ne/-like 'value' joined by -and. */
+function adFilter(filter: string): ((props: Record<string, string>) => boolean) | null {
+  const f = filter.trim().replace(/^[{"']\s*|\s*[}"']$/g, '');
+  if (f === '*') return () => true;
+  const clauses = f.split(/\s+-and\s+/i).map(c => c.match(/^(\w+)\s+-(eq|ne|like)\s+['"]?(.*?)['"]?$/i));
+  if (clauses.some(c => !c)) return null;
+  return props => clauses.every(c => {
+    const key = Object.keys(props).find(k => k.toLowerCase() === c![1].toLowerCase());
+    const actual = (key ? props[key] : '').toLowerCase();
+    const want = c![3].replace(/^\$/, '').toLowerCase();
+    if (c![2].toLowerCase() === 'eq') return actual === want;
+    if (c![2].toLowerCase() === 'ne') return actual !== want;
+    return globToRegex(want, true).test(actual);
+  });
+}
+
 function getADUser(ctx: WindowsContext): WindowsResult {
-  const lines: string[] = [];
-  for (const u of ctx.state.adUsers) {
-    lines.push(
-      `DistinguishedName : CN=${u.displayName},${u.ou}`,
-      `Enabled           : ${u.enabled}`,
-      `GivenName         : ${u.givenName}`,
-      `Name              : ${u.displayName}`,
-      `ObjectClass       : user`,
-      `SamAccountName    : ${u.sAMAccountName}`,
-      `Surname           : ${u.surname}`,
-      `UserPrincipalName : ${u.sAMAccountName}@corp.local`,
-      ''
-    );
+  const p = bindParams(ctx.args, { Identity: 'value', Filter: 'value', Properties: 'value', SearchBase: 'value', Server: 'value', LDAPFilter: 'value' });
+  if (typeof p === 'string') return ctx.fail(badParameter(ctx.raw, 'Get-ADUser', p));
+  const identity = (p.named.get('Identity') as string | undefined) ?? p.positional[0];
+  const filterText = p.named.get('Filter') as string | undefined;
+  const wanted = String(p.named.get('Properties') ?? '').split(',').map(x => x.trim()).filter(Boolean);
+  let users = ctx.state.adUsers;
+  if (identity) {
+    const id = identity.toLowerCase();
+    users = users.filter(u => {
+      const props = adUserProps(u);
+      return [u.sAMAccountName, props.DistinguishedName, props.SID, props.ObjectGUID, props.UserPrincipalName].some(v => v.toLowerCase() === id);
+    });
+    if (!users.length) {
+      return ctx.fail(psError(ctx.raw, 'Get-ADUser', `Cannot find an object with identity: '${identity}' under: 'DC=corp,DC=local'.`, 'ObjectNotFound', identity, 'ADIdentityNotFoundException',
+        'ActiveDirectoryCmdlet:Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException,Microsoft.ActiveDirectory.Management.Commands.GetADUser')
+        .replace(',Microsoft.PowerShell.Commands.GetADUserCommand', ''));
+    }
+  } else if (filterText !== undefined) {
+    const test = adFilter(filterText);
+    if (!test) return ctx.fail(psError(ctx.raw, 'Get-ADUser', `Error parsing query: '${filterText}'`, 'ParserError', filterText, 'ADFilterParsingException', 'ActiveDirectoryCmdlet:Microsoft.ActiveDirectory.Management.ADFilterParsingException,Microsoft.ActiveDirectory.Management.Commands.GetADUser')
+      .replace(',Microsoft.PowerShell.Commands.GetADUserCommand', ''));
+    users = users.filter(u => test(adUserProps(u)));
   }
-  return ctx.ok(lines.join('\n'));
+  const blocks = users.map(u => {
+    const props = adUserProps(u);
+    const extra = wanted.includes('*') ? Object.keys(props) : wanted.map(w => Object.keys(props).find(k => k.toLowerCase() === w.toLowerCase())).filter((k): k is string => !!k);
+    const keys = [...new Set([...AD_DEFAULT, ...extra])].sort((a, b) => a.localeCompare(b));
+    const width = Math.max(...keys.map(k => k.length));
+    return keys.map(k => `${k.padEnd(width)} : ${props[k]}`).join('\n');
+  });
+  return ctx.ok(blocks.length ? `\n${blocks.join('\n\n')}\n` : '');
 }
 
 function newADUser(ctx: WindowsContext): WindowsResult {
