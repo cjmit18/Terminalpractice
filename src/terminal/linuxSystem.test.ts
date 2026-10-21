@@ -66,6 +66,30 @@ test('grep -A, -B, -C and -m print context like GNU grep', () => {
   assert.equal(run('grep -A z x g.txt').stderr, 'grep: z: invalid context length argument');
 });
 
+test('smaller utilities: rmdir, du, pgrep/pkill, nice, xargs, nl, mount, swapon, blkid, modinfo', () => {
+  const run = linuxSession();
+  run('mkdir -p a/b/c');
+  assert.equal(run('rmdir -p a/b/c').exitCode, 0);
+  assert.equal(run('ls a').exitCode, 2);
+  assert.equal(run('rmdir scripts').stderr, "rmdir: failed to remove 'scripts': Directory not empty");
+  assert.match(run('du -sh scripts').stdout, /^8\.0K\tscripts$/);
+  assert.match(run('du -c notes.txt scripts').stdout, /\n12\ttotal$/);
+  assert.equal(run('pgrep sshd').stdout, '1420');
+  assert.equal(run('pgrep nothing').exitCode, 1);
+  assert.match(run('pkill cron').stderr, /Operation not permitted/);
+  run('sudo pkill cron');
+  assert.equal(run('pgrep cron').exitCode, 1);
+  assert.equal(run("nice -n 5 echo '$HOME'").stdout, '$HOME');
+  assert.equal(run('echo a b c d | xargs -n 2 echo').stdout, 'a b\nc d');
+  assert.equal(run('printf "root\\nstudent\\n" | xargs -I {} id -u {}').stdout, '0\n1000');
+  assert.match(run('nl notes.txt').stdout, /^ {5}1\tLPIC-1 Study Notes:$/m);
+  assert.match(run('mount').stdout, /^\/dev\/sda3 on \/ type ext4 \(rw,relatime,errors=remount-ro\)$/m);
+  assert.match(run('swapon --show').stdout, /^\/dev\/sda2 partition +4G +0B +-2$/m);
+  assert.match(run('blkid /dev/sda2').stdout, /TYPE="swap"/);
+  assert.equal(run('modinfo -F depends ahci').stdout, 'libahci');
+  assert.equal(run('modinfo nope').stderr, 'modinfo: ERROR: Module nope not found.');
+});
+
 test('wc prints a total line for several files', () => {
   const run = linuxSession();
   assert.match(run('wc -l /etc/passwd /etc/hosts').stdout, /^ +6 \/etc\/passwd\n +4 \/etc\/hosts\n +10 total$/);

@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { getNodeAtPath } from './filesystem.ts';
 import { linuxSession } from './testUtils.ts';
+import { NOT_SIMULATED_LINUX } from './notSimulated.ts';
+import { linuxCommands } from './linux/context.ts';
 
 // Bash word expansion, special parameters, input redirection and substitutions (fact-check E-1, E-2, E-3/L-5, E-16)
 
@@ -154,4 +156,6 @@ test('real commands that are not simulated say so', () => {
   assert.equal(res.exitCode, 127);
   assert.equal(run('sudo modprobe e1000e').stderr, 'bash: modprobe: this command exists on real systems but is not simulated here');
   assert.equal(run('frobnicate').stderr, 'bash: frobnicate: command not found');
+  // The list only names commands the simulator does not run
+  assert.deepEqual(NOT_SIMULATED_LINUX.filter(n => linuxCommands.has(n)), []);
 });
