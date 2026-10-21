@@ -256,7 +256,7 @@ test('PowerShell: New-Item, Copy-Item, Remove-Item, Write-Output', () => {
   assert.equal(node(run, 'C:\\Users\\Student\\Reports\\a.txt')?.content, 'hello');
   const selfCopy = run('Copy-Item Reports Reports\\inner -Recurse');
   assert.equal(selfCopy.exitCode, 1);
-  assert.match(selfCopy.stderr, /copy an item into itself/);
+  assert.match(selfCopy.stderr, /into itself or a subdirectory/);
   assert.equal(node(run, 'C:\\Users\\Student\\Reports\\inner'), null, 'reject before creating the destination');
   run('Copy-Item Reports\\a.txt b.txt');
   assert.equal(node(run, 'C:\\Users\\Student\\b.txt')?.content, 'hello');
