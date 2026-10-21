@@ -92,10 +92,56 @@ export function sanitizeJourney(raw: unknown, paths: LearningPath[]): Journey {
 
 const isTime = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0;
 
+const isScore = (s: unknown): s is QuizScore => {
+  const r = s as Record<string, unknown> | null;
+  return (
+    !!r && typeof r === 'object' &&
+    Number.isInteger(r.correct) && Number.isInteger(r.total) &&
+    (r.total as number) > 0 && (r.correct as number) >= 0 && (r.correct as number) <= (r.total as number)
+  );
+};
+const isKey = (v: unknown): v is string => typeof v === 'string' && v.length <= 300 && /^[^/]+\/./.test(v);
+
+/**
+ * The saved journey, well-formed: what sanitizeJourney keeps, plus reads, scores, resets and `last`
+ * for paths and steps this build does not know (saved by a newer build, e.g. in another tab after a
+ * deploy), so an older tab never deletes them. Only what is shown and counted goes through
+ * sanitizeJourney. Unknown entries follow the known ones, sorted.
+ */
+export function sanitizeJourneyRecord(raw: unknown, paths: LearningPath[]): Journey {
+  const known = sanitizeJourney(raw, paths);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return known;
+  const data = raw as Record<string, unknown>;
+  const stepKeys = new Set(paths.flatMap(p => allSteps(p).map(s => stepKey(p.id, s.id))));
+  const foreign = (k: unknown): k is string => isKey(k) && !stepKeys.has(k);
+
+  const readIn = Array.isArray(data.read) ? data.read : [];
+  const read = [...known.read, ...[...new Set(readIn.filter(foreign))].sort()];
+  const quizIn = data.quiz && typeof data.quiz === 'object' && !Array.isArray(data.quiz) ? (data.quiz as Record<string, unknown>) : {};
+  const quiz = { ...known.quiz };
+  for (const k of Object.keys(quizIn).filter(foreign).sort()) if (isScore(quizIn[k])) quiz[k] = quizIn[k] as QuizScore;
+
+  let last = known.last;
+  const l = data.last as Record<string, unknown> | null | undefined;
+  if (l && typeof l === 'object' && typeof l.pathId === 'string' && l.pathId && !l.pathId.includes('/')) {
+    // Kept as saved, also when its path or step is unknown here
+    const stepId = typeof l.stepId === 'string' ? l.stepId : null;
+    last = isTime(l.at) ? { pathId: l.pathId, stepId, at: l.at } : { pathId: l.pathId, stepId };
+  }
+
+  const resets = { ...known.resets };
+  const resetsIn = data.resets;
+  if (resetsIn && typeof resetsIn === 'object' && !Array.isArray(resetsIn)) {
+    const r = resetsIn as Record<string, unknown>;
+    for (const k of Object.keys(r).filter(k => !(k in resets)).sort()) if (isTime(r[k])) resets[k] = r[k] as number;
+  }
+  return Object.keys(resets).length ? { read, quiz, last, resets } : { read, quiz, last };
+}
+
 export function parseJourney(text: string | null, paths: LearningPath[]): Journey {
   if (!text) return EMPTY_JOURNEY;
   try {
-    return sanitizeJourney(JSON.parse(text), paths);
+    return sanitizeJourneyRecord(JSON.parse(text), paths);
   } catch {
     return EMPTY_JOURNEY;
   }
@@ -140,7 +186,7 @@ export function mergeJourney(a: Journey, b: Journey, paths: LearningPath[]): Jou
     if (!l || !current(j, l.pathId)) continue;
     if (!last || (l.at ?? 0) >= (last.at ?? 0)) last = l;
   }
-  return sanitizeJourney({ read, quiz, last, resets }, paths);
+  return sanitizeJourneyRecord({ read, quiz, last, resets }, paths);
 }
 
 /** How useSyncedStorage reads, merges and writes the journey. */
@@ -262,8 +308,34 @@ export function stepComplete(pathId: string, step: PathStep, src: CompletionSour
   }
 }
 
+/** A stage's steps as the things to do: one step, or the alternatives sharing a choiceGroup (in first-seen order). */
+export function stageUnits(stage: PathStage): PathStep[][] {
+  const units: PathStep[][] = [];
+  const groups = new Map<string, PathStep[]>();
+  for (const step of stage.steps) {
+    if (!step.choiceGroup) {
+      units.push([step]);
+      continue;
+    }
+    const unit = groups.get(step.choiceGroup);
+    if (unit) unit.push(step);
+    else {
+      const fresh = [step];
+      groups.set(step.choiceGroup, fresh);
+      units.push(fresh);
+    }
+  }
+  return units;
+}
+
+/** Done, or one of its alternatives (same choiceGroup in the same stage) is done. */
+export function stepSatisfied(pathId: string, stage: PathStage, step: PathStep, src: CompletionSource): boolean {
+  if (stepComplete(pathId, step, src)) return true;
+  return !!step.choiceGroup && stage.steps.some(s => s.choiceGroup === step.choiceGroup && stepComplete(pathId, s, src));
+}
+
 export function stageComplete(pathId: string, stage: PathStage, src: CompletionSource): boolean {
-  return stage.steps.every(step => stepComplete(pathId, step, src));
+  return stageUnits(stage).every(unit => unit.some(step => stepComplete(pathId, step, src)));
 }
 
 /** The first stage is always open; each later one opens when the stage before it is complete. */
@@ -278,9 +350,10 @@ export function stepUnlocked(path: LearningPath, stepId: string, src: Completion
   return !!loc && stageUnlocked(path, loc.stageIndex, src);
 }
 
+/** Things done and to do; alternatives (see stageUnits) count once. */
 export function stepsDone(path: LearningPath, src: CompletionSource): { done: number; total: number } {
-  const steps = allSteps(path);
-  return { done: steps.filter(s => stepComplete(path.id, s, src)).length, total: steps.length };
+  const units = path.stages.flatMap(stageUnits);
+  return { done: units.filter(u => u.some(s => stepComplete(path.id, s, src))).length, total: units.length };
 }
 
 /** Whole-number percent of steps complete. */
@@ -301,7 +374,8 @@ export function currentStageIndex(path: LearningPath, src: CompletionSource): nu
 export function nextStep(path: LearningPath, src: CompletionSource): StepLocation | null {
   const stageIndex = currentStageIndex(path, src);
   if (stageIndex < 0) return null;
-  const step = path.stages[stageIndex].steps.find(s => !stepComplete(path.id, s, src));
+  const stage = path.stages[stageIndex];
+  const step = stage.steps.find(s => !stepSatisfied(path.id, stage, s, src));
   return step ? findStep(path, step.id) : null;
 }
 
@@ -316,7 +390,7 @@ export function stepAfter(path: LearningPath, fromStepId: string, src: Completio
     for (let i = from.index + 1; i < steps.length; i++) {
       const loc = findStep(path, steps[i].id)!;
       if (!stageUnlocked(path, loc.stageIndex, src)) break;
-      if (!stepComplete(path.id, loc.step, src)) return loc;
+      if (!stepSatisfied(path.id, loc.stage, loc.step, src)) return loc;
     }
   }
   const next = nextStep(path, src);
@@ -346,7 +420,7 @@ export function resumeTarget(
   if (!path) return null;
   if (last.stepId) {
     const loc = findStep(path, last.stepId);
-    if (loc && !stepComplete(path.id, loc.step, src) && stageUnlocked(path, loc.stageIndex, src)) return { path, loc };
+    if (loc && !stepSatisfied(path.id, loc.stage, loc.step, src) && stageUnlocked(path, loc.stageIndex, src)) return { path, loc };
   }
   const next = nextStep(path, src);
   return next ? { path, loc: next } : null;
@@ -366,8 +440,9 @@ export function stepMinutes(step: PathStep, modulesById: Map<string, ExamModule>
   }
 }
 
+/** Alternatives count once, by the first of them. */
 export function pathMinutes(path: LearningPath, modulesById: Map<string, ExamModule>): number {
-  return allSteps(path).reduce((sum, s) => sum + stepMinutes(s, modulesById), 0);
+  return path.stages.flatMap(stageUnits).reduce((sum, unit) => sum + stepMinutes(unit[0], modulesById), 0);
 }
 
 /** "about 45 min", "about 2 hr 10 min", "about 3 hr" */

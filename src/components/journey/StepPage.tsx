@@ -14,6 +14,7 @@ import {
   stageUnlocked,
   stepAfter,
   stepComplete,
+  stepSatisfied,
   stepKey,
   stepMinutes,
   stepTitle,
@@ -83,6 +84,7 @@ export const StepPage: React.FC<StepPageProps> = props => {
             module={mod}
             completedObjectiveIds={props.progress[mod.id] ?? []}
             onObjectiveComplete={props.onObjectiveComplete}
+            recap={justCleared ? <StageRecap path={path} stageIndex={loc.stageIndex} src={src} modulesById={modulesById} /> : null}
           />
         ) : (
           <p className="px-4 sm:px-6 py-8 text-[15px] text-muted">This lab is not available in this version of the app.</p>
@@ -150,6 +152,11 @@ export const StepPage: React.FC<StepPageProps> = props => {
             </div>
             <p className="text-sm text-muted">Next: {next.title}</p>
           </footer>
+          {justCleared && (
+            <div className="max-w-prose">
+              <StageRecap path={path} stageIndex={loc.stageIndex} src={src} modulesById={modulesById} />
+            </div>
+          )}
         </article>
       </>
     );
@@ -268,7 +275,7 @@ const LockedStep: React.FC<{
 }> = ({ path, loc, src, modulesById }) => {
   const prevStage = path.stages[loc.stageIndex - 1];
   const next = nextStep(path, src);
-  const todo = next ? next.stage.steps.filter(s => !stepComplete(path.id, s, src)) : [];
+  const todo = next ? next.stage.steps.filter(s => !stepSatisfied(path.id, next.stage, s, src)) : [];
 
   return (
     <div className="max-w-3xl mx-auto w-full px-4 sm:px-6 py-8 sm:py-12 space-y-6">

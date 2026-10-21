@@ -1,5 +1,14 @@
 import type { TerminalShell } from '../types/terminal';
-import { ShellSyntax, parsePipelinedLine, splitChainedCommandLine } from '../terminal/parser';
+import { parsePipelinedLine, splitChainedCommandLine } from '../terminal/parser';
+import { assignmentOf, parseBashPipeline, splitBashChain, wordText } from '../terminal/linux/shell';
+import { psExtractRedirects, psSplitPipeline, psStage } from '../terminal/windows/psUtil';
+import { NATIVE_TOOLS } from '../terminal/windows/help';
+import { linuxCommands } from '../terminal/linux/context';
+import { cmdCommands, psCommands } from '../terminal/windows/context';
+import { cmdDoc, linuxDocsFor, psDoc } from '../terminal/docs';
+// The engines register every command on load; their registries are the trusted names below
+import '../terminal/linuxEngine';
+import '../terminal/windowsEngine';
 import type { SyncedCodec } from './syncedStorage';
 
 /**
@@ -8,8 +17,9 @@ import type { SyncedCodec } from './syncedStorage';
  * it feeds the badges and celebrations (src/data/badges.ts).
  *
  * Privacy: a fact is a short id such as `help:linux:chmod` or `recover:retry`. Command arguments,
- * file contents and anything else typed are never stored. Command names are only recorded when the
- * command ran successfully, so a mistyped or private word never ends up here.
+ * file contents and anything else typed are never stored. Command and help-topic names are only
+ * recorded when they are the simulator's own identifiers (a registered command or a doc page) and
+ * that command itself ran successfully, so a mistyped or private word never ends up here.
  *
  * Merging (useSyncedStorage): facts and days are a set union, the earliest time of each badge wins
  * and the newest prefs win. "Clear badges and activity" writes a tombstone (`clearedAt`), the same
@@ -197,6 +207,8 @@ export interface CommandOutcome {
   stdout: string;
   stderr: string;
   explanation?: string;
+  /** Exit code of each chained stage (null: skipped by && or ||), when the engine reports them */
+  stageExits?: (number | null)[];
 }
 
 const SHELL_KEY: Record<TerminalShell, string> = { bash: 'bash', cmd: 'cmd', powershell: 'ps' };
@@ -235,29 +247,71 @@ interface Parsed {
   redirect: boolean;
 }
 
-/** Every simple command of the line, stage by stage, with `sudo` stripped from the name. */
-function parseLine(line: string, shell: TerminalShell): { stages: Parsed[][] } {
-  const syntax: ShellSyntax = shell;
-  const stages = splitChainedCommandLine(line, syntax).map(stage =>
-    parsePipelinedLine(stage.commandLine, syntax).map(cmd => {
-      let { name, args } = cmd;
-      if (shell === 'bash' && name === 'sudo') {
-        const i = args.findIndex(x => !x.startsWith('-'));
-        name = i >= 0 ? args[i] : '';
-        args = i >= 0 ? args.slice(i + 1) : [];
-      }
-      return { name, args, redirect: !!cmd.redirect };
-    }),
-  );
-  return { stages };
+const OUT_REDIR = new Set(['>', '>>', '&>', '&>>']);
+
+/** One simple command of bash with sudo stripped from the name. */
+function bashCommand(words: string[], redirect: boolean): Parsed {
+  let [name = '', ...args] = words;
+  if (name === 'sudo') {
+    const i = args.findIndex(x => !x.startsWith('-'));
+    name = i >= 0 ? args[i] : '';
+    args = i >= 0 ? args.slice(i + 1) : [];
+  }
+  return { name, args, redirect };
+}
+
+/**
+ * Every simple command of the line, chain stage by chain stage, split the way the engine splits it
+ * (bash: linux/shell.ts, NAME=value words skipped; CMD: parser.ts; PowerShell: one pipeline, no chaining).
+ */
+function parseLine(line: string, shell: TerminalShell): Parsed[][] {
+  if (shell === 'bash') {
+    return splitBashChain(line).map(stage =>
+      parseBashPipeline(stage.commandLine).map(cmd => {
+        let i = 0;
+        while (i < cmd.words.length && assignmentOf(cmd.words[i])) i++;
+        const redirect = cmd.redirs.some(r => OUT_REDIR.has(r.op) && (r.op.startsWith('&') || r.fd === 1));
+        return bashCommand(cmd.words.slice(i).map(wordText), redirect);
+      }),
+    );
+  }
+  if (shell === 'cmd') {
+    return splitChainedCommandLine(line, 'cmd').map(stage =>
+      parsePipelinedLine(stage.commandLine, 'cmd').map(cmd => ({ name: cmd.name, args: cmd.args, redirect: !!cmd.redirect })),
+    );
+  }
+  const { body, redirect } = psExtractRedirects(line);
+  const cmds = psSplitPipeline(body).map(psStage).map(st => ({
+    // A quoted value on its own ('text') is output, not a command
+    name: !st.tokens.length && /^(["']).*\1$/.test(st.raw) ? '' : st.name,
+    args: st.args,
+    redirect: false,
+  }));
+  if (cmds.length && redirect.stdout) cmds[cmds.length - 1].redirect = true;
+  return [cmds];
 }
 
 const norm = (name: string, shell: TerminalShell) => (shell === 'bash' ? name : name.toLowerCase().replace(/\.exe$/, ''));
 
 /** First command name of a line (sudo stripped), normalized for the shell; '' when there is none. */
 export function firstCommandName(line: string, shell: TerminalShell): string {
-  const first = parseLine(line, shell).stages[0]?.[0];
+  const first = parseLine(line, shell)[0]?.[0];
   return first ? norm(first.name, shell) : '';
+}
+
+/** A command the simulator itself provides (never just any word that was typed). */
+function isKnownCommand(name: string, shell: TerminalShell): boolean {
+  if (!NAME.test(name)) return false;
+  if (shell === 'bash') return linuxCommands.has(name);
+  if (shell === 'cmd') return cmdCommands.has(name);
+  return psCommands.has(name) || NATIVE_TOOLS.includes(name);
+}
+
+/** A help topic the simulator has a page or a command for. */
+function isKnownTopic(topic: string, shell: TerminalShell): boolean {
+  if (!NAME.test(topic)) return false;
+  if (shell === 'bash') return linuxDocsFor(topic).length > 0 || linuxCommands.has(topic);
+  return !!cmdDoc(topic) || !!psDoc(topic) || cmdCommands.has(topic) || psCommands.has(topic);
 }
 
 const HELP_LINUX = new Set(['man', 'info', 'whatis', 'help']);
@@ -272,6 +326,7 @@ const IDENTITY = /^(whoami|id)$/;
  * - `shell:<bash|cmd|ps>`: a command was run in that shell
  * - `cmd:<shell>:<name>`: that command ran successfully (name only, lower case outside bash)
  * - `help:<linux|windows>:<topic>`: a manual or help page opened (only topics that exist)
+ * - `manual`: that page was opened with man, info, help or Get-Help, not with a command's own --help
  * - `flaghelp`: `--help`, `/?` or `-?`; `search`: apropos, `man -k`, `Get-Help *word*`
  * - `whoami`, `pipe`, `redirect`, `notsim`, `history`
  * - `recover:retry`, `recover:permission`, `recover:typo`
@@ -284,29 +339,41 @@ export function classifyCommand(outcome: CommandOutcome, shell: TerminalShell, p
   const os = shell === 'bash' ? 'linux' : 'windows';
   let stages: Parsed[][];
   try {
-    stages = parseLine(line, shell).stages;
+    stages = parseLine(line, shell);
   } catch {
     return [...facts];
   }
-  const all = stages.flat();
+  // Whether each chain stage itself ran and succeeded. Without the engine's per-stage codes, only the
+  // last stage can be judged (by the line's exit code); earlier ones count as not run.
+  const exits = outcome.stageExits?.length === stages.length ? outcome.stageExits : undefined;
+  const stageOk = (i: number) => (exits ? exits[i] === 0 : i === stages.length - 1 && ok);
   const helpTopic = (topic: string | undefined) => {
-    if (topic && NAME.test(topic)) facts.add(`help:${os}:${norm(topic, shell)}`);
+    if (!topic || !isKnownTopic(norm(topic, shell), shell)) return false;
+    facts.add(`help:${os}:${norm(topic, shell)}`);
+    return true;
+  };
+  // A manual or help page opened with man, info, help or Get-Help (not a command's own --help)
+  const helpPage = (topic: string | undefined) => {
+    if (helpTopic(topic)) facts.add('manual');
   };
 
   if (NOT_SIMULATED.test(outcome.stderr)) facts.add('notsim');
 
-  if (ok) {
-    for (const c of all) if (NAME.test(c.name)) facts.add(`cmd:${SHELL_KEY[shell]}:${norm(c.name, shell)}`);
-    if (stages.some(s => s.length >= 2)) facts.add('pipe');
-    if (all.some(c => c.redirect)) facts.add('redirect');
+  stages.forEach((stage, i) => {
+    if (!stageOk(i)) return;
+    // Only the simulator's own command names are ever recorded; anything else typed is dropped
+    const known = stage.filter(c => isKnownCommand(norm(c.name, shell), shell));
+    for (const c of known) facts.add(`cmd:${SHELL_KEY[shell]}:${norm(c.name, shell)}`);
+    if (stage.length >= 2 && known.length === stage.length) facts.add('pipe');
+    if (known.some(c => c.redirect)) facts.add('redirect');
 
-    for (const c of all) {
+    for (const c of known) {
       const name = norm(c.name, shell);
       const words = c.args.filter(a => !a.startsWith('-') || shell !== 'bash');
       if (shell === 'bash') {
         if (IDENTITY.test(name) || (name === 'echo' && c.args.some(a => /\$\{?(USER|LOGNAME)\b/.test(a)))) facts.add('whoami');
         if (name === 'apropos' || (name === 'man' && c.args.some(a => a === '-k' || a === '--apropos'))) facts.add('search');
-        else if (HELP_LINUX.has(name)) helpTopic(words.find(w => !/^\d/.test(w)) ?? (name === 'help' ? 'help' : undefined));
+        else if (HELP_LINUX.has(name)) helpPage(words.find(w => !/^\d/.test(w)) ?? (name === 'help' ? 'help' : undefined));
         if (c.args.includes('--help')) {
           facts.add('flaghelp');
           helpTopic(c.name);
@@ -314,7 +381,7 @@ export function classifyCommand(outcome: CommandOutcome, shell: TerminalShell, p
         if (name === 'history') facts.add('history');
       } else if (shell === 'cmd') {
         if (name === 'whoami' || (name === 'echo' && /%USERNAME%/i.test(c.args.join(' ')))) facts.add('whoami');
-        if (name === 'help') helpTopic(words[0] ?? 'help');
+        if (name === 'help') helpPage(words[0] ?? 'help');
         if (c.args.includes('/?')) {
           facts.add('flaghelp');
           helpTopic(c.name);
@@ -325,7 +392,7 @@ export function classifyCommand(outcome: CommandOutcome, shell: TerminalShell, p
         if (HELP_PS.has(name)) {
           const topic = c.args.find(a => !a.startsWith('-'));
           if (topic && topic.includes('*')) facts.add('search');
-          else helpTopic(topic ?? 'get-help');
+          else helpPage(topic ?? 'get-help');
         }
         if (c.args.includes('-?')) {
           facts.add('flaghelp');
@@ -334,7 +401,7 @@ export function classifyCommand(outcome: CommandOutcome, shell: TerminalShell, p
         if (name === 'get-history' || name === 'history' || name === 'h') facts.add('history');
       }
     }
-  }
+  });
 
   // Recovery: the command before this one failed, and this one worked
   if (ok && prev && prev.exitCode !== 0 && prev.line.trim()) {

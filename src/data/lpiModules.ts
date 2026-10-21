@@ -624,7 +624,7 @@ export const LPI_MODULES: ExamModule[] = [
     ],
     examTips: [
       'Linux is case sensitive: ls, Ls and LS are three different names, and only ls is a command. The same goes for file and folder names.',
-      'pwd, ls, cd and cat appear throughout both LPIC-1 exams. Later labs build on exactly these five ideas.',
+      'pwd, ls, cat, cd and man appear throughout both LPIC-1 exams. Later labs build on exactly these five ideas.',
       'In a real terminal, man opens a page you can scroll. Press the space bar to go down a page and q to quit back to the prompt.',
     ],
   },

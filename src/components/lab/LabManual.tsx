@@ -179,12 +179,16 @@ const HintCostNote = () => <p className="text-sm text-muted">Hints never cost an
  */
 const HintLadder: React.FC<HintLadderProps> = ({ id, rungs, count, onReveal, onHide, note }) => {
   const more = count < rungs.length;
-  // "Show more" goes away with the last rung; keep keyboard focus on the hint controls
+  // "Show more" goes away with the last rung, and "Hide hints" when hiding: keep keyboard focus on the hint controls
   const hideRef = useRef<HTMLButtonElement>(null);
+  const showRef = useRef<HTMLButtonElement>(null);
   const focusHide = useRef(false);
+  const focusShow = useRef(false);
   useEffect(() => {
     if (focusHide.current) hideRef.current?.focus();
+    if (focusShow.current) showRef.current?.focus();
     focusHide.current = false;
+    focusShow.current = false;
   }, [count]);
 
   return (
@@ -192,6 +196,7 @@ const HintLadder: React.FC<HintLadderProps> = ({ id, rungs, count, onReveal, onH
       <div className="flex flex-wrap gap-x-4">
         {more && (
           <button
+            ref={showRef}
             type="button"
             onClick={() => {
               focusHide.current = count + 1 === rungs.length;
@@ -205,7 +210,14 @@ const HintLadder: React.FC<HintLadderProps> = ({ id, rungs, count, onReveal, onH
           </button>
         )}
         {count > 0 && (
-          <button ref={hideRef} type="button" onClick={onHide} className="text-sm text-accent hover:underline underline-offset-2 py-1">
+          <button
+            ref={hideRef}
+            type="button"
+            onClick={() => {
+              focusShow.current = true;
+              onHide();
+            }}
+            className="text-sm text-accent hover:underline underline-offset-2 py-1">
             Hide hints
           </button>
         )}

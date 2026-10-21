@@ -11,7 +11,7 @@ import { ModuleRunner } from './components/ModuleRunner';
 import { ExamModule } from './types/modules';
 import { SystemState } from './types/terminal';
 import { Route, Section, TrackSection, isTrackSection, replaceRoute, routeHref, useHashRoute } from './lib/router';
-import { completeObjective, countDone, progressCodec, PROGRESS_KEY, resetModules } from './lib/progress';
+import { completeObjective, countDone, progressCodec, PROGRESS_KEY, resetModules, sanitizeProgress } from './lib/progress';
 import { useSyncedStorage } from './lib/syncedStorage';
 import { useTheme } from './lib/theme';
 import { ALL_MODULES, TRACK_MODULES, TRACK_NAMES, topicLabel } from './lib/modules';
@@ -27,6 +27,7 @@ import {
   quizPassed,
   recordQuizScore,
   resetPath,
+  sanitizeJourney,
   stepAfter,
   stepKey,
   stepTitle,
@@ -72,15 +73,17 @@ export default function App() {
   const [theme, setTheme] = useTheme();
   // moduleId -> completed objective ids (plus reset tombstones), saved in localStorage and kept in
   // step with other open tabs: saves merge with what is stored, other tabs' saves merge in here
-  const [progressRecord, setProgressRecord] = useSyncedStorage(PROGRESS_KEY, PROGRESS_CODEC);
-  const progress = progressRecord.done;
+  const [progressRecord, setProgressRecord, progressFromOtherTab] = useSyncedStorage(PROGRESS_KEY, PROGRESS_CODEC);
+  // The record also keeps what a newer build saved; only known labs and tasks are shown and counted
+  const progress = useMemo(() => sanitizeProgress(progressRecord.done, ALL_MODULES), [progressRecord.done]);
   // The lab last open in each track, so coming back to a track returns you to it
   const [lastLab, setLastLab] = useState<Record<TrackSection, string | null>>({ linux: null, windows: null });
   // The lab track used last, for the single Labs item in the phone nav
   const [lastTrack, setLastTrack] = useState<TrackSection>('linux');
   // Lessons read, quiz scores and the last step opened in the learning paths, saved and shared like progress
-  const [journey, setJourney] = useSyncedStorage(JOURNEY_KEY, JOURNEY_CODEC);
-  const [activity, setActivity] = useSyncedStorage(ACTIVITY_KEY, ACTIVITY_CODEC);
+  const [journeyRecord, setJourney, journeyFromOtherTab] = useSyncedStorage(JOURNEY_KEY, JOURNEY_CODEC);
+  const journey = useMemo(() => sanitizeJourney(journeyRecord, LEARNING_PATHS), [journeyRecord]);
+  const [activity, setActivity, activityFromOtherTab] = useSyncedStorage(ACTIVITY_KEY, ACTIVITY_CODEC);
   // The last learning page open this session, so the Learn link brings you back to it
   const [lastLearnHref, setLastLearnHref] = useState<string | null>(null);
   const mainRef = useRef<HTMLElement>(null);
@@ -290,8 +293,9 @@ export default function App() {
   const resetTrackProgress = (t: TrackSection) => {
     const ids = TRACK_MODULES[t].map(m => m.id);
     setProgressRecord(prev => resetModules(prev, ids));
-    // Labs that had progress: finishing one again later earns "Fresh start"
-    setActivity(a => addFacts(a, ids.filter(id => (progress[id] ?? []).length > 0).map(resetFact)));
+    // Labs started but not finished: finishing one later earns "Fresh start" (as Reset lab does; a finished lab does not count)
+    const finished = labCheck(progress, ALL_MODULES);
+    setActivity(a => addFacts(a, ids.filter(id => (progress[id] ?? []).length > 0 && !finished(id)).map(resetFact)));
   };
 
   // A lab opened from the lab lists that is also a step in a path: where that path goes next
@@ -330,6 +334,7 @@ export default function App() {
       modules={ALL_MODULES}
       progress={progress}
       journey={journey}
+      fromOtherTab={[activityFromOtherTab, progressFromOtherTab, journeyFromOtherTab]}
     >
     <div className="h-dvh flex flex-col bg-bg text-text font-sans">
       <a
@@ -354,7 +359,7 @@ export default function App() {
 
       <main id="main" ref={mainRef} tabIndex={-1} className="flex-1 min-h-0 overflow-y-auto focus:outline-none">
         <PageErrorBoundary resetKey={routeKey}>
-        {learnRoute && !learnRoute.pathId && <PathsList paths={LEARNING_PATHS} src={src} modulesById={MODULES_BY_ID} />}
+        {learnRoute && !learnRoute.pathId && <PathsList paths={LEARNING_PATHS} src={src} modulesById={MODULES_BY_ID} progress={progress} />}
 
         {activePath && !learnRoute?.stepId && (
           <PathOverview

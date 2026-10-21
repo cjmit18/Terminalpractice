@@ -10,10 +10,14 @@ import { primaryLinkClass } from './shared';
 /** Set once the learner says they have used a terminal before. Per browser; it only hides this offer. */
 export const FIRST_STEPS_DISMISSED_KEY = 'certsim:firststeps-dismissed';
 
-/** True when nothing at all has been saved yet: no lesson read, no quiz taken, no path opened, no step done. */
-export function noSavedProgress(paths: LearningPath[], src: CompletionSource): boolean {
+/**
+ * True when nothing at all has been saved yet: no lesson read, no quiz taken, no path opened, no step
+ * done, and no lab task done (`progress`: moduleId -> completed objective ids).
+ */
+export function noSavedProgress(paths: LearningPath[], src: CompletionSource, progress: Record<string, string[]> = {}): boolean {
   const { journey } = src;
   if (journey.last || journey.read.length > 0 || Object.keys(journey.quiz).length > 0) return false;
+  if (Object.values(progress).some(ids => ids.length > 0)) return false;
   return paths.every(path => stepsDone(path, src).done === 0);
 }
 
@@ -37,15 +41,22 @@ function saveDismissed(): void {
  * "New to the command line? Start here": offered at the top of the Learn page to someone with
  * no saved progress, linking to the first lesson of the beginners' path. One click hides it for good.
  */
-export const FirstStepsBanner: React.FC<{ paths: LearningPath[]; src: CompletionSource }> = ({ paths, src }) => {
+export const FirstStepsBanner: React.FC<{
+  paths: LearningPath[];
+  src: CompletionSource;
+  progress: Record<string, string[]>;
+  /** Where focus goes once the offer is dismissed (the page heading), so it is not lost with the button */
+  focusAfterDismissId: string;
+}> = ({ paths, src, progress, focusAfterDismissId }) => {
   const [dismissed, setDismissed] = useState(readDismissed);
   const path = paths.find(p => p.id === FIRST_STEPS_PATH_ID);
   const first = path ? allSteps(path)[0] : undefined;
-  if (dismissed || !path || !first || !noSavedProgress(paths, src)) return null;
+  if (dismissed || !path || !first || !noSavedProgress(paths, src, progress)) return null;
 
   const dismiss = () => {
     saveDismissed();
     setDismissed(true);
+    requestAnimationFrame(() => document.getElementById(focusAfterDismissId)?.focus());
   };
 
   return (

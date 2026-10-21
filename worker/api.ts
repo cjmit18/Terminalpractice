@@ -92,7 +92,12 @@ function githubStart(url: URL, env: ApiEnv): Response {
 }
 
 async function githubCallback(request: Request, url: URL, env: ApiEnv, deps: ApiDeps): Promise<Response> {
-  const saved = decodeURIComponent(readCookie(request, STATE_COOKIE) ?? '');
+  let saved = '';
+  try {
+    saved = decodeURIComponent(readCookie(request, STATE_COOKIE) ?? '');
+  } catch {
+    // A malformed cookie (bad %-escape) is no saved state: the check below answers 400
+  }
   const [savedState, savedReturn] = saved.split('|');
   const returnTo = safeReturn(savedReturn ?? null);
   const back = (extra?: (h: Headers) => void) => {

@@ -22,23 +22,27 @@ interface PathsListProps {
   paths: LearningPath[];
   src: CompletionSource;
   modulesById: Map<string, ExamModule>;
+  /** moduleId -> completed objective ids */
+  progress: Record<string, string[]>;
 }
 
 /** #/learn: every path, with where you are in each. */
-export const PathsList: React.FC<PathsListProps> = ({ paths, src, modulesById }) => {
+export const PathsList: React.FC<PathsListProps> = ({ paths, src, modulesById, progress }) => {
   const resume = resumeTarget(paths, src);
 
   return (
     <div className="max-w-3xl mx-auto w-full px-4 sm:px-6 py-8 sm:py-12">
       <header className="space-y-3">
-        <h1 className="text-2xl font-semibold text-text">Learning paths</h1>
+        <h1 id="learn-heading" tabIndex={-1} className="text-2xl font-semibold text-text focus:outline-none">
+          Learning paths
+        </h1>
         <p className="text-[15px] text-muted max-w-prose">
           Each path takes you through one exam in order: a short lesson, a lab to try it on a working system, then a
           few questions to check it stuck.
         </p>
       </header>
 
-      <FirstStepsBanner paths={paths} src={src} />
+      <FirstStepsBanner paths={paths} src={src} progress={progress} focusAfterDismissId="learn-heading" />
 
       {resume && (
         <p className="mt-6 text-[15px]">
