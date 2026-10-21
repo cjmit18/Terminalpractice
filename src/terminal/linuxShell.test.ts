@@ -185,6 +185,10 @@ test('real commands that are not simulated say so', () => {
   assert.equal(res.exitCode, 127);
   assert.equal(run('sudo modprobe e1000e').stderr, 'bash: modprobe: this command exists on real systems but is not simulated here');
   assert.equal(run('frobnicate').stderr, 'bash: frobnicate: command not found');
+  // make is real: not "did you mean mawk"
+  const make = run('sudo make me a sandwich');
+  assert.equal(make.stderr, 'bash: make: this command exists on real systems but is not simulated here');
+  assert.ok(!make.explanation?.includes('mawk'), make.explanation);
   // The list only names commands the simulator does not run
   assert.deepEqual(NOT_SIMULATED_LINUX.filter(n => linuxCommands.has(n)), []);
 });
