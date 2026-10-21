@@ -1,3 +1,4 @@
+import { MAX_FORMAT_WIDTH } from '../../limits';
 import { LinuxContext, LinuxResult, linuxCommands } from '../context';
 
 // printf FORMAT [ARGUMENTS...] (the bash builtin): %s %d %i %u %x %X %o %c %f %e %g %b %q %%,
@@ -70,6 +71,10 @@ function printf(ctx: LinuxContext): LinuxResult {
       // A negative precision from * counts as omitted, as in bash
       const rawPrec = p === '*' ? toNumber(args[used++]) : p !== undefined ? Number(p) : undefined;
       const prec = rawPrec !== undefined && rawPrec < 0 ? undefined : rawPrec;
+      // Real bash would build a string this long; the simulator refuses rather than freeze the page
+      if (Math.abs(width) > MAX_FORMAT_WIDTH || (prec ?? 0) > MAX_FORMAT_WIDTH) {
+        return ctx.fail(`bash: printf: field width or precision ${Math.max(Math.abs(width), prec ?? 0)} is larger than this simulator allows (${MAX_FORMAT_WIDTH})`, 1);
+      }
       const left = flags.includes('-');
       const zero = flags.includes('0') && !left;
       const arg = args[used++];

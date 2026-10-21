@@ -7,7 +7,6 @@ const BASH_LAB_STEP = '#/learn/first-steps/lab-first-steps-linux';
 const banner = (page: Page) => page.getByRole('region', { name: BANNER_HEADING });
 
 test.describe('first steps offer on the Learn page', () => {
-  test.skip(({ isMobile }) => isMobile, 'desktop layout');
 
   test('a new learner is offered the first steps, and Begin opens the first lesson', async ({ page }) => {
     await page.goto('#/learn');

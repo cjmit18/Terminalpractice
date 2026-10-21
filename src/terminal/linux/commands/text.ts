@@ -250,7 +250,7 @@ function awk(ctx: LinuxContext): LinuxResult {
     return ctx.ok(runAwk(program, inputs.map(i => toLines(i.text)), fs, assigns));
   } catch (e) {
     if (e instanceof AwkError) {
-      return ctx.fail(/never defined|division/.test(e.message) ? `awk: ${e.message}` : `awk: line 1: syntax error at or near ${e.message}`, 2);
+      return ctx.fail(/never defined|division|simulator allows/.test(e.message) ? `awk: ${e.message}` : `awk: line 1: syntax error at or near ${e.message}`, 2);
     }
     throw e;
   }

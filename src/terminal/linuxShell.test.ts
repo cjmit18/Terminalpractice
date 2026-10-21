@@ -188,3 +188,25 @@ test('real commands that are not simulated say so', () => {
   // The list only names commands the simulator does not run
   assert.deepEqual(NOT_SIMULATED_LINUX.filter(n => linuxCommands.has(n)), []);
 });
+
+test('limits: a huge ping count or printf width never freezes the page', () => {
+  const run = linuxSession();
+  const t = Date.now();
+  const ping = run('ping -c 100000000 8.8.8.8');
+  assert.equal(ping.exitCode, 0);
+  assert.equal(ping.stdout.split('\n').filter(l => l.includes('icmp_seq=')).length, 100);
+  assert.match(ping.stdout, /shows the first 100 replies; a real ping -c 100000000/);
+  assert.match(ping.stdout, /100000000 packets transmitted, 100000000 received/);
+  assert.doesNotMatch(run('ping -c 4 8.8.8.8').stdout, /first 100 replies/);
+  for (const line of ["printf '%999999999s' x", "printf '%*s' 999999999 x", "printf '%.999999999d' 1"]) {
+    const r = run(line);
+    assert.equal(r.exitCode, 1, line);
+    assert.match(r.stderr, /larger than this simulator allows \(10000\)/, line);
+  }
+  assert.equal(run("printf '%5s|' ab").stdout, '   ab|');
+  const awk = run(`awk 'BEGIN{printf "%999999999s", 1}'`);
+  assert.equal(awk.exitCode, 2);
+  assert.match(awk.stderr, /^awk: format width or precision is larger than this simulator allows/);
+  assert.equal(run(`awk 'BEGIN{printf "%.150f", 1}'`).exitCode, 0, 'large precision is clamped, not thrown');
+  assert.ok(Date.now() - t < 2000, 'all of the above returns quickly');
+});

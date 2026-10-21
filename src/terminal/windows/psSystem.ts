@@ -1,3 +1,4 @@
+import { MAX_REPLIES } from '../limits';
 import { WindowsContext, WindowsResult, psCommands } from './context';
 import { PsBound, PsParamSpec, bindCmdlet, psError } from './psUtil';
 import { connections, hasConnectivity, resolveHost } from './cmd/network';
@@ -53,7 +54,6 @@ function testConnection(ctx: WindowsContext): WindowsResult {
     return ctx.fail(psError(ctx.raw, cmdlet, `Cannot validate argument on parameter 'Count'. The ${count} argument is less than the minimum allowed range of 1. Supply an argument that is greater than or equal to 1 and then try the command again.`, 'InvalidData', '', 'ParameterBindingValidationException', 'ParameterArgumentValidationError'));
   }
   // Real pings take a second each; the simulator prints at most this many replies per host
-  const MAX_REPLIES = 100;
   const shown = Math.min(count, MAX_REPLIES);
   const size = Number(b.str('BufferSize') ?? 32) || 32;
   const rows: string[] = [];

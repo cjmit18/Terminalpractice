@@ -414,3 +414,14 @@ test('PR #10 review: %ERRORLEVEL% follows each command of a chain as it runs', (
   run('frobnicate && ver');
   assert.equal(run('echo %ERRORLEVEL%').stdout, '9009');
 });
+
+test('limits: ping -n shows at most 100 replies, keeps full statistics, and validates its range', () => {
+  const run = windowsSession('cmd', ONLINE);
+  const r = run('ping -n 100000000 127.0.0.1');
+  assert.equal(r.exitCode, 0);
+  assert.equal(r.stdout.split('\n').filter(l => l.startsWith('Reply from')).length, 100);
+  assert.match(r.stdout, /shows the first 100 replies; a real ping -n 100000000/);
+  assert.match(r.stdout, /Sent = 100000000, Received = 100000000, Lost = 0/);
+  assert.match(run('ping -n 4294967296 127.0.0.1').stderr, /Bad value for option -n, valid range is from 1 to 4294967295\./);
+  assert.doesNotMatch(run('ping 127.0.0.1').stdout, /first 100 replies/);
+});
