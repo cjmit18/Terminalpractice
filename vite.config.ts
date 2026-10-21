@@ -32,8 +32,10 @@ function precacheBuildAssets(): Plugin {
 
 export default defineConfig(() => {
   return {
-    // Relative base so the build works from a GitHub Pages project path as well as a domain root
-    base: './',
+    // Relative by default, so the build works from a GitHub Pages project path (/<repo>/).
+    // Hosts that serve the app for any path (Cloudflare's SPA fallback) build with VITE_BASE=/ so a
+    // deep link such as /old/path still loads /assets/... instead of /old/assets/...
+    base: process.env.VITE_BASE || './',
     plugins: [react(), tailwindcss(), precacheBuildAssets()],
     build: {
       rollupOptions: {

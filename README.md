@@ -94,6 +94,7 @@ The app is static and works without any server. On Cloudflare, a small Worker ad
 - `npm run deploy`: applies new database migrations (`migrations/`) to the remote D1 database, then `wrangler deploy` (which runs `npm run build` first). Run `npx wrangler login` once before deploying from your machine. Set the same command as the **Deploy command** in the Workers Builds settings.
 - `npm run dev:cf`: the full stack locally (static app, Worker and a local D1 copy) at <http://localhost:8787>.
 - Node 22 for Workers Builds comes from `.node-version`.
+- Cloudflare builds use `VITE_BASE=/` (set in `wrangler.jsonc`), so a deep link such as `/old/path` still loads `/assets/...`; the default relative base keeps GitHub Pages' `/<repo>/` path working.
 
 ### Accounts (optional sign-in)
 

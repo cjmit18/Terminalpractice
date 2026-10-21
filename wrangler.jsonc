@@ -5,7 +5,8 @@
   "compatibility_date": "2026-10-13",
   // `wrangler deploy` builds first, so a deploy never ships a stale or missing dist/
   "build": {
-    "command": "npm run build"
+    // Absolute asset paths: with the SPA fallback, /any/path serves index.html, and its assets must still resolve from /
+    "command": "VITE_BASE=/ npm run build"
   },
   // Account API (sign-in, sessions). Only /api/* reaches it; see run_worker_first below.
   "main": "./worker/index.ts",
