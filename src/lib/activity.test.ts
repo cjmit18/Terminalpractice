@@ -24,7 +24,9 @@ function classifier(shell: TerminalShell) {
   let prev: CommandOutcome | undefined;
   return (line: string) => {
     const res = run(line);
-    const outcome: CommandOutcome = { line, exitCode: res.exitCode, stdout: res.stdout, stderr: res.stderr, explanation: res.explanation };
+    const outcome: CommandOutcome = {
+      line, exitCode: res.exitCode, stdout: res.stdout, stderr: res.stderr, explanation: res.explanation, stageExits: res.stageExits,
+    };
     const facts = classifyCommand(outcome, shell, prev);
     prev = outcome;
     return facts;
@@ -150,6 +152,40 @@ test('classifyCommand: not simulated, and sandbox tagging', () => {
   const bash = classifier('bash');
   assert.ok(bash('vim notes.txt').includes('notsim'));
   assert.deepEqual(sandboxFacts(['shell:bash', 'cmd:bash:ls']), ['shell:bash', 'cmd:bash:ls', 'sandbox:bash:ls']);
+});
+
+test('classifyCommand: only the simulator\'s own names, from commands that themselves ran, are stored', () => {
+  const typed = (facts: string[]) => facts.filter(f => /^(cmd|help|sandbox):/.test(f));
+  const bash = classifier('bash');
+  // A private word never becomes a fact, whatever the rest of the line did
+  for (const line of ['private-token || echo ok', 'MyPassw0rd ; true', 'hunter2 | cat', 'x || true', 'x 2>/dev/null; echo']) {
+    const facts = sandboxFacts(bash(line));
+    assert.ok(!facts.some(f => /private|passw0rd|hunter2|:x$/i.test(f)), `${line}: ${facts.join()}`);
+  }
+  assert.deepEqual(typed(bash('private-token || echo ok')), ['cmd:bash:echo']);
+  assert.deepEqual(typed(bash('hunter2 | cat')), ['cmd:bash:cat']);
+  assert.ok(!bash('hunter2 | cat').includes('pipe'), 'a pipe through an unknown name is not a pipe fact');
+  assert.ok(!bash('x 2>/dev/null; echo').includes('redirect'));
+  // A help command skipped by || never ran
+  assert.deepEqual(typed(bash('echo ok || man ls')), ['cmd:bash:echo']);
+  assert.deepEqual(typed(bash('false && man ls')), []);
+  // The engine's own bash parser: assignments and groups are not command names
+  assert.deepEqual(typed(bash('FOO=1 ls')), ['cmd:bash:ls']);
+  assert.ok(!bash('{ ls; }').some(f => f.includes('{')));
+
+  const ps = classifier('powershell');
+  const literal = ps("'private-token'");
+  assert.equal(literal.length, 1, literal.join());
+  assert.deepEqual(typed(ps("'Get-Service'")), [], 'a quoted string is output, not a command');
+  assert.ok(ps('Get-Service').includes('cmd:ps:get-service'));
+
+  const cmd = classifier('cmd');
+  assert.deepEqual(typed(cmd('x & ver')), ['cmd:cmd:ver']);
+  assert.deepEqual(typed(cmd('echo ok || help dir')), ['cmd:cmd:echo']);
+  // Free play cannot be earned with nonsense names
+  const sandbox = classifier('bash');
+  const names = new Set(['aa', 'bb', 'cc', 'dd', 'ee'].flatMap(n => sandboxFacts(sandbox(`${n} || true`))).filter(f => f.startsWith('sandbox:')));
+  assert.deepEqual([...names], ['sandbox:bash:true']);
 });
 
 test('editDistance', () => {
