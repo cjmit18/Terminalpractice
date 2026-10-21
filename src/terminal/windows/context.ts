@@ -2,6 +2,7 @@ import { FileNode, SystemState } from '../../types/terminal';
 import { StageResult } from '../chain';
 import { CommandRegistry } from '../registry';
 import { getNodeAtPath, normalizePath } from '../filesystem';
+import type { PsToken } from './psUtil';
 
 export interface WindowsResult extends StageResult {
   diskpartActive?: boolean;
@@ -24,11 +25,22 @@ export class WindowsContext {
     public state: SystemState
   ) {}
 
+  /** PowerShell only: the arguments as tokens (quoting and (...)/{...} groups kept), for bindCmdlet. */
+  tokens: PsToken[] = [];
+
   get isAdmin(): boolean {
     return this.state.isRootOrAdmin;
   }
 
+  /**
+   * Resolves a path the way Windows does: \x is on the current drive, and D:x is relative to
+   * drive D:'s own current directory (CMD keeps one per drive).
+   */
   resolve(path: string): string {
+    const p = path.replace(/\//g, '\\');
+    if (p.startsWith('\\') && !p.startsWith('\\\\')) return normalizePath(`${this.cwd.slice(0, 2)}${p}`, this.cwd, true);
+    const rel = p.match(/^([A-Za-z]:)(?!\\)(.*)$/);
+    if (rel) return normalizePath(rel[2], driveCwd(this.state, this.cwd, rel[1]), true);
     return normalizePath(path, this.cwd, true);
   }
 
@@ -70,7 +82,17 @@ export class WindowsContext {
   }
 }
 
-export type WindowsHandler = (ctx: WindowsContext) => WindowsResult;
+/**
+ * The current directory of a drive. Like CMD, which keeps it in the hidden variable =D:, other
+ * drives' directories live in state.envVars under '=D:'; the current drive's is the cwd.
+ */
+export function driveCwd(state: SystemState, cwd: string, drive: string): string {
+  const d = drive.toUpperCase();
+  if (cwd.slice(0, 2).toUpperCase() === d) return cwd;
+  return state.envVars?.[`=${d}`] ?? `${d}\\`;
+}
+
+export type WindowsHandler =(ctx: WindowsContext) => WindowsResult;
 
 /** CMD built-ins and external tools, keyed case-insensitively. */
 export const cmdCommands = new CommandRegistry<WindowsContext, WindowsResult>(true);

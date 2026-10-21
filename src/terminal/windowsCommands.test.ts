@@ -146,7 +146,9 @@ test('Review: sfc before and after DISM, sfc /verifyonly, dism health checks', (
   const first = run('sfc /scannow');
   assert.match(first.stdout, /found corrupt files but was unable to fix some\nof them/);
   assert.equal(run.state().systemIntegrityCorrupted, true);
-  assert.equal(run.state().sfcRepaired, true, 'the scan ran (lab objective)');
+  assert.equal(run.state().sfcScanned, true, 'the scan ran');
+  assert.equal(run.state().sfcRepaired, false, 'but could not repair while the component store is damaged');
+  assert.match(first.explanation ?? '', /DISM/);
   run('dism /online /cleanup-image /restorehealth');
   assert.equal(run.state().dismRepaired, true);
   assert.match(run('sfc /scannow').stdout, /found corrupt files and successfully repaired\nthem/);

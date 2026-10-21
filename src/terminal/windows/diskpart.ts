@@ -76,7 +76,104 @@ function volumeTable(state: SystemState, list: Volume[]): string {
 /** A stable made-up GUID per disk for DETAIL DISK. */
 const diskGuid = (d: VirtualDisk) => `{${(0x4f1c2a00 + d.diskNumber).toString(16).toUpperCase()}-8A3B-4C2D-9E1F-${String(d.diskNumber).padStart(12, '0')}}`;
 
+/**
+ * Parses DiskPart's KEY=value and flag arguments. Returns null (the "not valid" error) for an
+ * unknown word, a value that does not match its pattern, or a key written without "=".
+ */
+function parseOptions(text: string, values: Record<string, RegExp>, flags: string[]): Record<string, string> | null {
+  const words = text.replace(/\s*=\s*/g, '=').match(/(?:[^\s"]+|"[^"]*")+/g) ?? [];
+  const out: Record<string, string> = {};
+  for (const w of words) {
+    const eq = w.indexOf('=');
+    if (eq < 0) {
+      if (!flags.includes(w.toLowerCase())) return null;
+      out[w.toLowerCase()] = 'true';
+      continue;
+    }
+    const key = w.slice(0, eq).toLowerCase();
+    const value = w.slice(eq + 1).replace(/^"(.*)"$/, '$1');
+    if (!values[key] || !values[key].test(value.toLowerCase())) return null;
+    out[key] = value;
+  }
+  return out;
+}
+
+const invalidArgs = (command: string) => ({
+  stdout: `The arguments specified for this command are not valid.\nFor more information on the command type: HELP ${command}`,
+  exitCode: 1,
+});
+
+/** True when the partition holds the running system (C:) or is the EFI/MSR partition. */
+const isProtected = (p: VirtualDiskPartition) => p.driveLetter === 'C:' || isEfi(p) || isReserved(p);
+
 const DISKPART_COMMANDS: [RegExp, DiskpartHandler][] = [
+  [/^clean(?:\s+all)?$/, state => {
+    const disk = selectedDisk(state);
+    if (!disk) return { stdout: NO_DISK, exitCode: 1 };
+    if (partitionsOf(disk).some(p => p.driveLetter === 'C:')) {
+      return { stdout: 'Virtual Disk Service error:\nClean is not allowed on the disk containing the current boot,\nsystem, pagefile, crashdump or hibernation volume.', exitCode: 1 };
+    }
+    // The partition table is wiped: the disk is uninitialized (shown as MBR) and all free
+    disk.partitions = [{ id: 1, sizeMB: disk.totalSizeMB, fsType: 'Unallocated' }];
+    disk.partitionTable = 'MBR';
+    state.diskpartSelectedPartition = null;
+    return { stdout: 'DiskPart succeeded in cleaning the disk.' };
+  }],
+
+  [/^conv(?:ert)?\s+(gpt|mbr|dynamic|basic)(?:\s+noerr)?$/, (state, m) => {
+    const disk = selectedDisk(state);
+    if (!disk) return { stdout: NO_DISK, exitCode: 1 };
+    const style = m[1];
+    if (style === 'dynamic' || style === 'basic') return { stdout: 'Dynamic disks are not simulated here.', exitCode: 1 };
+    // Only an empty disk can change partition style (CLEAN it first)
+    if (partitionsOf(disk).length) {
+      return { stdout: 'Virtual Disk Service error:\nThe specified disk is not convertible. CDROMs and DVDs\nare examples of disks that are not convertible.', exitCode: 1 };
+    }
+    disk.partitionTable = style === 'gpt' ? 'GPT' : 'MBR';
+    return { stdout: `DiskPart successfully converted the selected disk to ${style.toUpperCase()} format.` };
+  }],
+
+  [/^active$/, state => {
+    const disk = selectedDisk(state);
+    if (!disk) return { stdout: NO_DISK, exitCode: 1 };
+    const part = selectedPartition(state);
+    if (!part) return { stdout: 'There is no partition selected.\nPlease select a partition and try again.', exitCode: 1 };
+    if (disk.partitionTable === 'GPT') {
+      return { stdout: 'The selected disk is not a fixed MBR disk.\nThe ACTIVE command can only be used on fixed MBR disks.', exitCode: 1 };
+    }
+    for (const p of disk.partitions) p.isActive = p === part;
+    return { stdout: 'DiskPart marked the current partition as active.' };
+  }],
+
+  [/^del(?:ete)?\s+(par(?:tition)?|vol(?:ume)?)(?:\s+(override|noerr))*$/, (state, m) => {
+    const disk = selectedDisk(state);
+    const part = selectedPartition(state);
+    const isVolume = m[1].startsWith('vol');
+    if (!disk || !part) return { stdout: isVolume ? NO_VOLUME : 'There is no partition selected.\nPlease select a partition and try again.', exitCode: 1 };
+    if (isProtected(part)) {
+      return { stdout: 'Virtual Disk Service error:\nCannot delete a protected partition without the force protected parameter set.', exitCode: 1 };
+    }
+    disk.partitions = disk.partitions.filter(p => p !== part);
+    state.diskpartSelectedPartition = null;
+    return { stdout: isVolume ? 'DiskPart successfully deleted the volume.' : 'DiskPart successfully deleted the selected partition.' };
+  }],
+
+  [/^ext(?:end)?(?:\s+(.*))?$/, (state, m) => {
+    const opts = parseOptions(m[1] ?? '', { size: /^\d+$/, disk: /^\d+$/ }, ['noerr', 'filesystem']);
+    if (!opts) return invalidArgs('EXTEND');
+    const disk = selectedDisk(state);
+    const part = selectedPartition(state);
+    if (!disk || !part) return { stdout: NO_VOLUME, exitCode: 1 };
+    const free = freeMB(disk);
+    const grow = opts.size !== undefined ? Number(opts.size) : free;
+    if (free < 1 || grow > free) return { stdout: 'Virtual Disk Service error:\nThere is not enough usable space for this operation.', exitCode: 1 };
+    part.sizeMB += grow;
+    return { stdout: 'DiskPart successfully extended the volume.' };
+  }],
+
+  [/^(offline|online|remove|rescan|shrink|attributes|automount|break|compact|expand|filesystems|gpt|import|inactive|merge|recover|repair|retain|san|setid|uniqueid|attach|detach)\b/, (_, m) =>
+    ({ stdout: `The ${m[1].toUpperCase()} command exists in DiskPart but is not simulated here.`, exitCode: 1 })],
+
   [/^exit$/, () => ({ stdout: 'Leaving DiskPart...', active: false })],
 
   [/^lis(?:t)?\s+dis(?:k)?$/, state => {
@@ -121,11 +218,13 @@ const DISKPART_COMMANDS: [RegExp, DiskpartHandler][] = [
   [/^lis(?:t)?\s+vol(?:u|um|ume)?$/, state => ({ stdout: volumeTable(state, volumes(state)) })],
 
   [/^cre(?:ate)?\s+par(?:tition)?\s+pri(?:mary)?(?:\s+(.*))?$/, (state, m) => {
+    // SIZE is a plain number of megabytes: SIZE=50GB is rejected, not read as 50
+    const opts = parseOptions(m[1] ?? '', { size: /^\d+$/, offset: /^\d+$/, id: /^\S+$/, align: /^\d+$/ }, ['noerr']);
+    if (!opts) return invalidArgs('CREATE PARTITION PRIMARY');
     const disk = selectedDisk(state);
     if (!disk) return { stdout: NO_DISK, exitCode: 1 };
     const free = freeMB(disk);
-    const sizeArg = (m[1] ?? '').match(/size\s*=\s*(\d+)/);
-    const wanted = sizeArg ? Number(sizeArg[1]) : free;
+    const wanted = opts.size !== undefined ? Number(opts.size) : free;
     if (free < 1 || wanted > free) {
       return { stdout: 'Virtual Disk Service error:\nThere is not enough usable space for this operation.', exitCode: 1 };
     }
@@ -137,7 +236,10 @@ const DISKPART_COMMANDS: [RegExp, DiskpartHandler][] = [
     return { stdout: 'DiskPart succeeded in creating the specified partition.' };
   }],
 
-  [/^sel(?:ect)?\s+par(?:tition)?\s*=?\s*(\d+)$/, (state, m) => {
+  [/^cre(?:ate)?\s+(par(?:tition)?\s+(?:ext|log|efi|msr)\w*|vol\w*|vdisk)\b/, () =>
+    ({ stdout: 'Only CREATE PARTITION PRIMARY is simulated here; this CREATE command exists in DiskPart but is not simulated.', exitCode: 1 })],
+
+  [/^sel(?:ect)?\s+par(?:tition)?\s*=?\s*(\d+)$/,(state, m) => {
     const disk = selectedDisk(state);
     if (!disk) return { stdout: NO_DISK, exitCode: 1 };
     const id = parseInt(m[1], 10);
@@ -202,25 +304,29 @@ const DISKPART_COMMANDS: [RegExp, DiskpartHandler][] = [
     };
   }],
 
-  [/^format\b/, (state, m, original) => {
+  [/^format(?:\s+(.*))?$/, (state, m, original) => {
+    const opts = parseOptions(original.replace(/^\s*format\s*/i, ''), { fs: /^\w+$/, label: /^.*$/, unit: /^\S+$/, revision: /^[\d.]+$/ },
+      ['quick', 'compress', 'override', 'duplicate', 'nowait', 'noerr', 'recommended']);
+    if (!opts) return invalidArgs('FORMAT');
     const part = selectedPartition(state);
     if (!part) return { stdout: NO_VOLUME, exitCode: 1 };
-    const fsMatch = m.input!.match(/fs\s*=\s*(\w+)/);
-    const fs = (fsMatch?.[1] ?? 'ntfs').toUpperCase();
+    const fs = (opts.fs ?? 'ntfs').toUpperCase();
     if (fs !== 'NTFS' && fs !== 'FAT32') return { stdout: `The file system "${fs}" is not supported here (use fs=ntfs or fs=fat32).`, exitCode: 1 };
     part.fsType = fs as 'NTFS' | 'FAT32';
-    const lm = original.match(/label\s*=\s*(?:"([^"]+)"|(\S+))/i);
-    const label = lm ? lm[1] ?? lm[2] : undefined;
-    part.label = label ?? 'DataDrive';
+    // Without LABEL= the volume has no label
+    part.label = opts.label ?? '';
     return { stdout: ['  100 percent completed', '', 'DiskPart successfully formatted the volume.'].join('\n') };
   }],
 
-  [/^assign\b/, (state, m) => {
+  [/^assign(?:\s+(.*))?$/, (state, m) => {
+    // Only LETTER=E (or MOUNT=path) is valid; "assign letter E" is not
+    const opts = parseOptions(m[1] ?? '', { letter: /^[a-z]:?$/, mount: /^\S+$/ }, ['noerr']);
+    if (!opts) return invalidArgs('ASSIGN');
     const part = selectedPartition(state);
     if (!part) return { stdout: NO_VOLUME, exitCode: 1 };
-    const letterMatch = m.input!.match(/letter\s*=\s*([a-z])/);
+    if (opts.mount) return { stdout: 'Mount points are not simulated here; use LETTER=<D>.', exitCode: 1 };
     const used = new Set(state.disks.flatMap(d => d.partitions).map(p => (p.driveLetter ?? '').toUpperCase()).filter(Boolean));
-    let letter = letterMatch ? `${letterMatch[1].toUpperCase()}:` : '';
+    let letter = opts.letter ? `${opts.letter[0].toUpperCase()}:` : '';
     if (!letter) for (const c of 'DEFGHIJKLMNOPQRSTUVWXYZ') { if (!used.has(`${c}:`)) { letter = `${c}:`; break; } }
     if (used.has(letter) && (part.driveLetter ?? '').toUpperCase() !== letter) {
       return { stdout: 'Virtual Disk Service error:\nThe specified drive letter is not free to be assigned.', exitCode: 1 };

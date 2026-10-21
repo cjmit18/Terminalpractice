@@ -1,7 +1,7 @@
 import { FileNode } from '../../../types/terminal';
 import { fileSize, createNode, removeNode, writeFileContent, getNodeAtPath } from '../../filesystem';
 import { globToRegex } from '../../textUtils';
-import { WindowsContext, WindowsResult, cmdCommands } from '../context';
+import { WindowsContext, WindowsResult, cmdCommands, driveCwd } from '../context';
 
 // CMD navigation and file commands: cd/chdir, dir, type, more, mkdir/md, copy, del/erase
 
@@ -23,16 +23,49 @@ function expandWildcard(ctx: WindowsContext, arg: string): { dir: string; matche
   return { dir, matches: names.sort().map(n => join(dir, ctx.node(dir) ? n : n)) };
 }
 
+const driveOf = (p: string) => p.slice(0, 2).toUpperCase();
+
+/** Remembers `dir` as the current directory of its drive (CMD's hidden =D: variable). */
+function rememberDrive(ctx: WindowsContext, dir: string) {
+  ctx.state.envVars = { ...(ctx.state.envVars ?? {}), [`=${driveOf(dir)}`]: dir };
+}
+
+/** Makes `dir` the current directory, switching drive if needed and remembering the old drive's directory. */
+function switchTo(ctx: WindowsContext, dir: string) {
+  if (driveOf(dir) !== driveOf(ctx.cwd)) rememberDrive(ctx, ctx.cwd);
+  ctx.cwd = dir;
+}
+
 function cd(ctx: WindowsContext): WindowsResult {
-  const target = operands(ctx.args).join(' ');
+  const switchDrive = ctx.args.some(a => a.toLowerCase() === '/d');
+  // cd treats spaces as part of the name, so cd Program Files works without quotes
+  const target = operands(ctx.args).join(' ').replace(/^"(.*)"$/, '$1');
   if (!target) return ctx.ok(ctx.cwd);
+  // cd D: prints D:'s current directory; it does not switch to it
+  if (/^[a-z]:$/i.test(target) && !switchDrive) return ctx.ok(driveCwd(ctx.state, ctx.cwd, target));
   const resolved = ctx.resolve(target);
   const node = ctx.node(resolved);
   if (!node) return ctx.fail('The system cannot find the path specified.');
   if (node.type !== 'directory') return ctx.fail('The directory name is invalid.');
   const why = ctx.protectedReason(resolved, 'read');
   if (why) return ctx.fail(ACCESS_DENIED, 1, why);
-  ctx.cwd = resolved;
+  if (driveOf(resolved) !== driveOf(ctx.cwd) && !switchDrive) {
+    // Another drive's directory changes, but the current drive stays the same (use /d or D:)
+    rememberDrive(ctx, resolved);
+    return ctx.result('', '', 0, `cd only changed the current directory of drive ${driveOf(resolved)}; you are still on ${driveOf(ctx.cwd)}. Type ${driveOf(resolved)} to switch drive, or use cd /d ${target}.`);
+  }
+  switchTo(ctx, resolved);
+  return ctx.ok();
+}
+
+/** A bare drive letter (D:) switches to that drive's current directory. */
+function changeDrive(ctx: WindowsContext): WindowsResult {
+  if (ctx.args.length) return ctx.fail('The filename, directory name, or volume label syntax is incorrect.', 1);
+  const drive = ctx.name.toUpperCase();
+  if (drive === driveOf(ctx.cwd)) return ctx.ok();
+  const dir = driveCwd(ctx.state, ctx.cwd, drive);
+  if (!ctx.node(dir)) return ctx.fail('The system cannot find the drive specified.', 1);
+  switchTo(ctx, dir);
   return ctx.ok();
 }
 
@@ -193,6 +226,7 @@ function del(ctx: WindowsContext): WindowsResult {
 }
 
 cmdCommands.register(['cd', 'chdir'], cd);
+cmdCommands.register([...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'].map(l => `${l}:`), changeDrive);
 cmdCommands.register(['mkdir', 'md'], mkdir);
 cmdCommands.register(['del', 'erase'], del);
 cmdCommands.registerAll({ dir, type, copy, more: ctx => ctx.ok(ctx.stdin) });

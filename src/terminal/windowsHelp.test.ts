@@ -56,7 +56,7 @@ test('DiskPart has its own HELP', () => {
   assert.ok(run('help').diskpartActive !== false);
   assert.match(run('help format').stdout, /FS=<FS>/);
   assert.match(run('list /?').stdout, /LIST VOLUME/);
-  assert.match(run('clean').stdout, /SELECT {6}- /, 'unknown commands show the command list');
+  assert.match(run('frobnicate').stdout, /SELECT {6}- /, 'unknown commands show the command list');
   assert.equal(run('exit').stdout, 'Leaving DiskPart...');
 });
 
@@ -97,7 +97,7 @@ test('PowerShell Get-Command lists commands with wildcards, verbs and nouns', ()
   assert.match(all.stdout, /\nAlias {11}gsv -> Get-Service {33}3\.1\.0\.0 {4}Microsoft\.PowerShell\.Management/);
   assert.match(all.stdout, /\nCmdlet {10}Get-Help {43}3\.0\.0\.0 {4}Microsoft\.PowerShell\.Core/);
   const svc = run('Get-Command *service*').stdout.split('\n').filter(l => l.startsWith('Cmdlet')).map(l => l.split(/\s+/)[1]);
-  assert.deepEqual(svc, ['Get-Service', 'Restart-Service', 'Start-Service', 'Stop-Service']);
+  assert.deepEqual(svc, ['Get-Service', 'New-Service', 'Restart-Service', 'Resume-Service', 'Set-Service', 'Start-Service', 'Stop-Service', 'Suspend-Service']);
   assert.match(run('Get-Command ls').stdout, /Alias {11}ls -> Get-ChildItem/);
   assert.match(run('Get-Command ipconfig').stdout, /Application {5}ipconfig\.exe/);
   assert.match(run('Get-Command -Noun Process').stdout, /Stop-Process/);

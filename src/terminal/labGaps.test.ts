@@ -57,7 +57,9 @@ test('Get-ADUser honours -Identity, -Filter and -Properties', () => {
   assert.equal(run('Get-ADUser -Identity jdoe').stdout, one.stdout);
   const props = run('Get-ADUser -Identity jdoe -Properties LockedOut,MemberOf').stdout;
   assert.match(props, /LockedOut +: (True|False)/);
-  assert.match(props, /MemberOf +: \{CN=/);
+  // memberOf leaves out the primary group (Domain Users), jdoe's only group
+  assert.match(props, /MemberOf +: \{\}/);
+  assert.match(run('Get-ADUser mscott -Properties MemberOf').stdout, /MemberOf +: \{CN=Sales Managers,/);
   assert.match(run('Get-ADUser jdoe -Properties *').stdout, /EmailAddress +: jdoe@corp\.local/);
   const missing = run('Get-ADUser nobody');
   assert.equal(missing.exitCode, 1);
