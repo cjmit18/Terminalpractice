@@ -51,6 +51,9 @@ export const useGameLayer = () => useContext(GameLayerContext);
 /** How long to wait for more news before saying it, so a batch is one message */
 const BATCH_MS = 300;
 
+/** Whether the learner's preferences let this be said */
+const allowed = (a: Announcement, p: Required<ActivityPrefs>) => p.celebrations !== 'off' && (a.kind !== 'badge' || p.showBadges);
+
 const prefersReducedMotion = () => {
   try {
     return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -104,22 +107,24 @@ export const GameLayerProvider: React.FC<ProviderProps> = ({ activity, setActivi
   const [confettiKey, setConfettiKey] = useState(0);
   const prefsRef = useRef(prefs);
   prefsRef.current = prefs;
+  // What the note on screen says, so it can be rebuilt when preferences change
+  const shown = useRef<Announcement[]>([]);
 
   const flush = useCallback(() => {
     timer.current = null;
-    const items = queue.current;
+    // Preferences may have changed since these were queued
+    const items = queue.current.filter(a => allowed(a, prefsRef.current));
     queue.current = [];
     const batch = batchMessage(items);
     if (!batch) return;
+    shown.current = items;
     setNote({ ...batch, id: Date.now() });
     if (batch.confetti && prefsRef.current.celebrations === 'lively' && !prefersReducedMotion()) setConfettiKey(k => k + 1);
   }, []);
 
   const announce = useCallback(
     (a: Announcement) => {
-      const p = prefsRef.current;
-      if (p.celebrations === 'off') return;
-      if (a.kind === 'badge' && !p.showBadges) return;
+      if (!allowed(a, prefsRef.current)) return;
       queue.current.push(a);
       if (timer.current === null) timer.current = window.setTimeout(flush, BATCH_MS);
     },
@@ -130,10 +135,21 @@ export const GameLayerProvider: React.FC<ProviderProps> = ({ activity, setActivi
     if (timer.current !== null) window.clearTimeout(timer.current);
   }, []);
 
-  // Turning celebrations off also removes a note already showing
+  // Turning celebrations off or hiding badges also applies to what is queued and to the note showing
   useEffect(() => {
-    if (prefs.celebrations === 'off') setNote(null);
-  }, [prefs.celebrations]);
+    queue.current = queue.current.filter(a => allowed(a, prefs));
+    const kept = shown.current.filter(a => allowed(a, prefs));
+    if (kept.length === shown.current.length) return;
+    shown.current = kept;
+    const batch = batchMessage(kept);
+    setNote(n => (n && batch ? { ...batch, id: n.id } : null));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefs.celebrations, prefs.showBadges]);
+
+  const dismiss = useCallback(() => {
+    shown.current = [];
+    setNote(null);
+  }, []);
 
   // ---- Activity updates ----
   const record = useCallback((facts: string[]) => setActivity(a => addFacts(a, facts)), [setActivity]);
@@ -199,7 +215,7 @@ export const GameLayerProvider: React.FC<ProviderProps> = ({ activity, setActivi
   return (
     <GameLayerContext.Provider value={value}>
       {children}
-      <Celebration note={note} onDismiss={() => setNote(null)} />
+      <Celebration note={note} onDismiss={dismiss} />
       {confettiKey > 0 && <Confetti key={confettiKey} />}
     </GameLayerContext.Provider>
   );

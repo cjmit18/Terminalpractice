@@ -108,3 +108,37 @@ test('confetti never runs when the system asks for reduced motion', async ({ pag
   await expect(celebrations(page)).toContainText('Stage clear: Hardware and boot.');
   await expect(page.getByTestId('confetti')).toHaveCount(0);
 });
+
+/** Saves new preferences as another tab would, and tells this tab with a storage event. */
+async function prefsFromAnotherTab(page: Page, prefs: Record<string, unknown>) {
+  await page.evaluate(
+    ({ key, prefs }) => {
+      const a = JSON.parse(localStorage.getItem(key) ?? '{"facts":[],"days":[],"badges":{}}');
+      localStorage.setItem(key, JSON.stringify({ ...a, prefs: { ...a.prefs, ...prefs }, prefsAt: Date.now() + 60_000 }));
+      window.dispatchEvent(new StorageEvent('storage', { key }));
+    },
+    { key: ACTIVITY_KEY, prefs },
+  );
+}
+
+test('celebrations turned off during the batch delay: nothing is said', async ({ page }) => {
+  await page.goto('#/sandbox');
+  const input = page.getByRole('textbox', { name: 'Command' });
+  await input.fill('whoami');
+  await input.press('Enter');
+  await prefsFromAnotherTab(page, { celebrations: 'off' });
+  await page.waitForTimeout(800);
+  await expect(celebrations(page)).toHaveText('');
+  await expect(page.getByTestId('celebration-note')).toHaveCount(0);
+});
+
+test('hiding badges while a note shows drops the badge text and keeps the task', async ({ page }) => {
+  await page.goto('#/linux/lpi-101-1-system-architecture');
+  await showTerminal(page);
+  await runCommand(page, 'lspci');
+  await expect(celebrations(page)).toContainText('Task 1 of 3 done');
+  await expect(celebrations(page)).toContainText('hello, world');
+  await prefsFromAnotherTab(page, { showBadges: false });
+  await expect(celebrations(page)).toHaveText('Task 1 of 3 done: List the PCI devices.');
+  await expect(page.getByTestId('celebration-note')).not.toContainText('hello, world');
+});
