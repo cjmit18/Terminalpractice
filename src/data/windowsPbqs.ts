@@ -1,6 +1,10 @@
 import { ExamModule } from '../types/modules';
 import { SystemState } from '../types/terminal';
-import { createDefaultWindowsFs, getNodeAtPath } from '../terminal/filesystem';
+import { createDefaultWindowsFs } from '../terminal/filesystem';
+import {
+  alexInDomainAdmins, alexInItAdmins, connectivityVerified, dismRan, ipconfigAllRun, jdoeUnlocked,
+  maliciousConnectionFound, maliciousProcessKilled, maliciousProcessNamed, sfcRan, sfcRepairedAfterDism,
+} from './verifiers';
 
 const baseWindowsState: SystemState = {
   hostname: 'WIN-CLIENT01',
@@ -11,10 +15,11 @@ const baseWindowsState: SystemState = {
   interfaces: [
     {
       name: 'Ethernet0',
-      ip: '169.254.82.114', // Default APIPA address for troubleshooting scenario
-      netmask: '255.255.0.0',
+      // A healthy DHCP lease on the corp LAN. The network lab overrides this with an APIPA address.
+      ip: '192.168.1.145',
+      netmask: '255.255.255.0',
       mac: '00-50-56-A1-2B-3C',
-      gateway: '',
+      gateway: '192.168.1.1',
       dns: ['192.168.1.10'],
       dhcpEnabled: true,
       status: 'UP' as const,
@@ -25,6 +30,7 @@ const baseWindowsState: SystemState = {
     { pid: 540, user: 'SYSTEM', cpu: 0.1, mem: 4.8, command: 'csrss.exe' },
     { pid: 704, user: 'SYSTEM', cpu: 0.2, mem: 15.8, command: 'lsass.exe' },
     { pid: 844, user: 'SYSTEM', cpu: 0.5, mem: 22.4, command: 'svchost.exe' },
+    { pid: 1120, user: 'SYSTEM', cpu: 0.1, mem: 9.6, command: 'svchost.exe' }, // hosts Netlogon (LDAP session to dc01)
     { pid: 2140, user: 'Student', cpu: 1.2, mem: 48.9, command: 'explorer.exe' },
     { pid: 3892, user: 'Student', cpu: 88.4, mem: 12.4, command: 'svchost_update.exe', port: 4444, isMalicious: true },
   ],
@@ -160,11 +166,13 @@ const baseWindowsState: SystemState = {
     }
   ],
   installedPackages: ['RSAT-AD-PowerShell', 'GPMC', 'BitLocker'],
-  systemIntegrityCorrupted: true,
+  // Healthy by default; the SFC and network labs override the parts they break.
+  systemIntegrityCorrupted: false,
   dismRepaired: false,
   sfcRepaired: false,
-  dnsWorking: false,
-  gatewayWorking: false,
+  sfcScanned: false,
+  dnsWorking: true,
+  gatewayWorking: true,
   firewallBlockedPorts: [4444],
   diskpartSelectedDisk: null,
   diskpartSelectedPartition: null,
@@ -197,7 +205,7 @@ export const WINDOWS_PBQS: ExamModule[] = [
         title: 'Check the IP configuration',
         description: 'Run ipconfig /all and note the 169.254.x.x address and the empty default gateway.',
         hint: 'Run ipconfig /all.',
-        verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && ctx.command.toLowerCase().includes('ipconfig') && ctx.command.toLowerCase().includes('/all') && (ctx.stdout.includes('169.254.') || ctx.stdout.includes('Windows IP Configuration')),
+        verifier: (_, __, ctx) => ipconfigAllRun(ctx),
       },
       {
         id: 'net-dhcp-renew',
@@ -210,15 +218,15 @@ export const WINDOWS_PBQS: ExamModule[] = [
         id: 'net-flush-dns',
         title: 'Flush the DNS cache',
         description: 'Clear the lookups the client cached while it was offline, including the failed ones.',
-        hint: 'Run ipconfig /flushdns.',
+        hint: 'Run ipconfig /flushdns. In PowerShell, Clear-DnsClientCache does the same.',
         verifier: (_, state) => state.dnsWorking,
       },
       {
         id: 'net-verify-ping',
         title: 'Test connectivity',
-        description: 'Ping the default gateway and an internet address, or use Test-NetConnection in PowerShell.',
+        description: 'Once the adapter has a real lease, ping the default gateway and an internet address, or use Test-NetConnection in PowerShell. Loopback (127.0.0.1) and your own address answer even with no network, so they do not prove anything here.',
         hint: 'Run ping 192.168.1.1, then ping 8.8.8.8.',
-        verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && (ctx.command.toLowerCase().includes('ping') || ctx.command.toLowerCase().includes('test-netconnection') || ctx.command.toLowerCase().includes('tnc')) && (ctx.stdout.includes('Reply from') || ctx.stdout.includes('PingSucceeded') || ctx.stdout.includes('TcpTestSucceeded') || ctx.stdout.includes('bytes=')),
+        verifier: (_, state, ctx) => connectivityVerified(state, ctx),
       },
     ],
     initialFs: createDefaultWindowsFs(),
@@ -295,30 +303,21 @@ export const WINDOWS_PBQS: ExamModule[] = [
         title: 'Unlock jdoe',
         description: 'Unlock the jdoe account. There is no need to reset his password; he knows it.',
         hint: 'Run Unlock-ADAccount -Identity jdoe, or select John Doe in the ADUC panel and choose Unlock.',
-        verifier: (_, state) => {
-          const user = state.adUsers.find(u => u.sAMAccountName.toLowerCase() === 'jdoe');
-          return !!user && !user.locked;
-        },
+        verifier: (_, state) => jdoeUnlocked(state),
       },
       {
         id: 'ad-create-alex',
         title: 'Create the user alex',
         description: 'Create the user alex in OU=IT_Admins,DC=corp,DC=local.',
         hint: 'Run New-ADUser -SamAccountName alex -Name "Alex Chen" -Path "OU=IT_Admins,DC=corp,DC=local".',
-        verifier: (_, state) => {
-          return state.adUsers.some(u => u.sAMAccountName.toLowerCase() === 'alex');
-        },
+        verifier: (_, state) => alexInItAdmins(state),
       },
       {
         id: 'ad-add-group',
         title: 'Add alex to Domain Admins',
         description: 'Make alex a member of the Domain Admins security group.',
         hint: 'Run Add-ADGroupMember -Identity "Domain Admins" -Members alex. The group name has a space, so quote it.',
-        verifier: (_, state) => {
-          const user = state.adUsers.find(u => u.sAMAccountName.toLowerCase() === 'alex');
-          const group = state.adGroups.find(g => g.name === 'Domain Admins');
-          return Boolean(user && (user.memberOf.includes('Domain Admins') || (group && group.members.includes('alex'))));
-        },
+        verifier: (_, state) => alexInDomainAdmins(state),
       },
     ],
     initialFs: createDefaultWindowsFs(),
@@ -512,22 +511,22 @@ export const WINDOWS_PBQS: ExamModule[] = [
         id: 'sec-netstat-ano',
         title: 'Find the connection and its PID',
         description: 'List all connections with their owning process ID and find the one to remote port 4444.',
-        hint: 'Run netstat -ano. Add | findstr 4444 to show only that line.',
-        verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && /netstat/i.test(ctx.command) && /-a/i.test(ctx.command) && ctx.stdout.includes('4444'),
+        hint: 'Run netstat -ano. Add | findstr 4444 to show only that line. In PowerShell, Get-NetTCPConnection -RemotePort 4444 shows the OwningProcess.',
+        verifier: (_, __, ctx) => maliciousConnectionFound(ctx),
       },
       {
         id: 'sec-tasklist',
         title: 'Match the PID to a program',
         description: 'Find the image name of PID 3892.',
-        hint: 'Run tasklist, or tasklist | findstr 3892.',
-        verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && /tasklist/i.test(ctx.command) && ctx.stdout.includes('svchost_update.exe'),
+        hint: 'Run tasklist, or tasklist /fi "pid eq 3892". In PowerShell, Get-Process -Id 3892.',
+        verifier: (_, __, ctx) => maliciousProcessNamed(ctx),
       },
       {
         id: 'sec-taskkill',
         title: 'Kill the process',
         description: 'Force PID 3892 to stop, with taskkill or with Stop-Process in PowerShell.',
-        hint: 'Run taskkill /F /PID 3892. In PowerShell, Stop-Process -Id 3892 -Force does the same.',
-        verifier: (_, state) => !state.processes.some(p => p.pid === 3892),
+        hint: 'Run taskkill /F /PID 3892. Without /F, taskkill only asks the process to close, and a process with no window refuses. In PowerShell, Stop-Process -Id 3892 -Force does the same.',
+        verifier: (_, state) => maliciousProcessKilled(state),
       },
     ],
     initialFs: createDefaultWindowsFs(),
@@ -551,7 +550,7 @@ export const WINDOWS_PBQS: ExamModule[] = [
         step: 3,
         title: 'Kill the process',
         command: 'taskkill /F /PID 3892',
-        explanation: '/PID picks the process by ID, and /F ends it immediately instead of asking it to close.',
+        explanation: '/PID picks the process by ID, and /F ends it immediately instead of asking it to close. Without /F, taskkill fails here: a background process with no window can only be terminated forcefully.',
         underlyingConcept: 'Killing the process ends the connection, not the infection. Persistence such as a scheduled task, a Run key or a service can start it again, so the host still needs investigating and cleaning.',
       },
     ],
@@ -569,7 +568,7 @@ export const WINDOWS_PBQS: ExamModule[] = [
     summary: 'Repair corrupted system files with SFC and the component store with DISM.',
     difficulty: 'Intermediate',
     estimatedMinutes: 15,
-    scenarioDescription: 'WIN-CLIENT01 keeps crashing with blue screens that point at damaged system DLLs. Run System File Checker to find and replace corrupted protected files, then repair the component store with DISM so that SFC has good copies to repair from.',
+    scenarioDescription: 'WIN-CLIENT01 keeps crashing with blue screens that point at damaged system DLLs. Run System File Checker to find corrupted protected files. When it cannot fix all of them, repair the component store with DISM so that SFC has good copies to work from, then run SFC again to finish the repair.',
     systemContext: 'Host: WIN-CLIENT01 | Symptom: repeated stop errors | Prompt: elevated cmd',
     defaultShell: 'cmd',
     allowedShells: ['cmd', 'powershell'],
@@ -578,16 +577,23 @@ export const WINDOWS_PBQS: ExamModule[] = [
       {
         id: 'sfc-scan',
         title: 'Run System File Checker',
-        description: 'Scan all protected system files and replace any that are damaged.',
-        hint: 'Run sfc /scannow.',
-        verifier: (_, state) => state.sfcRepaired,
+        description: 'Scan all protected system files and read the result.',
+        hint: 'Run sfc /scannow from an elevated prompt.',
+        verifier: (_, state) => sfcRan(state),
       },
       {
         id: 'dism-restore',
         title: 'Repair the component store',
         description: 'Repair the Windows component store (WinSxS) with DISM.',
-        hint: 'Run dism /online /cleanup-image /restorehealth.',
-        verifier: (_, state) => state.dismRepaired,
+        hint: 'Run dism /online /cleanup-image /restorehealth. In PowerShell, Repair-WindowsImage -Online -RestoreHealth does the same.',
+        verifier: (_, state) => dismRan(state),
+      },
+      {
+        id: 'sfc-rescan',
+        title: 'Run SFC again',
+        description: 'With the component store repaired, run System File Checker again so it can replace the files it could not fix the first time.',
+        hint: 'Run sfc /scannow again and check that it reports the corrupt files were successfully repaired.',
+        verifier: (_, state) => sfcRepairedAfterDism(state),
       },
     ],
     initialFs: createDefaultWindowsFs(),
@@ -595,6 +601,7 @@ export const WINDOWS_PBQS: ExamModule[] = [
       ...baseWindowsState,
       systemIntegrityCorrupted: true,
       sfcRepaired: false,
+      sfcScanned: false,
       dismRepaired: false,
     },
     solutionWalkthrough: [
@@ -602,7 +609,7 @@ export const WINDOWS_PBQS: ExamModule[] = [
         step: 1,
         title: 'Scan protected files',
         command: 'sfc /scannow',
-        explanation: 'SFC checks every protected system file against the copy in the component store (C:\\Windows\\WinSxS) and replaces any that do not match. The details go to C:\\Windows\\Logs\\CBS\\CBS.log.',
+        explanation: 'SFC checks every protected system file against the copy in the component store (C:\\Windows\\WinSxS) and replaces any that do not match. Here it finds corrupt files but cannot fix some of them, because the store itself is damaged. The details go to C:\\Windows\\Logs\\CBS\\CBS.log.',
         underlyingConcept: 'Windows Resource Protection stops programs from replacing protected system files. SFC is the tool that checks those files and puts back the originals.',
       },
       {
@@ -611,6 +618,13 @@ export const WINDOWS_PBQS: ExamModule[] = [
         command: 'dism /online /cleanup-image /restorehealth',
         explanation: '/online targets the running copy of Windows. /restorehealth scans the component store and replaces damaged files with good copies from Windows Update, or from install media you point to with /source.',
         underlyingConcept: 'SFC repairs from the component store, so if the store is damaged SFC cannot fix everything. Repair the store with DISM, then run sfc /scannow again.',
+      },
+      {
+        step: 3,
+        title: 'Scan again',
+        command: 'sfc /scannow',
+        explanation: 'With a healthy component store, SFC now replaces the damaged files and reports that it successfully repaired them.',
+        underlyingConcept: 'Running DISM first and SFC second gets the same result in one SFC pass. Either way, the SFC run that counts is the one after DISM.',
       },
     ],
     examTips: [

@@ -1,6 +1,7 @@
 import { ExamModule } from '../types/modules';
 import { SystemState } from '../types/terminal';
 import { createDefaultLinuxFs, getNodeAtPath } from '../terminal/filesystem';
+import { countedSourceIps, extractedSourceIps, financeDirShown, passwdEntryShown, sarahCreated, sarahHomeOwned, sataInDmesg } from './verifiers';
 
 const baseLinuxState: SystemState = {
   hostname: 'lpi-lab01',
@@ -63,6 +64,7 @@ const baseLinuxState: SystemState = {
   systemIntegrityCorrupted: false,
   dismRepaired: false,
   sfcRepaired: false,
+  sfcScanned: false,
   dnsWorking: true,
   gatewayWorking: true,
   firewallBlockedPorts: [],
@@ -96,8 +98,8 @@ export const LPI_MODULES: ExamModule[] = [
         id: 'perm-check',
         title: 'Check the current permissions',
         description: 'Look at the mode, owner and group of the /home/student/finance directory itself.',
-        hint: 'Run ls -ld /home/student/finance. Without -d, ls lists the files inside the directory instead of the directory. ls -la /home/student also works.',
-        verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && (ctx.command.includes('ls -l') || ctx.command.includes('ls -ld') || ctx.command.includes('ls -la')) && ctx.stdout.includes('finance'),
+        hint: 'Run ls -ld /home/student/finance. Without -d, ls lists the files inside the directory instead of the directory. ls -la /home/student and stat /home/student/finance also work.',
+        verifier: (_, __, ctx) => financeDirShown(ctx),
       },
       {
         id: 'perm-chmod',
@@ -217,16 +219,16 @@ export const LPI_MODULES: ExamModule[] = [
       {
         id: 'obj-pipe-awk',
         title: 'Extract the source IP',
-        description: 'Pipe the matching lines into awk (or cut) and print only the IP address.',
-        hint: 'Run grep "Failed password" /var/log/auth.log | awk \'{print $(NF-3)}\'. The IP is always the fourth field from the end of the line.',
-        verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && ctx.command.includes('|') && (/awk/.test(ctx.command) || /cut/.test(ctx.command)) && ctx.stdout.includes('198.51.100.44'),
+        description: 'Print only the source IP address of each failed login, one per line, with nothing else on the line.',
+        hint: 'Run grep "Failed password" /var/log/auth.log | awk \'{print $(NF-3)}\'. The IP is always the fourth field from the end of the line. A fixed field number such as $11 or cut -f11 breaks on the "invalid user" lines, which have two extra words.',
+        verifier: (_, __, ctx) => extractedSourceIps(ctx),
       },
       {
         id: 'obj-sort-uniq',
         title: 'Count attempts per IP',
         description: 'Sort the addresses and count the duplicates with uniq -c.',
         hint: 'Run grep "Failed password" /var/log/auth.log | awk \'{print $(NF-3)}\' | sort | uniq -c. On a real log, add | sort -nr to put the busiest address first.',
-        verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && ctx.command.includes('sort') && ctx.command.includes('uniq') && ctx.stdout.includes('198.51.100.44'),
+        verifier: (_, __, ctx) => countedSourceIps(ctx),
       },
     ],
     initialFs: createDefaultLinuxFs(),
@@ -294,7 +296,7 @@ export const LPI_MODULES: ExamModule[] = [
         title: 'Read the kernel ring buffer',
         description: 'Look through the kernel\'s boot messages for the SATA controller.',
         hint: 'Run dmesg | grep -i sata. The -i matters: the kernel writes "SATA" in capitals.',
-        verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && ctx.command.includes('dmesg') && (ctx.stdout.includes('SATA') || ctx.stdout.includes('e1000e') || ctx.stdout.includes('Linux')),
+        verifier: (_, __, ctx) => sataInDmesg(ctx),
       },
     ],
     initialFs: createDefaultLinuxFs(),
@@ -347,28 +349,22 @@ export const LPI_MODULES: ExamModule[] = [
         id: 'usr-create',
         title: 'Create the account',
         description: 'Create the user sarah with a home directory, bash as the login shell, and developers as a supplementary group.',
-        hint: 'Run sudo useradd -m -s /bin/bash -G developers sarah. Without -m, many distributions do not create the home directory.',
-        verifier: (fs) => {
-          const passwd = getNodeAtPath(fs, '/etc/passwd', false);
-          return !!passwd && !!passwd.content && passwd.content.includes('sarah');
-        },
+        hint: 'Run sudo useradd -m -s /bin/bash -G developers sarah. Without -m, many distributions do not create the home directory. Use capital -G: lowercase -g would make developers her primary group instead.',
+        verifier: (fs) => sarahCreated(fs),
       },
       {
         id: 'usr-verify-home',
         title: 'Check the home directory',
         description: 'Confirm that /home/sarah exists and belongs to sarah.',
         hint: 'Run ls -ld /home/sarah.',
-        verifier: (fs) => {
-          const home = getNodeAtPath(fs, '/home/sarah', false);
-          return !!home && home.type === 'directory';
-        },
+        verifier: (fs) => sarahHomeOwned(fs),
       },
       {
         id: 'usr-verify-passwd',
         title: 'Check the /etc/passwd entry',
         description: 'Show sarah\'s line in /etc/passwd and check the home directory and shell.',
-        hint: 'Run grep sarah /etc/passwd.',
-        verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && ctx.command.includes('sarah') && (/grep/.test(ctx.command) || /cat/.test(ctx.command)) && ctx.stdout.includes('sarah'),
+        hint: 'Run grep sarah /etc/passwd (getent passwd sarah works too).',
+        verifier: (_, __, ctx) => passwdEntryShown(ctx),
       },
     ],
     initialFs: createDefaultLinuxFs(),
