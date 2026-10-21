@@ -25,6 +25,7 @@ import {
   labPlacements,
   markRead,
   quizPassed,
+  recordAnswer,
   recordQuizScore,
   resetPath,
   stepAfter,
@@ -36,6 +37,7 @@ import { LEARNING_PATHS } from './data/paths';
 import { PathsList } from './components/journey/PathsList';
 import { PathOverview } from './components/journey/PathOverview';
 import { StepPage } from './components/journey/StepPage';
+import { ReviewPage } from './components/journey/ReviewPage';
 import { PageErrorBoundary } from './components/PageErrorBoundary';
 import { lazyWithReload, reloadOnPreloadError } from './lib/chunkReload';
 import { ACTIVITY_KEY, activityCodec, addFacts, quizMissFact, resetFact } from './lib/activity';
@@ -215,6 +217,7 @@ export default function App() {
 
   // Learning path routes
   const learnRoute = route.section === 'learn' ? route : null;
+  const reviewOpen = learnRoute?.page === 'review';
   const activePath = learnRoute?.pathId ? LEARNING_PATHS.find(p => p.id === learnRoute.pathId) ?? null : null;
   // Memoized so a rerender (e.g. another tab's journey save) is not mistaken for opening the step again
   const routeStepId = learnRoute?.stepId;
@@ -262,11 +265,12 @@ export default function App() {
       activeModule ? `${topicLabel(activeModule)} ${activeModule.title}` : null,
       activeStep ? stepTitle(activeStep.step, MODULES_BY_ID) : null,
       activePath?.title,
+      reviewOpen ? 'Review' : null,
       PAGE_TITLES[route.section],
       'Terminus CertSim',
     ];
     document.title = parts.filter(Boolean).join(' · ');
-  }, [routeKey, activeModule, activePath, activeStep, route.section]);
+  }, [routeKey, activeModule, activePath, activeStep, route.section, reviewOpen]);
 
   const handleObjectiveComplete = (moduleId: string, objectiveId: string) =>
     setProgressRecord(prev => completeObjective(prev, moduleId, objectiveId));
@@ -286,6 +290,9 @@ export default function App() {
     setJourney(j => recordQuizScore(j, pathId, stepId, score));
     setActivity(a => addFacts(a, missed ? [quizMissFact(pathId, stepId)] : []));
   };
+  // Each checkpoint or review answer, for the review queue
+  const handleAnswer = (pathId: string, questionId: string, right: boolean) =>
+    setJourney(j => recordAnswer(j, pathId, questionId, right));
 
   const resetTrackProgress = (t: TrackSection) => {
     const ids = TRACK_MODULES[t].map(m => m.id);
@@ -354,7 +361,9 @@ export default function App() {
 
       <main id="main" ref={mainRef} tabIndex={-1} className="flex-1 min-h-0 overflow-y-auto focus:outline-none">
         <PageErrorBoundary resetKey={routeKey}>
-        {learnRoute && !learnRoute.pathId && <PathsList paths={LEARNING_PATHS} src={src} modulesById={MODULES_BY_ID} />}
+        {reviewOpen && <ReviewPage paths={LEARNING_PATHS} src={src} onAnswer={handleAnswer} />}
+
+        {learnRoute && !learnRoute.pathId && !reviewOpen && <PathsList paths={LEARNING_PATHS} src={src} modulesById={MODULES_BY_ID} />}
 
         {activePath && !learnRoute?.stepId && (
           <PathOverview
@@ -378,6 +387,7 @@ export default function App() {
             onObjectiveComplete={handleObjectiveComplete}
             onMarkRead={handleMarkRead}
             onQuizScore={handleQuizScore}
+            onAnswer={handleAnswer}
           />
         )}
 

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 
 /**
  * Hash routes:
- *   #/learn, #/learn/<pathId>, #/learn/<pathId>/<stepId>,
+ *   #/learn, #/learn/<pathId>, #/learn/<pathId>/<stepId>, #/learn/review,
  *   #/linux, #/linux/<moduleId>, #/windows, #/windows/<moduleId>,
  *   #/simulators, #/sandbox, #/reference
  * Anything else falls back to #/learn.
@@ -12,10 +12,13 @@ export type Section = 'learn' | 'linux' | 'windows' | 'simulators' | 'sandbox' |
 export type TrackSection = 'linux' | 'windows';
 
 export type Route =
-  | { section: 'learn'; pathId: string | null; stepId: string | null }
+  /** `page: 'review'` is #/learn/review (pathId and stepId are then null) */
+  | { section: 'learn'; pathId: string | null; stepId: string | null; page?: 'review' }
   | { section: TrackSection; moduleId: string | null }
   | { section: 'simulators' | 'sandbox' | 'reference' };
 
+/** #/learn/review. No learning path may use this id. */
+export const REVIEW_SEGMENT = 'review';
 export const DEFAULT_ROUTE: Route = { section: 'learn', pathId: null, stepId: null };
 
 const SECTIONS: Section[] = ['learn', 'linux', 'windows', 'simulators', 'sandbox', 'reference'];
@@ -38,6 +41,7 @@ export function parseHash(hash: string): Route | null {
   if (!SECTIONS.includes(section)) return null;
   if (section === 'learn') {
     if (parts.length > 3) return null;
+    if (parts.length === 2 && parts[1] === REVIEW_SEGMENT) return { section, pathId: null, stepId: null, page: 'review' };
     return { section, pathId: parts[1] ?? null, stepId: parts[2] ?? null };
   }
   if (isTrackSection(section)) {
@@ -50,6 +54,7 @@ export function parseHash(hash: string): Route | null {
 
 export function routeHref(route: Route): string {
   if (route.section === 'learn') {
+    if (route.page === 'review') return `#/learn/${REVIEW_SEGMENT}`;
     const segs = ['learn'];
     if (route.pathId) {
       segs.push(encodeURIComponent(route.pathId));
@@ -67,6 +72,8 @@ export function routeHref(route: Route): string {
 export function learnHref(pathId?: string | null, stepId?: string | null): string {
   return routeHref({ section: 'learn', pathId: pathId ?? null, stepId: pathId ? stepId ?? null : null });
 }
+
+export const reviewHref = (): string => routeHref({ section: 'learn', pathId: null, stepId: null, page: 'review' });
 
 export function sameRoute(a: Route, b: Route): boolean {
   return routeHref(a) === routeHref(b);
