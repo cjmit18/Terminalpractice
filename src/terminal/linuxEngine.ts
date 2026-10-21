@@ -49,7 +49,13 @@ export function executeLinuxLine(
     ...state,
     commandHistory: [...(state.commandHistory ?? []), line].slice(-HISTORY_LIMIT),
   };
-  return runLinuxLine(line, cwd, fs, recorded, 0);
+  try {
+    return runLinuxLine(line, cwd, fs, recorded, 0);
+  } catch (e) {
+    // A simulator bug must never take the terminal down: report it and leave the machine as it was
+    const message = e instanceof Error ? e.message : String(e);
+    return { stdout: '', stderr: `bash: internal error: ${message}`, exitCode: 1, newCwd: cwd, newFs: fs, newState: recorded };
+  }
 }
 
 /** Runs a line without recording it in history (used for scripts and `bash -c`). */

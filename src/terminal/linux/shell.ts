@@ -3,6 +3,7 @@
 // parser.ts keeps the simpler tokenizer that CMD and PowerShell use; bash goes through this file.
 
 import { ChainedStage } from '../parser';
+import { MAX_ARITH_DEPTH } from '../limits';
 
 /** One piece of a word, remembering whether it was quoted (quoted pieces are never split or globbed). */
 export type WordPart =
@@ -455,14 +456,22 @@ export function evalArithmetic(src: string, ex: Expander): number {
     const n = parseInt(v ?? '0', 10);
     return isNaN(n) ? 0 : n;
   };
+  let level = 0;
+  const nested = <T>(fn: () => T): T => {
+    if (++level > MAX_ARITH_DEPTH) {
+      const rest = toks.slice(pos).join('');
+      throw new ExpansionError(`bash: ${src.trim()}: expression recursion level exceeded (error token is "${rest}")`);
+    }
+    try { return fn(); } finally { level--; }
+  };
   const primary = (): number => {
     const t = toks[pos++];
     if (t === undefined) return fail();
-    if (t === '(') { const v = expr(); if (toks[pos++] !== ')') fail(); return v; }
-    if (t === '-') return -unary();
-    if (t === '+') return unary();
-    if (t === '!') return unary() ? 0 : 1;
-    if (t === '~') return ~unary();
+    if (t === '(') return nested(() => { const v = expr(); if (toks[pos++] !== ')') fail(); return v; });
+    if (t === '-') return nested(() => -unary());
+    if (t === '+') return nested(() => unary());
+    if (t === '!') return nested(() => (unary() ? 0 : 1));
+    if (t === '~') return nested(() => ~unary());
     if (/^(\d+|[A-Za-z_]\w*)$/.test(t)) return value(t);
     pos--;
     return fail();
@@ -470,7 +479,7 @@ export function evalArithmetic(src: string, ex: Expander): number {
   const unary = (): number => primary();
   const power = (): number => {
     const base = unary();
-    if (peek() === '**') { pos++; return base ** power(); }
+    if (peek() === '**') { pos++; return nested(() => base ** power()); }
     return base;
   };
   const mul = (): number => {

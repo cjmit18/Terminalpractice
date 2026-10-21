@@ -1,6 +1,7 @@
 import { FileNode, SystemState } from '../../types/terminal';
 import { StageResult } from '../chain';
 import { CommandRegistry } from '../registry';
+import { MAX_PATH_DEPTH, pathDepth } from '../limits';
 import {
   getNodeAtPath, normalizePath, getUserGroups, toOctalField, AccessCheck, canReadNode, canWriteNode,
   canDeleteNode, checkAccess, findTraversalDenial, describeIdentity, createNode, applySpecialBits,
@@ -20,6 +21,7 @@ export function newFileMode(state: SystemState): number {
 export function createInDir(
   fs: FileNode, path: string, type: 'file' | 'directory', content: string, owner: string, group: string, octal: number
 ): boolean {
+  if (pathDepth(path) > MAX_PATH_DEPTH) return false;
   const parentPath = path.slice(0, path.lastIndexOf('/')) || '/';
   const parent = getNodeAtPath(fs, parentPath, false);
   const setgid = !!parent && parent.type === 'directory' && /[sS]/.test(parent.permissions.slice(-9)[5] ?? '');

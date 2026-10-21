@@ -3,6 +3,7 @@ import { removeNode, fileSize, writeFileContent } from '../../filesystem';
 import { parseOptions } from '../../textUtils';
 import { LinuxContext, LinuxResult, linuxCommands, createInDir } from '../context';
 import { deviceNumbers, inode } from './lookup';
+import { MAX_PATH_DEPTH, pathDepth } from '../../limits';
 
 // Navigation and file management: pwd, cd, ls, mkdir, touch, rm, tee (cat lives with the text filters)
 
@@ -189,6 +190,7 @@ function mkdir(ctx: LinuxContext): LinuxResult {
       if (parents) continue;
       return ctx.fail(`mkdir: cannot create directory '${d}': File exists`);
     }
+    if (pathDepth(targetPath) > MAX_PATH_DEPTH) return ctx.fail(`mkdir: cannot create directory '${d}': File name too long`);
     const parts = targetPath.split('/').filter(Boolean);
     const chain = parents ? parts.map((_, i) => '/' + parts.slice(0, i + 1).join('/')) : [targetPath];
     for (const p of chain) {
