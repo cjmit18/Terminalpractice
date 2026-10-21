@@ -917,3 +917,4 @@ import './windowsCommands.test.ts';
 import '../data/paths.test.ts';
 import './linuxHelp.test.ts';
 import './windowsHelp.test.ts';
+import './labGaps.test.ts';

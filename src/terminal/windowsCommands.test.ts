@@ -198,6 +198,10 @@ test('Review: diskpart assign/format need a selected partition', () => {
   assert.equal(run('assign letter=E').exitCode, 1);
   run('select disk 1');
   assert.match(run('format fs=ntfs quick').stdout, /There is no volume selected/);
+  // an empty disk has no partition 1 until one is created
+  assert.match(run('select partition 1').stdout, /The specified partition is not valid/);
+  run('create partition primary');
+  run('select disk 1');
   assert.match(run('select partition 1').stdout, /Partition 1 is now the selected partition/);
   assert.match(run('format fs=ntfs quick label=Data').stdout, /successfully formatted/);
   assert.match(run('assign letter=C').stdout, /not free to be assigned/);
