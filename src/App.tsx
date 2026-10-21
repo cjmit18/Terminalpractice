@@ -293,8 +293,9 @@ export default function App() {
   const resetTrackProgress = (t: TrackSection) => {
     const ids = TRACK_MODULES[t].map(m => m.id);
     setProgressRecord(prev => resetModules(prev, ids));
-    // Labs that had progress: finishing one again later earns "Fresh start"
-    setActivity(a => addFacts(a, ids.filter(id => (progress[id] ?? []).length > 0).map(resetFact)));
+    // Labs started but not finished: finishing one later earns "Fresh start" (as Reset lab does; a finished lab does not count)
+    const finished = labCheck(progress, ALL_MODULES);
+    setActivity(a => addFacts(a, ids.filter(id => (progress[id] ?? []).length > 0 && !finished(id)).map(resetFact)));
   };
 
   // A lab opened from the lab lists that is also a step in a path: where that path goes next

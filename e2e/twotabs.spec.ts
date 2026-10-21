@@ -111,6 +111,24 @@ test('progress for labs, tasks, paths and steps this build does not know is kept
   expect(journey.quiz['future-path/quiz']).toEqual({ correct: 3, total: 4 });
 });
 
+// "Fresh start" is for a lab reset before it was finished, from the track's Reset progress too
+test('Reset progress marks only labs started but not finished for "Fresh start"', async ({ page }) => {
+  await page.goto('#/linux');
+  await page.evaluate(() =>
+    localStorage.setItem(
+      'certsim:progress:v1',
+      JSON.stringify({ 'lpi-101-1-system-architecture': ['hw-lspci', 'hw-lsmod', 'hw-dmesg'], 'lpi-104-5-permissions': ['perm-chmod'] }),
+    ),
+  );
+  await page.reload();
+  page.once('dialog', dialog => void dialog.accept());
+  await page.getByRole('button', { name: 'Reset progress' }).click();
+  await expect(headerProgress(page)).toHaveText(done(0));
+  const facts: string[] = JSON.parse((await page.evaluate(() => localStorage.getItem('certsim:activity:v1'))) ?? '{"facts":[]}').facts;
+  expect(facts).toContain('reset:lpi-104-5-permissions');
+  expect(facts).not.toContain('reset:lpi-101-1-system-architecture');
+});
+
 // A command's own result is fresh evidence: when it was this tab's last command at the reset, running
 // it again still earns the task (only unchanged machine state waits to stop passing once)
 test('two tabs on one lab: a reset does not hold back a task whose command was the last one run here', async ({ page, context }) => {
