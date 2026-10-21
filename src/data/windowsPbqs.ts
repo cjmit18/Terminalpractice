@@ -2,8 +2,9 @@ import { ExamModule } from '../types/modules';
 import { FileNode, SystemState } from '../types/terminal';
 import { createDefaultWindowsFs, getNodeAtPath } from '../terminal/filesystem';
 import {
-  alexInDomainAdmins, alexInItAdmins, connectivityVerified, dismRan, ipconfigAllRun, jdoeUnlocked,
-  maliciousConnectionFound, maliciousProcessKilled, maliciousProcessNamed, sfcRan, sfcRepairedAfterDism,
+  alexInDomainAdmins, alexInItAdmins, connectivityVerified, diskpartStarted, dismRan, ipconfigAllRun, jdoeUnlocked,
+  maliciousConnectionFound, maliciousProcessKilled, maliciousProcessNamed, policyForced, policyResultShown,
+  servicesListed, sfcRan, sfcRepairedAfterDism,
 } from './verifiers';
 import { WELCOME_MARKER, folderListed, helpRead, notesEntered, welcomeRead, workingDirShown } from './firstStepsVerifiers';
 
@@ -323,7 +324,7 @@ export const WINDOWS_PBQS: ExamModule[] = [
         nudge: 'A new account needs the verb that creates things, a sign-in name, and a Path naming the OU it goes in.',
         shape: 'New-ADUser -SamAccountName alex -Name "Alex Chen" -Path "OU=_________,DC=corp,DC=local"',
         hint: 'Run New-ADUser -SamAccountName alex -Name "Alex Chen" -Path "OU=IT_Admins,DC=corp,DC=local".',
-        verifier: (_, state) => alexInItAdmins(state),
+        verifier: (_, state, ctx) => alexInItAdmins(state, ctx),
       },
       {
         id: 'ad-add-group',
@@ -388,7 +389,7 @@ export const WINDOWS_PBQS: ExamModule[] = [
         nudge: 'The policy update tool normally applies only settings that changed. One switch makes it reapply all of them.',
         shape: 'gpupdate /_____',
         hint: 'Run gpupdate /force (in PowerShell, Invoke-GPUpdate -Force also works).',
-        verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && /\b(gpupdate|Invoke-GPUpdate)\b/i.test(ctx.command) && /(\/|-)force\b/i.test(ctx.command),
+        verifier: (_, __, ctx) => policyForced(ctx),
       },
       {
         id: 'gpo-gpresult-r',
@@ -397,7 +398,7 @@ export const WINDOWS_PBQS: ExamModule[] = [
         nudge: 'gpresult shows the Resultant Set of Policy. A one-letter switch prints the summary instead of the full report.',
         shape: 'gpresult /_',
         hint: 'Run gpresult /r. On a real machine, run it from an elevated prompt or you only see the user settings.',
-        verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && /gpresult/i.test(ctx.command) && /\/r\b/i.test(ctx.command),
+        verifier: (_, __, ctx) => policyResultShown(ctx),
       },
     ],
     initialFs: createDefaultWindowsFs(),
@@ -432,7 +433,7 @@ export const WINDOWS_PBQS: ExamModule[] = [
     summary: 'Partition, format and assign a drive letter to a new disk with diskpart.',
     difficulty: 'Advanced',
     estimatedMinutes: 20,
-    scenarioDescription: 'A second 256 GB SSD has been fitted to WIN-CLIENT01 and shows up as Disk 1. Use diskpart to create one partition across the whole disk, quick-format it as NTFS, and give it the letter E:. The Simulator tab shows the disk map after each command.',
+    scenarioDescription: 'A second 250 GB SSD has been fitted to WIN-CLIENT01 and shows up as Disk 1. Use diskpart to create one partition across the whole disk, quick-format it as NTFS, and give it the letter E:. The Simulator tab shows the disk map after each command.',
     systemContext: 'Host: WIN-CLIENT01 | Disk 0: system disk (C:) | Disk 1: new SSD, unallocated',
     defaultShell: 'cmd',
     allowedShells: ['cmd'],
@@ -445,7 +446,7 @@ export const WINDOWS_PBQS: ExamModule[] = [
         nudge: 'Windows has an interactive disk partitioning tool with its own prompt.',
         shape: 'disk____',
         hint: 'Run diskpart. On a real machine it needs an elevated prompt.',
-        verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && ctx.command.trim().toLowerCase() === 'diskpart',
+        verifier: (_, __, ctx) => diskpartStarted(ctx),
       },
       {
         id: 'dp-select-disk',
@@ -612,7 +613,7 @@ export const WINDOWS_PBQS: ExamModule[] = [
         title: 'Run System File Checker',
         description: 'Scan all protected system files and read the result.',
         nudge: 'System File Checker is a three-letter command with a switch that scans right away.',
-        shape: 'sfc /________',
+        shape: 'sfc /_______',
         hint: 'Run sfc /scannow from an elevated prompt.',
         verifier: (_, state) => sfcRan(state),
       },
@@ -630,7 +631,7 @@ export const WINDOWS_PBQS: ExamModule[] = [
         title: 'Run SFC again',
         description: 'With the component store repaired, run System File Checker again so it can replace the files it could not fix the first time.',
         nudge: 'Now that its source of good copies is repaired, the first tool can finish the job.',
-        shape: 'sfc /________',
+        shape: 'sfc /_______',
         hint: 'Run sfc /scannow again and check that it reports the corrupt files were successfully repaired.',
         verifier: (_, state) => sfcRepairedAfterDism(state),
       },
@@ -693,7 +694,7 @@ export const WINDOWS_PBQS: ExamModule[] = [
         nudge: 'PowerShell cmdlets are named Verb-Noun. The verb that reads things is Get, and the noun is what you want to list.',
         shape: 'Get-_______',
         hint: 'Run Get-Service. Get-Service W32Time shows just that one.',
-        verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && /get-service/i.test(ctx.command) && ctx.stdout.includes('W32Time'),
+        verifier: (_, __, ctx) => servicesListed(ctx),
       },
       {
         id: 'ps-start-service',
@@ -753,7 +754,7 @@ export const WINDOWS_PBQS: ExamModule[] = [
         description: 'Command Prompt is always working inside one folder. Ask which one: type cd on its own and press Enter.',
         nudge: 'cd is short for "change directory", and directory is another word for folder. With nothing after it, cd does not change anything: it only tells you where you are.',
         shape: 'c_   (two letters, nothing after them)',
-        hint: 'Type cd and press Enter. It prints C:\\Users\\Student: the Student folder, inside the Users folder, on drive C. In PowerShell, use pwd or Get-Location instead, because cd on its own takes you somewhere else there.',
+        hint: 'Type cd and press Enter. It prints C:\\Users\\Student: the Student folder, inside the Users folder, on drive C. In PowerShell, cd on its own prints nothing (it moves you to your home folder), so use pwd or Get-Location instead.',
         verifier: (_, __, ctx) => workingDirShown('windows', ctx),
       },
       {
