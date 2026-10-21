@@ -122,7 +122,8 @@ function ls(ctx: LinuxContext): LinuxResult {
   const f = opts.flags;
   const o: LsOptions = {
     long: f.has('l') || f.has('n') || f.has('g'), human: f.has('h'), classify: f.has('F'), inode: f.has('i'), numeric: f.has('n'),
-    one: f.has('1'), sortTime: f.has('t'), sortSize: f.has('S'), reverse: f.has('r'),
+    // Like GNU ls, one name per line unless stdout is a terminal (or -C / -x ask for columns)
+    one: f.has('1') || (!ctx.tty && !f.has('C') && !f.has('x')), sortTime: f.has('t'), sortSize: f.has('S'), reverse: f.has('r'),
   };
   const bad = [...f].find(c => c.length === 1 && !'aAdhRFinrlg1tSxCU'.includes(c));
   if (bad) return ctx.fail(`ls: invalid option -- '${bad}'\nTry 'ls --help' for more information.`, 2);

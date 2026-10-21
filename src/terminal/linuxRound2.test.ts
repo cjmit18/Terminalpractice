@@ -60,3 +60,20 @@ test('A2: an exception inside a command becomes "internal error" and changes not
   assert.equal(run('pwd').stdout, '/home/student/scripts');
   assert.match(run('ls /home/student').stdout, /scripts/);
 });
+
+// ---------- A1: ls when stdout is not the terminal ----------
+
+test('A1: ls prints one name per line into a pipe, a file or $(...), columns at the terminal', () => {
+  const run = linuxSession();
+  assert.equal(run('ls').stdout, 'finance  notes.txt  scripts');
+  assert.equal(run('ls | wc -l').stdout, '3');
+  assert.equal(run('ls /etc | grep pass').stdout, 'passwd');
+  run('ls > o.txt');
+  assert.equal(run('cat o.txt').stdout, 'finance\nnotes.txt\no.txt\nscripts');
+  assert.equal(run('echo "$(ls)"').stdout, 'finance\nnotes.txt\no.txt\nscripts');
+  // -C forces columns; ls in a script run at the prompt still writes to the terminal
+  assert.equal(run('ls -C | cat').stdout, 'finance  notes.txt  o.txt  scripts');
+  run('echo ls > l.sh; chmod +x l.sh');
+  assert.equal(run('./l.sh').stdout, 'finance  l.sh  notes.txt  o.txt  scripts');
+  assert.equal(run('./l.sh | head -1').stdout, 'finance');
+});

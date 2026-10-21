@@ -79,6 +79,9 @@ export class LinuxContext {
   /** Script nesting level (0 for a line typed at the prompt). */
   depth = 0;
 
+  /** Standard output is the terminal (not a pipe, a file or a $(...) substitution). */
+  tty = false;
+
   /** The commands of the pipeline this one runs in, as typed (ps lists them as processes). */
   pipeline: string[] = [];
 

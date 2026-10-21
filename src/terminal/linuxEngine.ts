@@ -50,7 +50,7 @@ export function executeLinuxLine(
     commandHistory: [...(state.commandHistory ?? []), line].slice(-HISTORY_LIMIT),
   };
   try {
-    return runLinuxLine(line, cwd, fs, recorded, 0);
+    return runLinuxLine(line, cwd, fs, recorded, 0, true);
   } catch (e) {
     // A simulator bug must never take the terminal down: report it and leave the machine as it was
     const message = e instanceof Error ? e.message : String(e);
@@ -58,10 +58,13 @@ export function executeLinuxLine(
   }
 }
 
-/** Runs a line without recording it in history (used for scripts and `bash -c`). */
-export function runLinuxLine(line: string, cwd: string, fs: FileNode, state: SystemState, depth: number): LinuxExecutionResult {
+/**
+ * Runs a line without recording it in history (used for scripts and `bash -c`). `tty` says whether
+ * the line's standard output is the terminal (ls then prints columns) or a pipe, file or $(...).
+ */
+export function runLinuxLine(line: string, cwd: string, fs: FileNode, state: SystemState, depth: number, tty = false): LinuxExecutionResult {
   return runChain(splitBashChain(line), cwd, fs, state, (stage, c, f, s) => {
-    const res = executeLinuxPipeline(stage, c, f, s, depth);
+    const res = executeLinuxPipeline(stage, c, f, s, depth, tty);
     // $? reads the status of the last pipeline
     return { ...res, newState: { ...res.newState, lastExitCode: res.exitCode } };
   });
@@ -163,7 +166,8 @@ function executeLinuxPipeline(
   cwd: string,
   fs: FileNode,
   state: SystemState,
-  depth: number
+  depth: number,
+  tty: boolean
 ): LinuxExecutionResult {
   const stages = parseBashPipeline(pipelineStr);
   const pipeline = stages.map(st => st.words.map(wordText).join(' '));
@@ -176,7 +180,7 @@ function executeLinuxPipeline(
   const errors: string[] = [];
   const notes: string[] = [];
 
-  for (const stage of stages) {
+  for (const [stageIndex, stage] of stages.entries()) {
     let fd1: Sink = { kind: 'out' };
     let fd2: Sink = { kind: 'err' };
     let stdin = input;
@@ -249,6 +253,8 @@ function executeLinuxPipeline(
         }
       }
       if (stage.pipeStderr) fd2 = fd1;
+      // Only the last stage writes to the terminal, and only if its stdout was not redirected to a file
+      const stageTty = tty && stageIndex === stages.length - 1 && fd1.kind !== 'file';
 
       if (fields.length === 0) {
         // Only assignments (or a bare redirect such as "> file"): set the variables in this shell
@@ -265,11 +271,11 @@ function executeLinuxPipeline(
         args: rest.map(f => f.text),
         argGlobs: rest.some(f => f.glob) ? rest.map(f => f.glob) : undefined,
       };
-      if (!assignments.length) return runLinuxCommand(cmd, currentCwd, activeFs, activeState, stdin, depth, pipeline);
+      if (!assignments.length) return runLinuxCommand(cmd, currentCwd, activeFs, activeState, stdin, depth, pipeline, stageTty);
       // NAME=value cmd: the variables are set for this command only
       const saved = activeState.envVars;
       const runState = { ...activeState, envVars: { ...saved, ...Object.fromEntries(assignments.map(a => [a.name, a.value])) } };
-      const out = runLinuxCommand(cmd, currentCwd, activeFs, runState, stdin, depth, pipeline);
+      const out = runLinuxCommand(cmd, currentCwd, activeFs, runState, stdin, depth, pipeline, stageTty);
       return { ...out, newState: { ...out.newState, envVars: saved } };
     })();
 
@@ -325,7 +331,8 @@ function runLinuxCommand(
   state: SystemState,
   stdin: string,
   depth: number,
-  pipeline: string[] = []
+  pipeline: string[] = [],
+  tty = false
 ): StageResult {
   let { name, args } = cmd;
   // Pathname expansion happens in the calling shell, as the calling user, before sudo or the command runs
@@ -385,6 +392,7 @@ function runLinuxCommand(
   const ctx = new LinuxContext(name, args, stdin, cwd, fs, runState, isSudo);
   ctx.depth = depth;
   ctx.pipeline = pipeline;
+  ctx.tty = tty;
   if (!name) return ctx.fail('bash: : command not found', 127);
 
   let res: StageResult;
