@@ -134,9 +134,26 @@ export function connectivityVerified(state: SystemState, ctx?: CommandContext): 
   const probe = ctx.command.split('|')[0].trim();
   const tool = probe.match(PROBE)?.[1].toLowerCase();
   if (!tool) return false;
-  const local = new RegExp(`(^|\\s)(127\\.\\d+\\.\\d+\\.\\d+|localhost|::1|${iface.ip.replace(/\./g, '\\.')})(\\s|$)`, 'i');
-  if (local.test(probe)) return false;
   const out = ctx.stdout;
+  // Judge the address the engine actually reached: the one in the output, or, for -Quiet
+  // output that shows none, each target named on the line resolved the way the engine does
+  const isLocal = (addr: string) => {
+    const a = addr.toLowerCase();
+    return a === 'localhost' || a === '::1' || a === state.hostname.toLowerCase() || /^127\./.test(a) || state.interfaces.some(i => i.ip === a);
+  };
+  const shown = [
+    ...out.matchAll(/^Pinging (?:\S+ \[([^\]]+)\]|(\S+)) with/gim),
+    ...out.matchAll(/^Reply from ([^:\s]+):/gim),
+    ...out.matchAll(/^RemoteAddress\s*:\s*(\S+)/gim),
+    // Test-Connection's table rows (Source Destination IPV4Address …); "Key : value" lines such as
+    // Test-NetConnection's SourceAddress are the PC itself, not the destination, so they are skipped
+    ...out.matchAll(/^\S+\s+[^\s:]\S*\s+(\d+\.\d+\.\d+\.\d+)\s/gm),
+  ].map(m => m[1] ?? m[2]);
+  const named = probe.split(/\s+/).slice(1).flatMap(w => w.split(',')).map(w => w.replace(/^["']|["']$/g, '')).filter(w => w && !w.startsWith('-'));
+  if ([...shown, ...named].some(isLocal)) return false;
+  // -Quiet / -InformationLevel Quiet print only True or False, one per target
+  const quiet = out.trim().split(/\s*\n\s*/);
+  if (quiet.every(l => /^(True|False)$/i.test(l))) return quiet.every(l => /^True$/i.test(l));
   if (tool === 'ping') return /bytes=\d+.*TTL=\d+/i.test(out);
   if (tool === 'test-connection') return out.trim() !== '' && !/failed|error/i.test(out);
   return /(PingSucceeded|TcpTestSucceeded)\s*:\s*True/i.test(out);

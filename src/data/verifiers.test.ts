@@ -329,6 +329,39 @@ test('network lab in the engine: -all, Clear-DnsClientCache and Test-Connection'
   assert.ok(ps.done.has('net-verify-ping'));
 });
 
+test('network lab in the engine: quoted loopback, the PC\'s own name and -Quiet False do not count', () => {
+  const run = labRun(NET);
+  run('ipconfig /renew');
+  for (const line of ['ping "127.0.0.1"', 'ping WIN-CLIENT01', 'ping win-client01', 'ping -n 2 localhost']) {
+    assert.equal(run(line).exitCode, 0, line);
+    assert.ok(!run.now().includes('net-verify-ping'), line);
+  }
+  const ps = labRun(NET, 'powershell');
+  ps('ipconfig /renew');
+  for (const line of ['Test-Connection WIN-CLIENT01', 'Test-Connection "127.0.0.1" -Quiet', 'Test-NetConnection WIN-CLIENT01']) {
+    ps(line);
+    assert.ok(!ps.now().includes('net-verify-ping'), line);
+  }
+  // DNS is still broken before the flush: -Quiet prints False with exit code 0
+  const quiet = ps('Test-Connection example.com -Quiet');
+  assert.equal(quiet.stdout, 'False');
+  assert.equal(quiet.exitCode, 0);
+  assert.ok(!ps.done.has('net-verify-ping'));
+  ps('Clear-DnsClientCache');
+  assert.equal(ps('Test-Connection example.com -Quiet').stdout, 'True');
+  assert.ok(ps.done.has('net-verify-ping'));
+});
+
+test('net-verify-ping: the address in the output decides, and quiet output must be all True', () => {
+  const fixed = fixedState();
+  assert.ok(!connectivityVerified(fixed, ctx('ping "127.0.0.1"', REPLY('127.0.0.1'))));
+  assert.ok(!connectivityVerified(fixed, ctx('ping WIN-CLIENT01', 'Pinging WIN-CLIENT01 [192.168.1.145] with 32 bytes of data:\nReply from 192.168.1.145: bytes=32 time<1ms TTL=128')));
+  assert.ok(connectivityVerified(fixed, ctx('ping example.com', 'Pinging example.com [93.184.216.34] with 32 bytes of data:\nReply from 93.184.216.34: bytes=32 time=12ms TTL=118')));
+  assert.ok(!connectivityVerified(fixed, ctx('Test-Connection 8.8.8.8 -Quiet', 'False')));
+  assert.ok(!connectivityVerified(fixed, ctx('Test-Connection 8.8.8.8,1.1.1.1 -Quiet', 'True\nFalse')));
+  assert.ok(connectivityVerified(fixed, ctx('Test-Connection 8.8.8.8 -Quiet', 'True')));
+});
+
 // ---------------------------------------------------------------------------------------------
 // win-pbq-active-directory-mgmt
 // ---------------------------------------------------------------------------------------------
@@ -562,4 +595,124 @@ test('master re-check: sudo in front of lspci and df still counts', () => {
   const hw = objective('lpi-101-1-system-architecture', 'hw-lspci');
   assert.ok(hw.verifier({} as FileNode, {} as SystemState, ctx('sudo lspci', '00:19.0 Ethernet controller: Intel')));
   assert.ok(!hw.verifier({} as FileNode, {} as SystemState, ctx('echo lspci', 'Ethernet')));
+});
+
+// ---------------------------------------------------------------------------------------------
+// First steps (lpi-000-first-steps, win-000-first-steps)
+// ---------------------------------------------------------------------------------------------
+
+const FS_LINUX = 'lpi-000-first-steps';
+const FS_WIN = 'win-000-first-steps';
+
+/** Runs the commands in a fresh copy of the lab and returns the tasks they completed. */
+const firstSteps = (id: string, shell: TerminalShell | undefined, ...lines: string[]) => {
+  const run = labRun(id, shell);
+  for (const line of lines) run(line);
+  return [...run.done].sort();
+};
+
+test('first steps (bash): every reasonable way of doing each task counts', () => {
+  const variants: Record<string, string[][]> = {
+    'fs-where': [['pwd'], ['pwd -P'], ['echo $PWD'], ['cd notes', 'pwd']],
+    'fs-list': [['ls'], ['ls -l'], ['ls -la'], ['ls -al ~'], ['ls .'], ['ls /home/student'], ['ls notes'], ['cd notes', 'ls']],
+    'fs-read': [['cat welcome.txt'], ['cat ./welcome.txt'], ['cat ~/welcome.txt'], ['head welcome.txt'], ['tail -n 20 welcome.txt'], ['cat welcome.txt | head -n 3'], ['cd notes', 'cat ../welcome.txt']],
+    'fs-cd': [['cd notes'], ['cd notes/'], ['cd ./notes'], ['cd ~/notes'], ['cd /home/student/notes'], ['cd "notes"'], ['cd notes && ls'], ['cd notes', 'cd ..', 'cd notes']],
+    'fs-help': [['man ls'], ['man pwd'], ['ls --help'], ['help cd'], ['info ls'], ['whatis ls'], ['man ls | head'], ['help'], ['pwd --help']],
+  };
+  for (const [task, runs] of Object.entries(variants)) {
+    for (const lines of runs) {
+      assert.ok(firstSteps(FS_LINUX, undefined, ...lines).includes(task), `${task}: ${lines.join(' ; ')}`);
+    }
+  }
+});
+
+test('first steps (bash): mistakes and look-alikes do not tick a task', () => {
+  const none = (lines: string[], task: string) =>
+    assert.ok(!firstSteps(FS_LINUX, undefined, ...lines).includes(task), `${task} should not pass: ${lines.join(' ; ')}`);
+  none(['PWD'], 'fs-where');
+  none(['echo /home/student'], 'fs-where');
+  none(['LS'], 'fs-list');
+  none(['ls /etc'], 'fs-list');
+  none(['cat welcom.txt'], 'fs-read');
+  none(['echo welcome.txt'], 'fs-read');
+  none(['cd note'], 'fs-cd');
+  none(['cd /tmp'], 'fs-cd');
+  none(['cd nowhere; ls'], 'fs-cd');
+  none(['man'], 'fs-help');
+  none(['man nosuchcommand'], 'fs-help');
+});
+
+test('first steps (Windows): every reasonable way counts in Command Prompt and in PowerShell', () => {
+  const cmd: Record<string, string[][]> = {
+    'fs-where': [['cd'], ['CD'], ['chdir'], ['echo %cd%'], ['cd notes', 'cd']],
+    'fs-list': [['dir'], ['DIR'], ['dir /b'], ['dir /w'], ['dir C:\\Users\\Student'], ['dir notes'], ['cd notes', 'dir']],
+    'fs-read': [['type welcome.txt'], ['TYPE WELCOME.TXT'], ['type .\\welcome.txt'], ['type C:\\Users\\Student\\welcome.txt'], ['cd notes', 'type ..\\welcome.txt']],
+    'fs-cd': [['cd notes'], ['CD NOTES'], ['cd notes\\'], ['cd .\\notes'], ['chdir notes'], ['cd C:\\Users\\Student\\notes'], ['cd /d C:\\Users\\Student\\notes'], ['cd notes', 'cd']],
+    'fs-help': [['help dir'], ['HELP DIR'], ['dir /?'], ['cd /?'], ['type /?'], ['help']],
+  };
+  const ps: Record<string, string[][]> = {
+    'fs-where': [['pwd'], ['Get-Location'], ['gl']],
+    'fs-list': [['dir'], ['ls'], ['gci'], ['Get-ChildItem'], ['get-childitem -Force']],
+    'fs-read': [['cat welcome.txt'], ['type welcome.txt'], ['gc .\\welcome.txt'], ['Get-Content welcome.txt'], ['Get-Content -Path welcome.txt']],
+    'fs-cd': [['cd notes'], ['Set-Location notes'], ['sl notes'], ['Set-Location -Path notes'], ['cd .\\notes\\'], ['Set-Location notes', 'pwd']],
+    'fs-help': [['Get-Help dir'], ['help dir'], ['Get-Help Get-ChildItem'], ['man ls'], ['Get-ChildItem -?'], ['Get-Help']],
+  };
+  for (const [shell, table] of [['cmd', cmd], ['powershell', ps]] as const) {
+    for (const [task, runs] of Object.entries(table)) {
+      for (const lines of runs) {
+        assert.ok(firstSteps(FS_WIN, shell, ...lines).includes(task), `${shell} ${task}: ${lines.join(' ; ')}`);
+      }
+    }
+  }
+});
+
+test('first steps (Windows): mistakes and look-alikes do not tick a task', () => {
+  const none = (shell: TerminalShell, lines: string[], task: string) =>
+    assert.ok(!firstSteps(FS_WIN, shell, ...lines).includes(task), `${shell} ${task} should not pass: ${lines.join(' ; ')}`);
+  none('cmd', ['ls'], 'fs-list');
+  none('cmd', ['dir C:\\Windows'], 'fs-list');
+  none('cmd', ['type welcom.txt'], 'fs-read');
+  none('cmd', ['echo welcome.txt'], 'fs-read');
+  none('cmd', ['cd note'], 'fs-cd');
+  none('cmd', ['cd C:\\Windows'], 'fs-cd');
+  none('cmd', ['help nosuchcommand'], 'fs-help');
+  none('cmd', ['echo C:\\Users\\Student'], 'fs-where');
+});
+
+test('first steps: the files always say what to type next, and doing what they say finishes the lab', () => {
+  for (const [id, list, read, help] of [[FS_LINUX, 'ls', 'cat', 'man ls'], [FS_WIN, 'dir', 'type', 'help dir']] as const) {
+    const m = lab(id);
+    const isWin = m.track !== 'lpi';
+    const home = isWin ? 'C:\\Users\\Student' : '/home/student';
+    const welcome = getNodeAtPath(m.initialFs, `${home}${isWin ? '\\' : '/'}welcome.txt`, isWin)?.content ?? '';
+    const next = getNodeAtPath(m.initialFs, `${home}${isWin ? '\\notes\\' : '/notes/'}next.txt`, isWin)?.content ?? '';
+    assert.match(welcome, /^ {4}cd notes$/m, `${id}: welcome.txt names the next command`);
+    assert.match(next, new RegExp(`^ {4}${help}$`, 'm'), `${id}: next.txt names the last command`);
+    assert.ok(!/!/.test(welcome + next), `${id}: no exclamation marks`);
+
+    // Follow the task list for the first three, then only what the files say
+    const run = labRun(id);
+    run(isWin ? 'cd' : 'pwd');
+    run(list);
+    run(`${read} welcome.txt`);
+    run('cd notes');
+    run(list);
+    run(`${read} next.txt`);
+    run(help);
+    assert.deepEqual([...run.done].sort(), m.objectives.map(o => o.id).sort(), id);
+  }
+});
+
+test('network lab in the engine: Test-NetConnection to a real host passes after the renew (its SourceAddress line is the PC itself)', () => {
+  for (const line of ['Test-NetConnection 8.8.8.8', 'tnc 8.8.8.8', 'Test-NetConnection 8.8.8.8 -Port 443', 'Test-NetConnection 192.168.1.1']) {
+    const run = labRun(NET, 'powershell');
+    run('ipconfig /renew');
+    const res = run(line);
+    assert.match(res.stdout, /SourceAddress\s*:\s*192\.168\./, line);
+    assert.ok(run.done.has('net-verify-ping'), line);
+  }
+  const own = labRun(NET, 'powershell');
+  own('ipconfig /renew');
+  own('Test-NetConnection 127.0.0.1');
+  assert.ok(!own.done.has('net-verify-ping'), 'loopback still does not count');
 });

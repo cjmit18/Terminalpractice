@@ -1,3 +1,4 @@
+import { MAX_REPLIES, repliesNote } from '../../limits';
 import { cmdDoc } from '../../docs';
 import { NetworkInterface } from '../../../types/terminal';
 import { WindowsContext, WindowsResult, cmdCommands } from '../context';
@@ -186,7 +187,7 @@ function ping(ctx: WindowsContext): WindowsResult {
         if (value === undefined) return ctx.fail(`Value must be supplied for option ${a}.`, 1);
         const n = Number(value);
         if (opt[1].toLowerCase() === 'n') {
-          if (!Number.isInteger(n) || n < 1) return ctx.fail(`Bad value for option ${a}, valid range is from 1 to 4294967295.`, 1);
+          if (!Number.isInteger(n) || n < 1 || n > 4294967295) return ctx.fail(`Bad value for option ${a}, valid range is from 1 to 4294967295.`, 1);
           count = n;
         }
         if (opt[1].toLowerCase() === 'l') size = n;
@@ -202,6 +203,9 @@ function ping(ctx: WindowsContext): WindowsResult {
   }
   // -t keeps going until Ctrl+C; the simulator shows four replies and the interrupt
   const sent = forever ? 4 : count;
+  // A huge -n would build millions of lines; show the first MAX_REPLIES and say so (statistics still cover all)
+  const shown = Math.min(sent, MAX_REPLIES);
+  const capNote = sent > shown ? [`(${repliesNote(sent, 'ping -n')})`] : [];
   const label = ip === target ? ip : `${target} [${ip}]`;
   const iface = ctx.state.interfaces[0] ?? DEFAULT_IFACE;
   // The loopback range and the PC's own addresses always answer, whatever the network state
@@ -210,7 +214,8 @@ function ping(ctx: WindowsContext): WindowsResult {
   const head = `Pinging ${label} with ${size} bytes of data:`;
   const failed = (line: string) => ctx.result([
     head,
-    ...Array(sent).fill(line),
+    ...Array(shown).fill(line),
+    ...capNote,
     '',
     `Ping statistics for ${ip}:`,
     `    Packets: Sent = ${sent}, Received = 0, Lost = ${sent} (100% loss),`,
@@ -223,16 +228,17 @@ function ping(ctx: WindowsContext): WindowsResult {
   }
   // Hosts on the LAN answer in under a millisecond; the router (TTL 64) and Windows hosts (TTL 128) differ
   const fast = local || lan;
-  const times = Array.from({ length: sent }, (_, i) => (fast ? 0 : [12, 11, 14, 12][i % 4]));
+  const times = Array.from({ length: shown }, (_, i) => (fast ? 0 : [12, 11, 14, 12][i % 4]));
   const ttl = local ? 128 : lan ? (ip === iface.gateway ? 64 : 128) : 118;
   return ctx.ok([
     head,
     ...times.map(t => `Reply from ${ip}: bytes=${size} time${fast ? '<1ms' : `=${t}ms`} TTL=${ttl}`),
+    ...capNote,
     '',
     `Ping statistics for ${ip}:`,
     `    Packets: Sent = ${sent}, Received = ${sent}, Lost = 0 (0% loss),`,
     'Approximate round trip times in milli-seconds:',
-    `    Minimum = ${Math.min(...times)}ms, Maximum = ${Math.max(...times)}ms, Average = ${Math.floor(times.reduce((x, y) => x + y, 0) / sent)}ms`,
+    `    Minimum = ${Math.min(...times)}ms, Maximum = ${Math.max(...times)}ms, Average = ${Math.floor(times.reduce((x, y) => x + y, 0) / shown)}ms`,
     ...(forever ? ['Control-C', '^C'] : []),
   ].join('\n'));
 }

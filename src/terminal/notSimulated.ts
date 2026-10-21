@@ -13,7 +13,7 @@ export const NOT_SIMULATED_LINUX: readonly string[] = [
   'findmnt', 'umount', 'swapoff', 'hostnamectl', 'localectl', 'visudo', 'shutdown', 'reboot', 'poweroff', 'halt', 'telinit',
   'runlevel', 'grub-install', 'update-grub', 'grub-mkconfig', 'dpkg', 'rpm', 'yum', 'dnf', 'zypper', 'ldd', 'ldconfig',
   'pvcreate', 'vgcreate', 'lvcreate', 'quota', 'edquota', 'logger', 'ssh', 'scp', 'rsync', 'wget', 'curl', 'iptables',
-  'ufw', 'nmcli', 'dig', 'host', 'nslookup', 'traceroute', 'tcpdump', 'chroot',
+  'ufw', 'nmcli', 'dig', 'host', 'nslookup', 'traceroute', 'tcpdump', 'chroot', 'make',
 ];
 
 export const NOT_SIMULATED_WINDOWS: readonly string[] = [

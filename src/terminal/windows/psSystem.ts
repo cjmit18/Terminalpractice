@@ -1,3 +1,4 @@
+import { MAX_REPLIES } from '../limits';
 import { WindowsContext, WindowsResult, psCommands } from './context';
 import { PsBound, PsParamSpec, bindCmdlet, psError } from './psUtil';
 import { connections, hasConnectivity, resolveHost } from './cmd/network';
@@ -43,7 +44,17 @@ function testConnection(ctx: WindowsContext): WindowsResult {
   if (isResult(b)) return b;
   const hosts = b.list('ComputerName');
   if (!hosts?.length) return ctx.fail(psError(ctx.raw, cmdlet, 'Cannot process command because of one or more missing mandatory parameters: ComputerName.', 'InvalidArgument', '', 'ParameterBindingException', 'MissingMandatoryParameter'));
-  const count = Number(b.str('Count') ?? 4) || 4;
+  // -Count is an Int32 with ValidateRange(1, Int32.MaxValue)
+  const countArg = b.str('Count') ?? '4';
+  if (!/^[-+]?\d+$/.test(countArg) || Math.abs(Number(countArg)) > 2147483647) {
+    return ctx.fail(psError(ctx.raw, cmdlet, `Cannot bind parameter 'Count'. Cannot convert value "${countArg}" to type "System.Int32". Error: "Input string was not in a correct format."`, 'InvalidArgument', '', 'ParameterBindingException', 'CannotConvertArgumentNoMessage'));
+  }
+  const count = Number(countArg);
+  if (count < 1) {
+    return ctx.fail(psError(ctx.raw, cmdlet, `Cannot validate argument on parameter 'Count'. The ${count} argument is less than the minimum allowed range of 1. Supply an argument that is greater than or equal to 1 and then try the command again.`, 'InvalidData', '', 'ParameterBindingValidationException', 'ParameterArgumentValidationError'));
+  }
+  // Real pings take a second each; the simulator prints at most this many replies per host
+  const shown = Math.min(count, MAX_REPLIES);
   const size = Number(b.str('BufferSize') ?? 32) || 32;
   const rows: string[] = [];
   const errors: string[] = [];
@@ -59,13 +70,14 @@ function testConnection(ctx: WindowsContext): WindowsResult {
       continue;
     }
     const time = self || ip!.startsWith('192.168.') ? 0 : 12;
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; i < shown; i++) {
       rows.push(`${ctx.state.hostname.padEnd(13)} ${host.padEnd(15)} ${ip!.padEnd(16)} ${''.padEnd(40)} ${String(size).padEnd(8)} ${time}`);
     }
   }
   if (b.has('Quiet')) return ctx.ok(quiet.join('\n'));
   const head = ['', 'Source        Destination     IPV4Address      IPV6Address                              Bytes    Time(ms)', '------        -----------     -----------      -----------                              -----    --------'];
-  return ctx.result(rows.length ? [...head, ...rows].join('\n') : '', errors.join('\n'), errors.length ? 1 : 0);
+  return ctx.result(rows.length ? [...head, ...rows].join('\n') : '', errors.join('\n'), errors.length ? 1 : 0,
+    count > MAX_REPLIES ? `The simulator shows the first ${MAX_REPLIES} replies per host; a real -Count ${count} keeps pinging once a second.` : undefined);
 }
 
 function repairWindowsImage(ctx: WindowsContext): WindowsResult {

@@ -1,3 +1,4 @@
+import { MAX_REPLIES, repliesNote } from '../../limits';
 import { LinuxContext, LinuxResult, linuxCommands } from '../context';
 import { parseOptions, optionValue } from '../../textUtils';
 
@@ -78,14 +79,17 @@ function ping(ctx: LinuxContext): LinuxResult {
   const sizeArg = optionValue(opts, 's');
   const size = sizeArg === undefined ? 56 : Number(sizeArg);
   const ip = host === 'localhost' ? '127.0.0.1' : /^\d+(\.\d+){3}$/.test(host) ? host : '192.168.1.1';
-  const times = Array.from({ length: count }, (_, i) => [14.2, 13.8, 14.0, 14.1][i % 4]);
+  // A huge -c would build millions of lines; show the first MAX_REPLIES and say so (statistics still cover all)
+  const shown = Math.min(count, MAX_REPLIES);
+  const times = Array.from({ length: shown }, (_, i) => [14.2, 13.8, 14.0, 14.1][i % 4]);
   const min = Math.min(...times);
   const max = Math.max(...times);
-  const avg = times.reduce((a, b) => a + b, 0) / count;
-  const mdev = Math.sqrt(times.reduce((a, t) => a + (t - avg) ** 2, 0) / count);
+  const avg = times.reduce((a, b) => a + b, 0) / shown;
+  const mdev = Math.sqrt(times.reduce((a, t) => a + (t - avg) ** 2, 0) / shown);
   return ctx.ok([
     `PING ${host} (${ip}) ${size}(${size + 28}) bytes of data.`,
     ...times.map((t, i) => `${size + 8} bytes from ${ip === host ? host : `${host} (${ip})`}: icmp_seq=${i + 1} ttl=117 time=${t.toFixed(1)} ms`),
+    ...(count > shown ? [`(${repliesNote(count, 'ping -c')})`] : []),
     '',
     `--- ${host} ping statistics ---`,
     `${count} packets transmitted, ${count} received, 0% packet loss, time ${(count - 1) * 1001}ms`,

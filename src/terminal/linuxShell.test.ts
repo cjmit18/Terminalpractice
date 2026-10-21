@@ -104,6 +104,17 @@ test('printf: %s %d, escapes, width and format reuse', () => {
   assert.equal(bad.exitCode, 1);
 });
 
+test('printf: negative * precision counts as omitted and large precision never throws', () => {
+  const run = linuxSession();
+  assert.equal(run("printf '%.*f' -1 1").stdout, '1.000000');
+  assert.equal(run("printf '%.*s|' -1 abc").stdout, 'abc|');
+  const big = run("printf '%.101f' 1");
+  assert.equal(big.exitCode, 0);
+  assert.match(big.stdout, /^1\.0+$/);
+  assert.equal(run("printf '%.150e' 1").exitCode, 0);
+  assert.equal(run("printf '%.150g' 1").stdout, '1');
+});
+
 test('comments, |& and >&2', () => {
   const run = linuxSession();
   assert.equal(run('echo a # not printed').stdout, 'a');
@@ -138,6 +149,24 @@ test('setgid directories pass their group on, and numeric chmod keeps setgid', (
   assert.match(run('ls -l g').stdout, /^-rwxr-xr-x /);
 });
 
+test('cp -p and -a into a setgid directory keep the source group', () => {
+  const run = linuxSession();
+  run('mkdir proj; sudo chgrp finance proj; sudo chmod 2770 proj');
+  run('touch mine; mkdir tree; touch tree/leaf');
+  const node = (p: string) => getNodeAtPath(run.fs(), `/home/student/${p}`, false)!;
+  run('cp mine proj/plain');
+  assert.equal(node('proj/plain').group, 'finance');
+  run('cp -p mine proj/kept');
+  assert.equal(node('proj/kept').group, 'student');
+  run('cp -a tree proj/tree');
+  assert.equal(node('proj/tree').group, 'student');
+  assert.equal(node('proj/tree/leaf').group, 'student');
+  // root keeps owner and group whatever they are
+  run('sudo touch rootfile; sudo cp -p rootfile proj/rootcopy');
+  assert.equal(node('proj/rootcopy').owner, 'root');
+  assert.equal(node('proj/rootcopy').group, 'root');
+});
+
 test('id -u, -g, -G and -n print one part', () => {
   const run = linuxSession();
   assert.equal(run('id -u').stdout, '1000');
@@ -156,6 +185,32 @@ test('real commands that are not simulated say so', () => {
   assert.equal(res.exitCode, 127);
   assert.equal(run('sudo modprobe e1000e').stderr, 'bash: modprobe: this command exists on real systems but is not simulated here');
   assert.equal(run('frobnicate').stderr, 'bash: frobnicate: command not found');
+  // make is real: not "did you mean mawk"
+  const make = run('sudo make me a sandwich');
+  assert.equal(make.stderr, 'bash: make: this command exists on real systems but is not simulated here');
+  assert.ok(!make.explanation?.includes('mawk'), make.explanation);
   // The list only names commands the simulator does not run
   assert.deepEqual(NOT_SIMULATED_LINUX.filter(n => linuxCommands.has(n)), []);
+});
+
+test('limits: a huge ping count or printf width never freezes the page', () => {
+  const run = linuxSession();
+  const t = Date.now();
+  const ping = run('ping -c 100000000 8.8.8.8');
+  assert.equal(ping.exitCode, 0);
+  assert.equal(ping.stdout.split('\n').filter(l => l.includes('icmp_seq=')).length, 100);
+  assert.match(ping.stdout, /shows the first 100 replies; a real ping -c 100000000/);
+  assert.match(ping.stdout, /100000000 packets transmitted, 100000000 received/);
+  assert.doesNotMatch(run('ping -c 4 8.8.8.8').stdout, /first 100 replies/);
+  for (const line of ["printf '%999999999s' x", "printf '%*s' 999999999 x", "printf '%.999999999d' 1"]) {
+    const r = run(line);
+    assert.equal(r.exitCode, 1, line);
+    assert.match(r.stderr, /larger than this simulator allows \(10000\)/, line);
+  }
+  assert.equal(run("printf '%5s|' ab").stdout, '   ab|');
+  const awk = run(`awk 'BEGIN{printf "%999999999s", 1}'`);
+  assert.equal(awk.exitCode, 2);
+  assert.match(awk.stderr, /^awk: format width or precision is larger than this simulator allows/);
+  assert.equal(run(`awk 'BEGIN{printf "%.150f", 1}'`).exitCode, 0, 'large precision is clamped, not thrown');
+  assert.ok(Date.now() - t < 2000, 'all of the above returns quickly');
 });

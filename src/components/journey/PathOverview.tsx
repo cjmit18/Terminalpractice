@@ -12,6 +12,7 @@ import {
   pathStarted,
   stageComplete,
   stageUnlocked,
+  stageUnits,
   stepComplete,
   stepMinutes,
   stepTitle,
@@ -19,6 +20,7 @@ import {
 import { learnHref } from '../../lib/router';
 import { KIND_ICON, KIND_LABEL, ProgressBar, primaryLinkClass } from './shared';
 import { pathProgressText, stagesText } from './progressText';
+import { PathBadgeLine } from '../badges/PathBadgeLine';
 
 interface PathOverviewProps {
   path: LearningPath;
@@ -88,6 +90,7 @@ export const PathOverview: React.FC<PathOverviewProps> = ({ path, src, modulesBy
             </p>
           )}
         </div>
+        {!next && <PathBadgeLine pathId={path.id} />}
         {next && (
           <p className="text-sm text-muted">
             Next: {stepTitle(next.step, modulesById)}
@@ -143,7 +146,9 @@ interface StageItemProps {
 const StageItem: React.FC<StageItemProps> = ({ path, stage, index, isCurrent, open, onToggle, src, modulesById, progress }) => {
   const unlocked = stageUnlocked(path, index, src);
   const done = stageComplete(path.id, stage, src);
-  const doneCount = stage.steps.filter(s => stepComplete(path.id, s, src)).length;
+  // Alternatives (the same lab for Linux or Windows) count once
+  const units = stageUnits(stage);
+  const doneCount = units.filter(u => u.some(s => stepComplete(path.id, s, src))).length;
   const prevStage = index > 0 ? path.stages[index - 1] : null;
   const panelId = `stage-${stage.id}-steps`;
 
@@ -165,7 +170,7 @@ const StageItem: React.FC<StageItemProps> = ({ path, stage, index, isCurrent, op
   } else {
     status = (
       <span className="text-muted tabular-nums">
-        {doneCount} of {stage.steps.length} done
+        {doneCount} of {units.length} done
       </span>
     );
   }

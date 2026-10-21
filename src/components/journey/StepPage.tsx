@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { ArrowRight, Check, ChevronLeft, ChevronRight, Lock } from 'lucide-react';
 import { ExamModule } from '../../types/modules';
 import { LearningPath, PathStep } from '../../types/paths';
@@ -7,11 +7,14 @@ import {
   QuizScore,
   StepLocation,
   allSteps,
+  currentStageIndex,
   markRead,
   nextStep,
+  stageComplete,
   stageUnlocked,
   stepAfter,
   stepComplete,
+  stepSatisfied,
   stepKey,
   stepMinutes,
   stepTitle,
@@ -22,6 +25,7 @@ import { ModuleRunner } from '../ModuleRunner';
 import { LessonBlocks } from './LessonBlocks';
 import { QuizView } from './QuizView';
 import { KIND_LABEL, primaryLinkClass, secondaryLinkClass, textLinkClass } from './shared';
+import { StageRecap } from '../celebrate/StageRecap';
 
 interface StepPageProps {
   path: LearningPath;
@@ -39,6 +43,11 @@ export const StepPage: React.FC<StepPageProps> = props => {
   const { path, loc, src, modulesById } = props;
   const { step } = loc;
   const unlocked = stageUnlocked(path, loc.stageIndex, src);
+  // Did finishing this step, on this visit, clear its stage (or the whole path)?
+  const stageDone = stageComplete(path.id, loc.stage, src);
+  const [stageDoneAtOpen] = useState(stageDone);
+  const justCleared = stageDone && !stageDoneAtOpen;
+  const pathDone = currentStageIndex(path, src) === -1;
 
   // Where "Continue" goes from here, given the progress so far
   const nextHref = (source: CompletionSource) => {
@@ -75,6 +84,7 @@ export const StepPage: React.FC<StepPageProps> = props => {
             module={mod}
             completedObjectiveIds={props.progress[mod.id] ?? []}
             onObjectiveComplete={props.onObjectiveComplete}
+            recap={justCleared ? <StageRecap path={path} stageIndex={loc.stageIndex} src={src} modulesById={modulesById} /> : null}
           />
         ) : (
           <p className="px-4 sm:px-6 py-8 text-[15px] text-muted">This lab is not available in this version of the app.</p>
@@ -86,7 +96,11 @@ export const StepPage: React.FC<StepPageProps> = props => {
           >
             <p className="inline-flex items-center gap-2 text-[15px] font-medium text-text">
               <Check className="w-4 h-4 text-ok" aria-hidden="true" />
-              Lab done
+              {justCleared
+                ? pathDone
+                  ? `Lab done. You have finished ${path.title}.`
+                  : `Lab done. Stage clear: ${loc.stage.title}.`
+                : 'Lab done'}
             </p>
             <a href={next.href} className={`${primaryLinkClass} max-w-full`}>
               <span className="truncate">Continue to {next.title}</span>
@@ -138,6 +152,11 @@ export const StepPage: React.FC<StepPageProps> = props => {
             </div>
             <p className="text-sm text-muted">Next: {next.title}</p>
           </footer>
+          {justCleared && (
+            <div className="max-w-prose">
+              <StageRecap path={path} stageIndex={loc.stageIndex} src={src} modulesById={modulesById} />
+            </div>
+          )}
         </article>
       </>
     );
@@ -157,6 +176,7 @@ export const StepPage: React.FC<StepPageProps> = props => {
             onScore={score => props.onQuizScore(path.id, step.id, score)}
             next={nextHref(src)}
           />
+          {justCleared && <StageRecap path={path} stageIndex={loc.stageIndex} src={src} modulesById={modulesById} />}
         </div>
       </div>
     </>
@@ -255,7 +275,7 @@ const LockedStep: React.FC<{
 }> = ({ path, loc, src, modulesById }) => {
   const prevStage = path.stages[loc.stageIndex - 1];
   const next = nextStep(path, src);
-  const todo = next ? next.stage.steps.filter(s => !stepComplete(path.id, s, src)) : [];
+  const todo = next ? next.stage.steps.filter(s => !stepSatisfied(path.id, next.stage, s, src)) : [];
 
   return (
     <div className="max-w-3xl mx-auto w-full px-4 sm:px-6 py-8 sm:py-12 space-y-6">

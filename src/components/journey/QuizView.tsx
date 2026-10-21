@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowRight, Check, X } from 'lucide-react';
+import { ArrowRight, Check, RotateCcw, X } from 'lucide-react';
 import { PathStep, QuizQuestion } from '../../types/paths';
 import { QuizScore, correctNeeded, quizPassed } from '../../lib/journey';
 import { cx } from '../sims/ui';
@@ -30,6 +30,8 @@ export const QuizView: React.FC<QuizViewProps> = ({ step, best, onScore, next })
   const [checked, setChecked] = useState(false);
   const [finished, setFinished] = useState(false);
   const [nudge, setNudge] = useState(false);
+  // The best score from before this attempt, kept so the result can compare against it
+  const [previousBest, setPreviousBest] = useState<QuizScore | undefined>(undefined);
 
   const feedbackRef = useRef<HTMLDivElement>(null);
   const legendRef = useRef<HTMLHeadingElement>(null);
@@ -73,6 +75,7 @@ export const QuizView: React.FC<QuizViewProps> = ({ step, best, onScore, next })
       return;
     }
     const correct = step.questions.filter((q, i) => answers[i] === q.answer).length;
+    setPreviousBest(best);
     onScore({ correct, total });
     focusTarget.current = 'result';
     setFinished(true);
@@ -101,61 +104,18 @@ export const QuizView: React.FC<QuizViewProps> = ({ step, best, onScore, next })
 
   if (finished) {
     const correct = step.questions.filter((q, i) => answers[i] === q.answer).length;
-    const passed = quizPassed({ correct, total }, step.passMark);
     return (
-      <div className="space-y-6">
-        <section aria-labelledby="quiz-result" className="space-y-2">
-          <h2 id="quiz-result" ref={resultRef} tabIndex={-1} className="text-xl font-semibold focus:outline-none">
-            {correct} of {total} correct
-          </h2>
-          {passed ? (
-            <p className="inline-flex items-start gap-2 text-[15px] font-medium text-ok">
-              <Check className="w-5 h-5 shrink-0 mt-px" aria-hidden="true" />
-              You passed. You needed {needed} of {total}.
-            </p>
-          ) : (
-            <p className="inline-flex items-start gap-2 text-[15px] font-medium text-danger">
-              <X className="w-5 h-5 shrink-0 mt-px" aria-hidden="true" />
-              Not passed yet. You need {needed} of {total} to pass.
-            </p>
-          )}
-        </section>
-
-        <ol className="border-t border-line">
-          {step.questions.map((q, i) => {
-            const right = answers[i] === q.answer;
-            return (
-              <li key={q.id} className="flex items-start gap-3 py-3 border-b border-line">
-                {right ? (
-                  <Check className="w-4 h-4 mt-1 shrink-0 text-ok" aria-hidden="true" />
-                ) : (
-                  <X className="w-4 h-4 mt-1 shrink-0 text-danger" aria-hidden="true" />
-                )}
-                <span className="min-w-0">
-                  <span className="block text-[15px]">{q.prompt}</span>
-                  <span className={cx('block text-sm', right ? 'text-muted' : 'text-text')}>
-                    <span className="sr-only">{right ? 'Correct. ' : 'Incorrect. '}</span>
-                    {right ? 'Correct' : `Answer: ${q.choices[q.answer]}`}
-                  </span>
-                </span>
-              </li>
-            );
-          })}
-        </ol>
-
-        <div className="flex flex-wrap items-center gap-3">
-          {passed && (
-            <a href={next.href} className={primaryLinkClass}>
-              Continue
-              <ArrowRight className="w-4 h-4" aria-hidden="true" />
-            </a>
-          )}
-          <button type="button" onClick={retry} className={buttonClass(!passed)}>
-            Try again
-          </button>
-        </div>
-        {passed && <p className="text-sm text-muted">Next: {next.title}</p>}
-      </div>
+      <QuizResult
+        questions={step.questions}
+        answers={answers}
+        correct={correct}
+        needed={needed}
+        passed={quizPassed({ correct, total }, step.passMark)}
+        previousBest={previousBest}
+        next={next}
+        onRetry={retry}
+        headingRef={resultRef}
+      />
     );
   }
 
@@ -306,3 +266,121 @@ const Feedback = React.forwardRef<HTMLDivElement, { question: QuizQuestion; sele
   },
 );
 Feedback.displayName = 'Feedback';
+
+const WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
+const countWord = (n: number) => WORDS[n] ?? String(n);
+
+/** "3 right, one more than your best so far". Null on a first attempt. */
+function compareWithBest(correct: number, total: number, previous: QuizScore | undefined): string | null {
+  if (!previous) return null;
+  if (previous.total !== total) return `${correct} right. Your best before this was ${previous.correct} of ${previous.total}.`;
+  const diff = correct - previous.correct;
+  if (diff > 0) return `${correct} right, ${countWord(diff)} more than your best so far.`;
+  if (diff === 0) return `${correct} right, the same as your best so far.`;
+  return `${correct} right this time. Your best so far is still ${previous.correct}.`;
+}
+
+interface QuizResultProps {
+  questions: QuizQuestion[];
+  answers: (number | null)[];
+  correct: number;
+  needed: number;
+  passed: boolean;
+  previousBest: QuizScore | undefined;
+  next: { href: string; title: string };
+  onRetry: () => void;
+  headingRef: React.RefObject<HTMLHeadingElement | null>;
+}
+
+/**
+ * The finished checkpoint. Not passing yet is shown in neutral text with a retry icon, never as
+ * a red failure, and the questions you missed come first with their explanations, since
+ * reading why is what helps on the next try.
+ */
+const QuizResult: React.FC<QuizResultProps> = ({
+  questions,
+  answers,
+  correct,
+  needed,
+  passed,
+  previousBest,
+  next,
+  onRetry,
+  headingRef,
+}) => {
+  const total = questions.length;
+  const missed = questions.filter((q, i) => answers[i] !== q.answer);
+  const right = questions.filter((q, i) => answers[i] === q.answer);
+  const comparison = compareWithBest(correct, total, previousBest);
+  return (
+    <div className="space-y-6">
+      <section aria-labelledby="quiz-result" className="space-y-2">
+        <h2 id="quiz-result" ref={headingRef} tabIndex={-1} className="text-xl font-semibold focus:outline-none">
+          {correct} of {total} correct
+        </h2>
+        {passed ? (
+          <p className="inline-flex items-start gap-2 text-[15px] font-medium text-ok">
+            <Check className="w-5 h-5 shrink-0 mt-px" aria-hidden="true" />
+            You passed. You needed {needed} of {total}.
+          </p>
+        ) : (
+          <p className="inline-flex items-start gap-2 text-[15px] font-medium text-text">
+            <RotateCcw className="w-5 h-5 shrink-0 mt-px text-muted" aria-hidden="true" />
+            Not passed yet. You need {needed} of {total} to pass.
+          </p>
+        )}
+        {comparison && <p className="text-sm text-muted">{comparison}</p>}
+      </section>
+
+      {missed.length > 0 && (
+        <section aria-labelledby="quiz-review" className="space-y-3">
+          <h3 id="quiz-review" className="text-base font-semibold">
+            {missed.length === 1 ? 'The question to look at again' : 'Questions to look at again'}
+          </h3>
+          <ol className="border-t border-line">
+            {missed.map(q => (
+              <li key={q.id} className="py-3 border-b border-line space-y-1">
+                <p className="text-[15px] font-medium">{q.prompt}</p>
+                <p className="text-sm text-text">Answer: {q.choices[q.answer]}</p>
+                <p className="text-sm text-muted leading-relaxed">{q.explanation}</p>
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
+
+      {right.length > 0 && (
+        <section aria-labelledby="quiz-right" className="space-y-3">
+          <h3 id="quiz-right" className="text-base font-semibold">
+            {missed.length === 0 ? 'Every answer was right' : 'You got these right'}
+          </h3>
+          <ol className="border-t border-line">
+            {right.map(q => (
+              <li key={q.id} className="flex items-start gap-3 py-3 border-b border-line">
+                <Check className="w-4 h-4 mt-1 shrink-0 text-ok" aria-hidden="true" />
+                <span className="min-w-0 text-[15px]">
+                  <span className="sr-only">Correct: </span>
+                  {q.prompt}
+                </span>
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
+
+      <div className="flex flex-wrap items-center gap-3">
+        {passed && (
+          <a href={next.href} className={primaryLinkClass}>
+            Continue
+            <ArrowRight className="w-4 h-4" aria-hidden="true" />
+          </a>
+        )}
+        <button type="button" onClick={onRetry} className={buttonClass(!passed)}>
+          {!passed && <RotateCcw className="w-4 h-4" aria-hidden="true" />}
+          Try again
+        </button>
+      </div>
+      {passed && <p className="text-sm text-muted">Next: {next.title}</p>}
+    </div>
+  );
+};

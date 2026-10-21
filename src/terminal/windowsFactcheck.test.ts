@@ -21,6 +21,25 @@ test('psTokenize: quotes removed, (...) and {...} kept whole, spaced comma lists
   assert.equal(psTokenize("'-x'")[0].quoted, true, 'a quoted dash word is a value');
 });
 
+test('PR #10 review: -Name:"value" is a parameter, and a quoted list element keeps its commas', () => {
+  assert.equal(psTokenize('-Name:"Spooler"')[0].quoted, false);
+  const run = windowsSession('powershell');
+  assert.match(run('Get-Service -Name:"Spooler"').stdout, /Spooler/);
+  assert.equal(run('Get-Service -Name:"Spooler"').stderr, '');
+  assert.deepEqual(psTokenize('"CN=A B,OU=X", bob,\'c,d\'')[0].items?.map(x => x.trim()), ['CN=A B,OU=X', 'bob', 'c,d']);
+  const dn = 'CN=John Doe,OU=Marketing,DC=corp,DC=local';
+  // Named, named with a colon, and positional lists
+  for (const line of [`Add-ADGroupMember "Helpdesk Tier 1" -Members "${dn}", mscott`, `Add-ADGroupMember "Helpdesk Tier 1" -Members:"${dn}",mscott`, `Add-ADGroupMember "Helpdesk Tier 1" "${dn}",mscott`]) {
+    const r = windowsSession('powershell');
+    const res = r(line);
+    assert.equal(res.stderr, '', line);
+    const group = r.state().adGroups.find(g => g.name === 'Helpdesk Tier 1')!;
+    assert.ok(group.members.includes('jdoe') && group.members.includes('mscott'), line);
+  }
+  // An unquoted comma list still splits
+  assert.equal(windowsSession('powershell')('Add-ADGroupMember "Helpdesk Tier 1" -Members jdoe,mscott').exitCode, 0);
+});
+
 test('E (W-2, E-9, N-7): New-ADUser binds positional and quoted values and creates disabled accounts', () => {
   const run = windowsSession('powershell');
   assert.equal(run('New-ADUser alex').exitCode, 0);
@@ -139,6 +158,13 @@ test('H-2: Clear-DnsClientCache, Test-Connection, Repair-WindowsImage, Get-NetTC
   const offline = windowsSession('powershell')('Test-Connection 8.8.8.8');
   assert.equal(offline.exitCode, 1);
   assert.match(offline.stderr, /Testing connection to computer '8\.8\.8\.8' failed/);
+  // -Count is validated like PowerShell's Int32 ValidateRange(1, ...) and replies are capped
+  assert.match(run('Test-Connection 127.0.0.1 -Count Infinity').stderr, /Cannot convert value "Infinity" to type "System\.Int32"/);
+  assert.match(run('Test-Connection 127.0.0.1 -Count 0').stderr, /less than the minimum allowed range of 1/);
+  const huge = run('Test-Connection 127.0.0.1 -Count 2147483647');
+  assert.equal(huge.exitCode, 0);
+  assert.equal(huge.stdout.split('\n').filter(l => /^WIN-CLIENT01 +127\.0\.0\.1/.test(l)).length, 100);
+  assert.match(huge.explanation ?? '', /first 100 replies/);
 
   const sfcRun = windowsSession('powershell', { systemIntegrityCorrupted: true, dismRepaired: false });
   assert.match(sfcRun('Repair-WindowsImage -Online -ScanHealth').stdout, /ImageHealthState : Repairable/);
@@ -364,4 +390,38 @@ test('master re-check R-1: piping into a cmdlet the simulator lacks says so, not
   }
   // A simulated cmdlet given the wrong kind of object still gets PowerShell's own error
   assert.match(run('Get-Service | Stop-Process').stderr, /InputObjectNotBound/);
+});
+
+test('PR #10 review: a native program piped on in PowerShell keeps its state changes', () => {
+  const run = windowsSession('powershell');
+  assert.equal(run('ipconfig /renew | Out-Null').stdout, '');
+  assert.equal(run.state().interfaces[0].ip, '192.168.1.145');
+  assert.match(run('taskkill /F /PID 3892 | Select-String SUCCESS').stdout, /PID 3892 has been terminated/);
+  assert.equal(pids(run).includes(3892), false);
+});
+
+test('PR #10 review: %ERRORLEVEL% follows each command of a chain as it runs', () => {
+  const run = windowsSession('cmd');
+  assert.equal(run('frobnicate & echo done').stdout, 'done');
+  assert.equal(run('echo %ERRORLEVEL%').stdout, '9009');
+  run('ver');
+  assert.equal(run('echo %ERRORLEVEL%').stdout, '0');
+  run('cd C:\\Nope || echo fallback');
+  assert.equal(run('echo %ERRORLEVEL%').stdout, '1');
+  // The skipped command does not count: ver ran last and succeeded
+  run('ver || frobnicate');
+  assert.equal(run('echo %ERRORLEVEL%').stdout, '0');
+  run('frobnicate && ver');
+  assert.equal(run('echo %ERRORLEVEL%').stdout, '9009');
+});
+
+test('limits: ping -n shows at most 100 replies, keeps full statistics, and validates its range', () => {
+  const run = windowsSession('cmd', ONLINE);
+  const r = run('ping -n 100000000 127.0.0.1');
+  assert.equal(r.exitCode, 0);
+  assert.equal(r.stdout.split('\n').filter(l => l.startsWith('Reply from')).length, 100);
+  assert.match(r.stdout, /shows the first 100 replies; a real ping -n 100000000/);
+  assert.match(r.stdout, /Sent = 100000000, Received = 100000000, Lost = 0/);
+  assert.match(run('ping -n 4294967296 127.0.0.1').stderr, /Bad value for option -n, valid range is from 1 to 4294967295\./);
+  assert.doesNotMatch(run('ping 127.0.0.1').stdout, /first 100 replies/);
 });

@@ -6,6 +6,8 @@ import { FileTree } from './lab/FileTree';
 import { createSession, useShellSession } from './lab/useShellSession';
 import { PageHeader, ResetButton } from './lab/PageHeader';
 import { FolderTree, X } from 'lucide-react';
+import { useGameLayer } from './celebrate/GameLayer';
+import { sandboxFacts } from '../lib/activity';
 
 const LINUX_STATE: SystemState = {
   hostname: 'sandbox-linux',
@@ -171,8 +173,11 @@ export const SandboxMode: React.FC = () => {
   const [resetCount, setResetCount] = useState(0);
 
   // bash runs on one machine; Command Prompt and PowerShell share the Windows one
-  const linux = useShellSession(newLinux);
-  const windows = useShellSession(newWindows);
+  // Commands here are tagged as done in the Sandbox (for "Free play")
+  const { record } = useGameLayer();
+  const recordSandbox = (facts: string[]) => record(sandboxFacts(facts));
+  const linux = useShellSession(newLinux, undefined, recordSandbox);
+  const windows = useShellSession(newWindows, undefined, recordSandbox);
 
   const isLinux = shell === 'bash';
   const machine = isLinux ? linux : windows;
@@ -215,6 +220,7 @@ export const SandboxMode: React.FC = () => {
             history={session.history}
             onExecuteCommand={(cmd) => machine.run(cmd, shell)}
             onClearHistory={machine.clearHistory}
+            onActivity={record}
             resetKey={resetCount}
             isDiskpartActive={!isLinux && session.diskpartActive}
             currentUser={session.state.currentUser}

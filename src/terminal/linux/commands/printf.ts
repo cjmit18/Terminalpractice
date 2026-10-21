@@ -1,3 +1,4 @@
+import { MAX_FORMAT_WIDTH } from '../../limits';
 import { LinuxContext, LinuxResult, linuxCommands } from '../context';
 
 // printf FORMAT [ARGUMENTS...] (the bash builtin): %s %d %i %u %x %X %o %c %f %e %g %b %q %%,
@@ -67,7 +68,13 @@ function printf(ctx: LinuxContext): LinuxResult {
       }
       if (conv === '%') { out += '%'; continue; }
       const width = w === '*' ? toNumber(args[used++]) : w ? Number(w) : 0;
-      const prec = p === '*' ? toNumber(args[used++]) : p !== undefined ? Number(p) : undefined;
+      // A negative precision from * counts as omitted, as in bash
+      const rawPrec = p === '*' ? toNumber(args[used++]) : p !== undefined ? Number(p) : undefined;
+      const prec = rawPrec !== undefined && rawPrec < 0 ? undefined : rawPrec;
+      // Real bash would build a string this long; the simulator refuses rather than freeze the page
+      if (Math.abs(width) > MAX_FORMAT_WIDTH || (prec ?? 0) > MAX_FORMAT_WIDTH) {
+        return ctx.fail(`bash: printf: field width or precision ${Math.max(Math.abs(width), prec ?? 0)} is larger than this simulator allows (${MAX_FORMAT_WIDTH})`, 1);
+      }
       const left = flags.includes('-');
       const zero = flags.includes('0') && !left;
       const arg = args[used++];
@@ -94,7 +101,8 @@ function printf(ctx: LinuxContext): LinuxResult {
         }
         default: {
           const n = toFloat(arg);
-          const digits = prec ?? 6;
+          // JS number formatting accepts at most 100 digits; clamp rather than throw
+          const digits = Math.min(prec ?? 6, 100);
           if (conv === 'f' || conv === 'F') s = n.toFixed(digits);
           else if (conv === 'e' || conv === 'E') {
             s = n.toExponential(digits).replace(/e([+-])(\d)$/, 'e$10$2');

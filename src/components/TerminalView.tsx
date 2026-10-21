@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import { TerminalShell, HistoryItem } from '../types/terminal';
 import { Copy, Check, Eraser, ArrowUp, ArrowDown } from 'lucide-react';
 
@@ -24,6 +24,8 @@ interface TerminalViewProps {
   readOnly?: boolean;
   /** Change it when the session is reset (a fresh machine): the login banner shows again. */
   resetKey?: number;
+  /** Learning facts noticed at the prompt: 'tab' (Tab completed a name), 'history' (an earlier command recalled) */
+  onActivity?: (facts: string[]) => void;
 }
 
 const SHELL_NAMES: Record<TerminalShell, string> = {
@@ -39,8 +41,8 @@ const BANNERS: Record<TerminalShell, string> = {
 };
 
 const COMPLETIONS: Record<'linux' | 'windows', string[]> = {
-  linux: ['cat', 'cd', 'chmod', 'chown', 'df', 'dmesg', 'echo', 'fdisk', 'grep', 'id', 'ip', 'journalctl', 'ls', 'lsmod', 'lspci', 'mkdir', 'ping', 'pwd', 'sort', 'sudo', 'systemctl', 'tar', 'umask', 'uniq', 'useradd', 'usermod', 'whoami'],
-  windows: ['chkdsk', 'diskpart', 'dism', 'gpresult', 'gpupdate', 'ipconfig', 'netstat', 'nslookup', 'ping', 'sfc', 'taskkill', 'tasklist', 'tracert', 'Add-ADGroupMember', 'Get-ADUser', 'Get-Process', 'Get-Service', 'New-ADUser', 'Start-Service', 'Stop-Process', 'Test-NetConnection', 'Unlock-ADAccount'],
+  linux: ['cat', 'cd', 'chmod', 'chown', 'df', 'dmesg', 'echo', 'fdisk', 'grep', 'id', 'ip', 'journalctl', 'ls', 'lsmod', 'lspci', 'man', 'mkdir', 'ping', 'pwd', 'sort', 'sudo', 'systemctl', 'tar', 'umask', 'uniq', 'useradd', 'usermod', 'whoami'],
+  windows: ['cd', 'chkdsk', 'cls', 'dir', 'diskpart', 'dism', 'gpresult', 'gpupdate', 'help', 'ipconfig', 'netstat', 'nslookup', 'ping', 'sfc', 'taskkill', 'tasklist', 'tracert', 'type', 'Add-ADGroupMember', 'Get-ADUser', 'Get-Process', 'Get-Service', 'New-ADUser', 'Start-Service', 'Stop-Process', 'Test-NetConnection', 'Unlock-ADAccount'],
 };
 
 const SYMBOL_KEYS = ['|', '>', '<', '&', '/', '~', '-', '_', '.', '$', '*', '"', "'", '\\', ':'];
@@ -77,6 +79,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
   hostname = 'lpi-lab01',
   readOnly = false,
   resetKey = 0,
+  onActivity,
 }) => {
   const [input, setInput] = useState('');
   const [copied, setCopied] = useState(false);
@@ -152,6 +155,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
     const newIndex = historyIndex === null ? recall.length - 1 : Math.max(0, historyIndex - 1);
     setHistoryIndex(newIndex);
     setInput(recall[newIndex]);
+    onActivity?.(['history']);
   };
 
   const historyNext = () => {
@@ -174,13 +178,17 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
     const matches = pool.filter(c => c.toLowerCase().startsWith(word.toLowerCase()));
     if (matches.length === 1) {
       setInput(matches[0] + ' ');
+      onActivity?.(['tab']);
     } else if (matches.length > 1) {
       // Extend to the longest shared prefix, like bash does on the first Tab
       let prefix = matches[0];
       for (const m of matches) {
         while (!m.toLowerCase().startsWith(prefix.toLowerCase())) prefix = prefix.slice(0, -1);
       }
-      if (prefix.length > word.length) setInput(prefix);
+      if (prefix.length > word.length) {
+        setInput(prefix);
+        onActivity?.(['tab']);
+      }
     }
   };
 
@@ -194,16 +202,23 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
     onClearHistory();
   };
 
-  // Insert text at the caret so the toolbar works mid-line, then restore focus and caret
+  // Insert text at the caret so the toolbar works mid-line, then restore focus and caret.
+  // The caret is placed in a layout effect, in the same commit as the new text: placing it a frame
+  // later let fast typing land first, and the late caret move then sent later keys to the wrong spot.
+  const pendingCaret = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    const el = inputRef.current;
+    if (pendingCaret.current === null || !el) return;
+    el.setSelectionRange(pendingCaret.current, pendingCaret.current);
+    pendingCaret.current = null;
+  }, [input]);
   const insertAtCaret = (text: string) => {
     const el = inputRef.current;
     const start = el?.selectionStart ?? input.length;
     const end = el?.selectionEnd ?? input.length;
+    pendingCaret.current = start + text.length;
     setInput(input.slice(0, start) + text + input.slice(end));
-    requestAnimationFrame(() => {
-      el?.focus();
-      el?.setSelectionRange(start + text.length, start + text.length);
-    });
+    el?.focus();
   };
 
   const renderPrompt = (promptShell: TerminalShell, promptCwd: string, user: string, diskpart: boolean) => {
@@ -236,6 +251,39 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
       </span>
     );
   };
+
+  // The history only changes with a command, not with each keystroke at the prompt
+  const historyView = React.useMemo(
+    () =>
+      history.map((item) => {
+        const stdoutText = item.errorOutput ? item.output.replace(item.errorOutput, '').trim() : item.output;
+        return (
+          <div key={item.id} className="mb-1.5">
+            <div className="break-all">
+              {renderPrompt(item.shell, item.cwd, item.user ?? currentUser, !!item.inDiskpart)}
+              <span>{item.command}</span>
+            </div>
+            {stdoutText && (
+              <pre className={`whitespace-pre-wrap break-words font-mono ${item.isError && !item.errorOutput ? 'text-term-error' : ''}`}>
+                {stdoutText}
+              </pre>
+            )}
+            {item.errorOutput && (
+              <pre className="whitespace-pre-wrap break-words font-mono text-term-error">{item.errorOutput}</pre>
+            )}
+            {/* A learning note, not shell output: set apart in the UI font so it never reads as part of the terminal */}
+            {item.explanation && (
+              <p className="mt-1 mb-2 border-l-2 border-term-line pl-3 font-sans text-[13px] leading-relaxed text-term-muted whitespace-pre-line">
+                <span className="font-medium text-term-text">Why: </span>
+                {item.explanation}
+              </p>
+            )}
+          </div>
+        );
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [history, currentUser, hostname],
+  );
 
   const copyTerminalOutput = async () => {
     const text = history.map(h => `${h.command}\n${h.output}`).join('\n\n');
@@ -288,32 +336,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
         <div role="log" aria-live="polite" aria-label="Terminal output">
           {showBanner && <p className="text-term-muted mb-2">{BANNERS[shell]}</p>}
 
-          {history.map((item) => {
-            const stdoutText = item.errorOutput ? item.output.replace(item.errorOutput, '').trim() : item.output;
-            return (
-              <div key={item.id} className="mb-1.5">
-                <div className="break-all">
-                  {renderPrompt(item.shell, item.cwd, item.user ?? currentUser, !!item.inDiskpart)}
-                  <span>{item.command}</span>
-                </div>
-                {stdoutText && (
-                  <pre className={`whitespace-pre-wrap break-words font-mono ${item.isError && !item.errorOutput ? 'text-term-error' : ''}`}>
-                    {stdoutText}
-                  </pre>
-                )}
-                {item.errorOutput && (
-                  <pre className="whitespace-pre-wrap break-words font-mono text-term-error">{item.errorOutput}</pre>
-                )}
-                {/* A learning note, not shell output: set apart in the UI font so it never reads as part of the terminal */}
-                {item.explanation && (
-                  <p className="mt-1 mb-2 border-l-2 border-term-line pl-3 font-sans text-[13px] leading-relaxed text-term-muted whitespace-pre-line">
-                    <span className="font-medium text-term-text">Why: </span>
-                    {item.explanation}
-                  </p>
-                )}
-              </div>
-            );
-          })}
+          {historyView}
         </div>
 
         {!readOnly && (

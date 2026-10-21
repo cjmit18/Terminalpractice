@@ -2,6 +2,7 @@
 // BEGIN/END), fields ($1, $NF, $(NF-1)), NR/NF/FS/OFS, variables and arrays, print/printf,
 // if/else, for, for-in, while, next, and the common string functions.
 
+import { MAX_FORMAT_WIDTH } from '../limits';
 import { posixToJsRegex } from '../textUtils';
 
 type Value = string | number;
@@ -97,13 +98,18 @@ function sprintf(fmt: string, args: Value[]): string {
   let n = 0;
   return fmt.replace(/%([-+ 0#]*)(\d+|\*)?(?:\.(\d+))?([sdifcxXeEgGo%])/g, (_, flags: string, width: string, prec: string, conv: string) => {
     if (conv === '%') return '%';
+    // A huge width or precision would build an enormous string (or make toFixed throw); refuse instead
+    if (Number(width) > MAX_FORMAT_WIDTH || Number(prec) > MAX_FORMAT_WIDTH) {
+      throw new AwkError(`format width or precision is larger than this simulator allows (${MAX_FORMAT_WIDTH})`);
+    }
+    const digits = (d: number) => Math.min(d, 100);
     const arg = args[n++] ?? '';
     let s: string;
     switch (conv) {
       case 'd': case 'i': s = String(Math.trunc(toNum(arg))); break;
-      case 'f': s = toNum(arg).toFixed(prec !== undefined ? Number(prec) : 6); break;
-      case 'e': case 'E': s = toNum(arg).toExponential(prec !== undefined ? Number(prec) : 6); break;
-      case 'g': case 'G': s = String(Number(toNum(arg).toPrecision(prec !== undefined ? Number(prec) || 1 : 6))); break;
+      case 'f': s = toNum(arg).toFixed(digits(prec !== undefined ? Number(prec) : 6)); break;
+      case 'e': case 'E': s = toNum(arg).toExponential(digits(prec !== undefined ? Number(prec) : 6)); break;
+      case 'g': case 'G': s = String(Number(toNum(arg).toPrecision(Math.max(1, digits(prec !== undefined ? Number(prec) || 1 : 6))))); break;
       case 'x': s = Math.trunc(toNum(arg)).toString(16); break;
       case 'X': s = Math.trunc(toNum(arg)).toString(16).toUpperCase(); break;
       case 'o': s = Math.trunc(toNum(arg)).toString(8); break;
