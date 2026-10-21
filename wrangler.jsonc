@@ -1,7 +1,6 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  // Test site. Must match the Worker connected to this repo in the Cloudflare dashboard (Workers Builds).
-  // The real site (terminuscli.com) is env.production below: npx wrangler deploy --env production
+  // Must match the Worker connected to this repo in the Cloudflare dashboard (Workers Builds)
   "name": "terminalpractice",
   "compatibility_date": "2026-10-13",
   // `wrangler deploy` builds first, so a deploy never ships a stale or missing dist/
@@ -32,39 +31,5 @@
     // The client secret is set separately: npx wrangler secret put GITHUB_CLIENT_SECRET
     // While either is missing, the app hides "Sign in" and the API answers 503 for sign-in.
     "GITHUB_CLIENT_ID": ""
-  },
-  // Branch previews (`wrangler preview`) don't inherit the bindings above, so they get their own
-  "previews": {
-    "vars": {
-      // Empty on purpose: preview URLs won't match the GitHub App's callback, so previews hide "Sign in"
-      "GITHUB_CLIENT_ID": ""
-    },
-    "d1_databases": [
-      {
-        // Separate database so a test branch can never touch real accounts
-        "binding": "DB",
-        "database_name": "terminalpractice-preview",
-        "database_id": "e671f478-ea60-41d5-a2ec-a3668c02c05a",
-        "migrations_dir": "migrations"
-      }
-    ]
-  },
-  "env": {
-    // terminuscli.com. Build, main and assets carry over from above; vars and bindings don't, so they're repeated.
-    "production": {
-      "name": "terminuscli",
-      "d1_databases": [
-        {
-          "binding": "DB",
-          "database_name": "terminuscli",
-          "database_id": "a1e3a142-a5d2-4b68-b68b-1e32c95995ee",
-          "migrations_dir": "migrations"
-        }
-      ],
-      "vars": {
-        // Same GitHub App as the test site; it lists a callback URL for each host
-        "GITHUB_CLIENT_ID": ""
-      }
-    }
   }
 }
