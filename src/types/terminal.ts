@@ -15,6 +15,8 @@ export interface FileNode {
   group: string; // e.g. "root" or "student"
   updatedAt: string;
   children?: { [key: string]: FileNode };
+  /** Device node in /dev (shown as b or c by ls -l). */
+  device?: 'block' | 'char';
 }
 
 export type TerminalShell = 'bash' | 'cmd' | 'powershell';
@@ -152,6 +154,10 @@ export interface SystemState {
   envVars: { [key: string]: string };
   /** Set by `ipconfig /flushdns`; `ipconfig /displaydns` then shows only hosts-file entries. */
   dnsCacheFlushed?: boolean;
+  /** Windows local accounts created with net user /add (the built-in ones are always present). */
+  localUsers?: string[];
+  /** Windows local group membership changed with net localgroup; unset means the defaults. */
+  localGroups?: { [group: string]: string[] };
   /** Lines entered in this bash session, oldest first. Maintained by the Linux engine for `history`. */
   commandHistory?: string[];
 }

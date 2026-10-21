@@ -1,3 +1,4 @@
+import { cmdDoc } from '../../docs';
 import { NetworkInterface } from '../../../types/terminal';
 import { WindowsContext, WindowsResult, cmdCommands } from '../context';
 
@@ -134,38 +135,64 @@ function ipconfig(ctx: WindowsContext): WindowsResult {
   return ctx.ok(lines.join('\n'));
 }
 
+/** Windows ping options that take a value. */
+const PING_VALUE_OPTS = new Set(['n', 'l', 'i', 'v', 'r', 's', 'w', 'S', 'c', 'j', 'k']);
+
 function ping(ctx: WindowsContext): WindowsResult {
-  const target = ctx.args.find(a => !a.startsWith('/') && !a.startsWith('-') && !/^\d+$/.test(a)) || '127.0.0.1';
+  let count = 4;
+  let size = 32;
+  let forever = false;
+  let target = '';
+  for (let i = 0; i < ctx.args.length; i++) {
+    const a = ctx.args[i];
+    const opt = a.match(/^[-/](\w)$/);
+    if (opt) {
+      if (opt[1] === 't') forever = true;
+      else if (PING_VALUE_OPTS.has(opt[1]) || PING_VALUE_OPTS.has(opt[1].toLowerCase())) {
+        const value = ctx.args[++i];
+        if (value === undefined) return ctx.fail(`Value must be supplied for option ${a}.`, 1);
+        const n = Number(value);
+        if (opt[1].toLowerCase() === 'n') {
+          if (!Number.isInteger(n) || n < 1) return ctx.fail(`Bad value for option ${a}, valid range is from 1 to 4294967295.`, 1);
+          count = n;
+        }
+        if (opt[1].toLowerCase() === 'l') size = n;
+      }
+      continue;
+    }
+    if (!target) target = a;
+  }
+  if (!target) return ctx.result(cmdDoc('ping')!.usage, '', 1);
   const ip = resolveHost(ctx, target);
   if (!ip) {
     return ctx.fail(`Ping request could not find host ${target}. Please check the name and try again.`, 1);
   }
+  // -t keeps going until Ctrl+C; the simulator shows four replies and the interrupt
+  const sent = forever ? 4 : count;
   const label = ip === target ? ip : `${target} [${ip}]`;
   const local = ip.startsWith('127.');
+  const head = `Pinging ${label} with ${size} bytes of data:`;
   if (!local && !hasConnectivity(ctx)) {
     return ctx.result([
-      `Pinging ${label} with 32 bytes of data:`,
-      'PING: transmit failed. General failure.',
-      'PING: transmit failed. General failure.',
-      'PING: transmit failed. General failure.',
-      'PING: transmit failed. General failure.',
+      head,
+      ...Array(sent).fill('PING: transmit failed. General failure.'),
       '',
       `Ping statistics for ${ip}:`,
-      '    Packets: Sent = 4, Received = 0, Lost = 4 (100% loss),',
+      `    Packets: Sent = ${sent}, Received = 0, Lost = ${sent} (100% loss),`,
+      ...(forever ? ['Control-C', '^C'] : []),
     ].join('\n'), '', 1);
   }
-  const t = local ? '<1ms' : '=12ms';
+  const times = Array.from({ length: sent }, (_, i) => (local ? 0 : [12, 11, 14, 12][i % 4]));
+  const ttl = local ? 128 : 118;
   return ctx.ok([
-    `Pinging ${label} with 32 bytes of data:`,
-    `Reply from ${ip}: bytes=32 time${t} TTL=${local ? 128 : 118}`,
-    `Reply from ${ip}: bytes=32 time${local ? '<1ms' : '=11ms'} TTL=${local ? 128 : 118}`,
-    `Reply from ${ip}: bytes=32 time${local ? '<1ms' : '=14ms'} TTL=${local ? 128 : 118}`,
-    `Reply from ${ip}: bytes=32 time${t} TTL=${local ? 128 : 118}`,
+    head,
+    ...times.map(t => `Reply from ${ip}: bytes=${size} time${local ? '<1ms' : `=${t}ms`} TTL=${ttl}`),
     '',
     `Ping statistics for ${ip}:`,
-    '    Packets: Sent = 4, Received = 4, Lost = 0 (0% loss),',
+    `    Packets: Sent = ${sent}, Received = ${sent}, Lost = 0 (0% loss),`,
     'Approximate round trip times in milli-seconds:',
-    local ? '    Minimum = 0ms, Maximum = 0ms, Average = 0ms' : '    Minimum = 11ms, Maximum = 14ms, Average = 12ms',
+    `    Minimum = ${Math.min(...times)}ms, Maximum = ${Math.max(...times)}ms, Average = ${Math.floor(times.reduce((x, y) => x + y, 0) / sent)}ms`,
+    ...(forever ? ['Control-C', '^C'] : []),
   ].join('\n'));
 }
 

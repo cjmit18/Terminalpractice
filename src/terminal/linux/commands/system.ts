@@ -2,8 +2,9 @@ import { SystemState, WindowsService } from '../../../types/terminal';
 import { createNode, describeIdentity } from '../../filesystem';
 import { parseOptions, optionValue, padNum } from '../../textUtils';
 import { LinuxContext, LinuxResult, linuxCommands } from '../context';
+import { DEFAULT_LINUX_DISKS, KERNEL_RELEASE, KERNEL_VERSION, MEMORY_KIB, MODULES } from '../virtualFs';
 
-// System, hardware, processes, services, packages, archives and help
+// System, hardware, processes, services, packages and archives
 
 const DMESG = [
   '[    0.000000] Linux version 5.15.0-101-generic (buildd@lcy02-amd64-072) (gcc version 11.4.0)',
@@ -26,32 +27,50 @@ const LSPCI = [
   '00:04.0 USB controller: Intel Corporation 82801I (ICH9 Family) USB UHCI Controller #1',
 ].join('\n');
 
-const LSMOD = [
-  'Module                  Size  Used by',
-  'e1000e                286720  0',
-  'ext4                  962560  1',
-  'crc16                  16384  1 ext4',
-  'mbcache                16384  1 ext4',
-  'jbd2                  163840  1 ext4',
-  'ahci                   45056  2',
-  'libahci                49152  1 ahci',
-].join('\n');
+const LSMOD = ['Module                  Size  Used by',
+  ...MODULES.map(([n, size, count, users]) => `${n.padEnd(19)}${String(size).padStart(9)}  ${count}${users.length ? ` ${users.join(',')}` : ''}`)].join('\n');
 
-const JOURNAL = [
-  '-- Journal begins at Sun 2026-10-19 08:00:00 UTC, ends at Sun 2026-10-19 10:25:00 UTC. --',
-  'Oct 19 09:30:12 lpi-lab systemd[1]: Starting Network Time Synchronization...',
-  'Oct 19 09:30:13 lpi-lab systemd[1]: Started Network Time Synchronization.',
-  'Oct 19 09:45:00 lpi-lab kernel: [ 120.40] EXT4-fs (sda3): re-mounted. Opts: errors=remount-ro',
-  'Oct 19 10:00:22 lpi-lab sshd[1450]: Accepted publickey for student from 192.168.1.100 port 51220 ssh2',
-  'Oct 19 10:15:30 lpi-lab nginx[2100]: [notice] configuration file /etc/nginx/nginx.conf test is successful',
-].join('\n');
+const JOURNAL_HEAD = '-- Journal begins at Sun 2026-10-19 08:00:00 UTC, ends at Sun 2026-10-19 10:25:00 UTC. --';
 
-export const MAN_PAGES: { [key: string]: string } = {
-  chmod: 'CHMOD(1)                 User Commands                CHMOD(1)\n\nNAME\n       chmod - change file mode bits\n\nSYNOPSIS\n       chmod [OPTION]... MODE[,MODE]... FILE...\n       chmod [OPTION]... OCTAL-MODE FILE...\n\nDESCRIPTION\n       chmod changes the file mode bits of each given file according to mode.\n       Mode can be octal (e.g. 755 = rwxr-xr-x) or symbolic (u+x, g-w).\n\nLPI EXAM NOTE:\n       Octal values: 4 = Read, 2 = Write, 1 = Execute.\n       SUID = 4000, SGID = 2000, Sticky Bit = 1000.',
-  tar: 'TAR(1)                   User Commands                  TAR(1)\n\nNAME\n       tar - an archiving utility\n\nSYNOPSIS\n       tar [OPTION...] [FILE]...\n\nEXAMPLES\n       tar -czvf archive.tar.gz /path    Create gzipped archive\n       tar -xzvf archive.tar.gz          Extract gzipped archive\n       tar -tvf archive.tar              List archive contents',
-  grep: 'GREP(1)                  User Commands                 GREP(1)\n\nNAME\n       grep - print lines matching a pattern\n\nSYNOPSIS\n       grep [OPTIONS] PATTERN [FILE...]\n\nOPTIONS\n       -i, --ignore-case\n       -v, --invert-match\n       -c, --count\n       -n, --line-number\n       -E, --extended-regexp',
-  ps: 'PS(1)                    User Commands                   PS(1)\n\nNAME\n       ps - report a snapshot of the current processes.\n\nSYNOPSIS\n       ps [options]\n\nEXAMPLES\n       ps aux    Display all running processes with user, PID, CPU, MEM\n       ps -ef    Standard Unix syntax for all process list',
-};
+/** Journal entries with the systemd unit that logged them (kernel lines have none). */
+const JOURNAL: { unit?: string; line: string }[] = [
+  { unit: 'systemd-timesyncd', line: 'Oct 19 09:30:12 lpi-lab systemd[1]: Starting Network Time Synchronization...' },
+  { unit: 'systemd-timesyncd', line: 'Oct 19 09:30:13 lpi-lab systemd[1]: Started Network Time Synchronization.' },
+  { unit: 'ssh', line: 'Oct 19 09:30:14 lpi-lab systemd[1]: Starting OpenBSD Secure Shell server...' },
+  { unit: 'ssh', line: 'Oct 19 09:30:14 lpi-lab sshd[1420]: Server listening on 0.0.0.0 port 22.' },
+  { unit: 'ssh', line: 'Oct 19 09:30:14 lpi-lab systemd[1]: Started OpenBSD Secure Shell server.' },
+  { line: 'Oct 19 09:45:00 lpi-lab kernel: EXT4-fs (sda3): re-mounted. Opts: errors=remount-ro' },
+  { unit: 'ssh', line: 'Oct 19 10:00:22 lpi-lab sshd[1450]: Accepted publickey for student from 192.168.1.100 port 51220 ssh2' },
+  { unit: 'nginx', line: 'Oct 19 10:15:30 lpi-lab nginx[2100]: [notice] configuration file /etc/nginx/nginx.conf test is successful' },
+];
+
+function journalctl(ctx: LinuxContext): LinuxResult {
+  const opts = parseOptions(ctx.args, 'unpbS', { unit: 'u', lines: 'n', priority: 'p', dmesg: 'k', boot: 'b', 'no-pager': 'P', follow: 'f', since: 'S' });
+  const units = (opts.values.get('u') ?? []).map(u => u.replace(/\.service$/, ''));
+  let entries = JOURNAL;
+  if (opts.flags.has('k')) entries = entries.filter(e => !e.unit);
+  if (units.length) entries = entries.filter(e => e.unit && units.includes(e.unit));
+  const n = optionValue(opts, 'n');
+  if (n !== undefined) entries = entries.slice(-Math.max(0, Number(n) || 0));
+  const head = opts.flags.has('k') || opts.flags.has('b') ? '-- Boot 6c1f0a3e2b7d4e5f8a9b0c1d2e3f4a5b --' : JOURNAL_HEAD;
+  return ctx.ok([head, ...(entries.length ? entries.map(e => e.line.replace(' lpi-lab ', ` ${ctx.state.hostname} `)) : ['-- No entries --'])].join('\n'));
+}
+
+const KERNEL = { r: KERNEL_RELEASE, v: KERNEL_VERSION };
+
+function uname(ctx: LinuxContext): LinuxResult {
+  const opts = parseOptions(ctx.args, '', {
+    all: 'a', 'kernel-name': 's', nodename: 'n', 'kernel-release': 'r', 'kernel-version': 'v', machine: 'm',
+    processor: 'p', 'hardware-platform': 'i', 'operating-system': 'o',
+  });
+  const bad = [...opts.flags].find(f => !'asnrvmpio'.includes(f));
+  if (bad) return ctx.fail(`uname: invalid option -- '${bad}'\nTry 'uname --help' for more information.`);
+  const fields: Record<string, string> = {
+    s: 'Linux', n: ctx.state.hostname, r: KERNEL.r, v: KERNEL.v, m: 'x86_64', p: 'x86_64', i: 'x86_64', o: 'GNU/Linux',
+  };
+  const order = opts.flags.has('a') ? 'snrvmpio' : [...'snrvmpio'].filter(f => opts.flags.has(f)).join('') || 's';
+  return ctx.ok([...order].map(f => fields[f]).join(' '));
+}
 
 function ps(ctx: LinuxContext): LinuxResult {
   const header = 'USER       PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND';
@@ -152,11 +171,6 @@ function tar(ctx: LinuxContext): LinuxResult {
     return ctx.ok(node.content || 'notes.txt\nscripts/backup.sh');
   }
   return ctx.ok('notes.txt\nscripts/backup.sh');
-}
-
-function man(ctx: LinuxContext): LinuxResult {
-  const topic = ctx.args[0] || 'ls';
-  return ctx.ok(MAN_PAGES[topic] || `MANUAL PAGE FOR '${topic}'\nNo manual entry for ${topic} in section 1`);
 }
 
 // ---------- services ----------
@@ -276,14 +290,7 @@ function linuxDisks(ctx: LinuxContext) {
   });
 }
 
-const DEFAULT_DISKS: SystemState['disks'] = [{
-  diskNumber: 0, totalSizeMB: 51200, model: 'QEMU HARDDISK', status: 'Online', partitionTable: 'GPT',
-  partitions: [
-    { id: 1, sizeMB: 512, fsType: 'ext4', mountPoint: '/boot' },
-    { id: 2, sizeMB: 4096, fsType: 'swap' },
-    { id: 3, sizeMB: 46592, fsType: 'ext4', mountPoint: '/' },
-  ],
-}];
+const DEFAULT_DISKS = DEFAULT_LINUX_DISKS;
 
 /** Human-readable size like df -h / lsblk (1024-based, one decimal under 10). */
 function human(mb: number, suffix = ''): string {
@@ -382,7 +389,8 @@ function lsblk(ctx: LinuxContext): LinuxResult {
 
 function free(ctx: LinuxContext): LinuxResult {
   const opts = parseOptions(ctx.args, '', { human: 'h', mega: 'm', giga: 'g', kilo: 'k' });
-  const kib = { total: 8148236, used: 1934520, free: 4120384, shared: 45872, cache: 2093332, avail: 5912500, swap: 4194300 };
+  const m = MEMORY_KIB;
+  const kib = { ...m, cache: m.buffers + m.cached };
   const f = opts.flags;
   const fmt = (k: number): string => {
     if (f.has('h')) {
@@ -454,24 +462,6 @@ function date(ctx: LinuxContext): LinuxResult {
   return ctx.ok(formatDate(when, '%a %b %e %H:%M:%S %Z %Y'));
 }
 
-/** Shell builtins with no file on disk: `which` finds nothing for them. */
-const SHELL_ONLY = new Set(['cd', 'umask', 'source', '.', 'history', 'exit', 'export', 'type', 'alias', 'unset']);
-const SBIN = new Set(['useradd', 'usermod', 'groupadd', 'fdisk', 'ifconfig', 'ip', 'lsmod', 'modprobe', 'sysctl', 'ss']);
-
-function which(ctx: LinuxContext): LinuxResult {
-  const opts = parseOptions(ctx.args);
-  const out: string[] = [];
-  let missing = false;
-  for (const name of opts.operands) {
-    if (linuxCommands.has(name) && !SHELL_ONLY.has(name)) {
-      out.push(`${SBIN.has(name) ? '/usr/sbin' : '/usr/bin'}/${name}`);
-    } else {
-      missing = true;
-    }
-  }
-  return ctx.result(out.join('\n'), '', missing || opts.operands.length === 0 ? 1 : 0);
-}
-
 function history(ctx: LinuxContext): LinuxResult {
   const opts = parseOptions(ctx.args, 'd');
   if (opts.flags.has('c')) {
@@ -529,18 +519,15 @@ linuxCommands.registerAll({
   false: ctx => ctx.fail('', 1),
   clear: ctx => ctx.ok('\x1b[2J\x1b[0;0H'),
   hostname: ctx => ctx.ok(ctx.state.hostname),
-  uname: ctx => ctx.ok(ctx.args.includes('-a')
-    ? `Linux ${ctx.state.hostname} 5.15.0-101-generic #111-Ubuntu SMP x86_64 GNU/Linux`
-    : 'Linux'),
+  uname,
   dmesg: ctx => ctx.ok(DMESG),
   lspci: ctx => ctx.ok(LSPCI),
   lsmod: ctx => ctx.ok(LSMOD),
-  journalctl: ctx => ctx.ok(JOURNAL),
+  journalctl,
   df,
   lsblk,
   free,
   date,
-  which,
   history,
   env,
   printenv: env,
@@ -552,5 +539,4 @@ linuxCommands.registerAll({
   apt,
   'apt-get': apt,
   tar,
-  man,
 });

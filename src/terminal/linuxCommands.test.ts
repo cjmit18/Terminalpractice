@@ -70,7 +70,8 @@ test('find: -name -iname -type -perm -user -group -size -empty -maxdepth -exec -
 
   run('sudo chmod 4755 scripts/backup.sh');
   const suid = run('find / -perm -4000 2>/dev/null');
-  assert.equal(suid.stdout, '/home/student/scripts/backup.sh');
+  // the new SUID script, plus the SUID programs every system has
+  assert.equal(suid.stdout, '/home/student/scripts/backup.sh\n/usr/bin/passwd\n/usr/bin/su\n/usr/bin/sudo');
   assert.equal(suid.exitCode, 1, 'unreadable directories make find exit 1');
   const loud = run('find / -perm -4000');
   assert.equal(loud.stderr, "find: '/root': Permission denied");

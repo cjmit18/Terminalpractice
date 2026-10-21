@@ -13,8 +13,11 @@ import './windows/cmd/files';
 import './windows/cmd/text';
 import './windows/cmd/system';
 import './windows/cmd/network';
+import { NATIVE_TOOLS, cmdSlashHelp, diskpartUsage, psDashQuestion, registerDocAliases } from './windows/help';
 
 export interface WindowsExecutionResult extends WindowsResult {}
+
+registerDocAliases();
 
 export function executeWindowsLine(
   rawInput: string,
@@ -30,6 +33,10 @@ export function executeWindowsLine(
   }
 
   if (isDiskpartSession) return handleDiskpartCommand(line, cwd, fs, state);
+
+  if (/^diskpart(\.exe)?\s+\/\?$/i.test(line)) {
+    return { stdout: diskpartUsage(), stderr: '', exitCode: 0, newCwd: cwd, newFs: fs, newState: state, diskpartActive: false };
+  }
 
   if (line.toLowerCase() === 'diskpart') {
     return { stdout: DISKPART_BANNER, stderr: '', exitCode: 0, newCwd: cwd, newFs: fs, newState: state, diskpartActive: true };
@@ -54,7 +61,11 @@ function executeSingleCmdCommand(
 ): WindowsExecutionResult {
   const ctx = new WindowsContext(parsed.name, parsed.args, stdin, parsed.raw, cwd, fs, cloneState(state));
   const handler = cmdCommands.get(parsed.name);
-  let res: WindowsResult = handler
+  // <command> /? prints the command's usage instead of running it
+  const usage = cmdSlashHelp(parsed.name, parsed.args);
+  let res: WindowsResult = usage !== null
+    ? ctx.ok(usage)
+    : handler
     ? handler(ctx)
     : ctx.fail(`'${parsed.name}' is not recognized as an internal or external command,\noperable program or batch file.`, 9009);
 
@@ -147,12 +158,6 @@ export function executeCmdCommand(
   return executeCmdPipeline(rawInput, cwd, fs, state);
 }
 
-/** Programs (not CMD built-ins) that PowerShell can run directly. */
-const NATIVE_TOOLS = new Set([
-  'ipconfig', 'ping', 'tracert', 'nslookup', 'netstat', 'route', 'tasklist', 'taskkill', 'sfc', 'dism', 'gpupdate',
-  'gpresult', 'net', 'whoami', 'hostname', 'systeminfo', 'chkdsk', 'findstr', 'more', 'bootrec',
-]);
-
 function executePowerShellCommand(
   rawLine: string,
   cwd: string,
@@ -167,13 +172,16 @@ function executePowerShellCommand(
   const piped = runPowerShellPipeline(ctx, stages);
   if (piped) return piped;
 
+  const asked = first ? psDashQuestion(ctx, first.name, first.args) : null;
+  if (asked) return asked;
+
   const handler = first ? psCommands.get(first.name) : undefined;
   const res = handler ? handler(ctx) : null;
   if (res) return res;
 
   // Native programs (ipconfig.exe, ping.exe, ...) run the same inside PowerShell
   const exe = (first?.name ?? '').toLowerCase().replace(/\.exe$/, '');
-  if (NATIVE_TOOLS.has(exe)) return executeCmdCommand(line.replace(/^(\S+?)\.exe\b/i, '$1'), cwd, fs, state);
+  if (NATIVE_TOOLS.includes(exe)) return executeCmdCommand(line.replace(/^(\S+?)\.exe\b/i, '$1'), cwd, fs, state);
 
   return ctx.fail(psNotRecognized(line, first?.name ?? ''), 1);
 }

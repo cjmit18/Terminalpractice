@@ -1,6 +1,7 @@
 import { ProcessItem } from '../../../types/terminal';
 import { createNode, writeFileContent } from '../../filesystem';
 import { WindowsContext, WindowsResult, cmdCommands } from '../context';
+import { cmdDoc } from '../../docs';
 
 // CMD system tools: whoami, hostname, ver, systeminfo, tasklist, taskkill, sfc, dism, chkdsk,
 // bootrec, gpupdate, gpresult, net
@@ -32,14 +33,67 @@ export function allProcesses(ctx: WindowsContext): ProcessItem[] {
   ].sort((a, b) => a.pid - b.pid);
 }
 
+type TaskFilter = (p: ProcessItem) => boolean;
+
+/** Parses one /FI "NAME op value" filter. Returns null when tasklist would reject it. */
+function taskFilter(text: string): TaskFilter | null {
+  const m = text.trim().match(/^(\w+)\s+(eq|ne|gt|lt|ge|le)\s+(.+)$/i);
+  if (!m) return null;
+  const field = m[1].toUpperCase();
+  const op = m[2].toLowerCase();
+  const value = m[3].trim();
+  const numeric = (actual: number, want: number) =>
+    ({ eq: actual === want, ne: actual !== want, gt: actual > want, lt: actual < want, ge: actual >= want, le: actual <= want } as Record<string, boolean>)[op];
+  const textual = op === 'eq' || op === 'ne';
+  const pattern = new RegExp(`^${value.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`, 'i');
+  const matches = (...candidates: string[]) => candidates.some(c => pattern.test(c)) === (op === 'eq');
+  switch (field) {
+    case 'PID': return /^\d+$/.test(value) ? p => numeric(p.pid, Number(value)) : null;
+    case 'MEMUSAGE': return /^\d+$/.test(value) ? p => numeric(Math.round(p.mem * 1024), Number(value)) : null;
+    case 'IMAGENAME': return textual ? p => matches(p.command) : null;
+    case 'USERNAME': return textual ? p => matches(p.user, `${p.user === 'SYSTEM' ? 'NT AUTHORITY' : 'CORP'}\\${p.user}`) : null;
+    case 'STATUS': return textual ? () => matches('RUNNING') : null;
+    case 'SESSIONNAME': return textual ? p => matches(p.user === 'SYSTEM' ? 'Services' : 'Console') : null;
+    default: return null;
+  }
+}
+
 function tasklist(ctx: WindowsContext): WindowsResult {
+  const filters: TaskFilter[] = [];
+  let format = 'TABLE';
+  let noHeader = false;
+  for (let i = 0; i < ctx.args.length; i++) {
+    const a = ctx.args[i].toLowerCase();
+    if (a === '/fi') {
+      const f = taskFilter(ctx.args[++i] ?? '');
+      if (!f) return ctx.fail('ERROR: The search filter cannot be recognized.', 1);
+      filters.push(f);
+    } else if (a === '/fo') {
+      format = (ctx.args[++i] ?? '').toUpperCase();
+      if (!['TABLE', 'LIST', 'CSV'].includes(format)) return ctx.fail(`ERROR: Invalid argument/option - '${ctx.args[i] ?? ''}'.\nType "TASKLIST /?" for usage.`, 1);
+    } else if (a === '/nh') {
+      noHeader = true;
+    }
+  }
+  const procs = allProcesses(ctx).filter(p => filters.every(f => f(p)));
+  if (!procs.length) return ctx.ok('INFO: No tasks are running which match the specified criteria.');
+  const session = (p: ProcessItem) => (p.user === 'SYSTEM' ? ['Services', '0'] : ['Console', '1']);
+  const mem = (p: ProcessItem) => `${Math.round(p.mem * 1024).toLocaleString('en-US')} K`;
+  if (format === 'CSV') {
+    const rows = procs.map(p => [p.command, String(p.pid), ...session(p), mem(p)].map(v => `"${v}"`).join(','));
+    return ctx.ok([...(noHeader ? [] : ['"Image Name","PID","Session Name","Session#","Mem Usage"']), ...rows].join('\n'));
+  }
+  if (format === 'LIST') {
+    return ctx.ok(procs.map(p => [
+      '', `Image Name:   ${p.command}`, `PID:          ${p.pid}`, `Session Name: ${session(p)[0]}`, `Session#:     ${session(p)[1]}`, `Mem Usage:    ${mem(p)}`,
+    ].join('\n')).join('\n'));
+  }
   const header = '\nImage Name                     PID Session Name        Session#    Mem Usage\n========================= ======== ================ =========== ============';
-  const rows = allProcesses(ctx).map(p => {
-    const session = p.user === 'SYSTEM' ? 'Services                   0' : 'Console                    1';
-    const mem = `${Math.round(p.mem * 1024).toLocaleString('en-US')} K`;
-    return `${p.command.padEnd(25, ' ')} ${p.pid.toString().padStart(8, ' ')} ${session} ${mem.padStart(12, ' ')}`;
+  const rows = procs.map(p => {
+    const [name, num] = session(p);
+    return `${p.command.padEnd(25, ' ')} ${p.pid.toString().padStart(8, ' ')} ${name.padEnd(16)} ${num.padStart(11)} ${mem(p).padStart(12, ' ')}`;
   });
-  return ctx.ok(`${header}\n${rows.join('\n')}`);
+  return ctx.ok(noHeader ? `\n${rows.join('\n')}` : `${header}\n${rows.join('\n')}`);
 }
 
 function taskkill(ctx: WindowsContext): WindowsResult {
@@ -315,44 +369,178 @@ function gpresult(ctx: WindowsContext): WindowsResult {
   ].join('\n'));
 }
 
-function net(ctx: WindowsContext): WindowsResult {
-  const { args, state } = ctx;
-  const sub = args[0]?.toLowerCase();
-  const isAdd = args.some(a => a.toLowerCase() === '/add');
-  if ((sub === 'user' || sub === 'localgroup') && isAdd && !ctx.isAdmin) {
-    return ctx.fail('System error 5 has occurred.\n\nAccess is denied.', 2, NOT_ELEVATED(ctx, 'Adding accounts or group members'));
-  }
-  if (sub === 'user') {
-    if (args.length === 1) {
-      return ctx.ok([
-        `User accounts for \\\\${state.hostname}`,
-        '',
-        '-------------------------------------------------------------------------------',
-        'Administrator            DefaultAccount           Guest',
-        'Student                  WDAGUtilityAccount',
-        'The command completed successfully.',
-      ].join('\n'));
+const BUILTIN_LOCAL_USERS = ['Administrator', 'DefaultAccount', 'Guest', 'Student', 'WDAGUtilityAccount'];
+const DISABLED_BUILTINS = new Set(['DefaultAccount', 'Guest', 'WDAGUtilityAccount']);
+const DEFAULT_LOCAL_GROUPS: Record<string, { comment: string; members: string[] }> = {
+  Administrators: { comment: 'Administrators have complete and unrestricted access to the computer/domain', members: ['Administrator', 'CORP\\Domain Admins', 'Student'] },
+  'Backup Operators': { comment: 'Backup Operators can override security restrictions for the sole purpose of backing up or restoring files', members: [] },
+  Guests: { comment: 'Guests have the same access as members of the Users group by default, except for the Guest account which is further restricted', members: ['Guest'] },
+  'Remote Desktop Users': { comment: 'Members in this group are granted the right to logon remotely', members: [] },
+  Users: { comment: 'Users are prevented from making accidental or intentional system-wide changes and can run most applications', members: ['CORP\\Domain Users', 'NT AUTHORITY\\Authenticated Users', 'NT AUTHORITY\\INTERACTIVE'] },
+};
+const RULE = '-------------------------------------------------------------------------------';
+const DONE = 'The command completed successfully.';
+const helpMsg = (n: number) => `\n\nMore help is available by typing NET HELPMSG ${n}.`;
+const DENIED = 'System error 5 has occurred.\n\nAccess is denied.';
+const DC_NOTE = 'The request will be processed at a domain controller for domain corp.local.';
+
+const localUsers = (ctx: WindowsContext) => [...BUILTIN_LOCAL_USERS, ...(ctx.state.localUsers ?? [])];
+function localGroups(ctx: WindowsContext): Record<string, string[]> {
+  return ctx.state.localGroups ?? Object.fromEntries(Object.entries(DEFAULT_LOCAL_GROUPS).map(([g, v]) => [g, [...v.members]]));
+}
+const findName = (names: string[], wanted: string) => names.find(n => n.toLowerCase() === wanted.toLowerCase());
+
+/** Three names per row, as net user lists accounts. */
+function threeColumns(names: string[]): string[] {
+  const rows: string[] = [];
+  for (let i = 0; i < names.length; i += 3) rows.push(names.slice(i, i + 3).map(n => n.padEnd(25)).join('').trimEnd());
+  return rows;
+}
+
+function netUser(ctx: WindowsContext, rest: string[]): WindowsResult {
+  const switches = rest.filter(a => a.startsWith('/')).map(a => a.toLowerCase());
+  const operands = rest.filter(a => !a.startsWith('/'));
+  const domain = switches.includes('/domain');
+  const { state } = ctx;
+  if (switches.includes('/add') || switches.includes('/delete')) {
+    if (!ctx.isAdmin) return ctx.fail(DENIED, 2, NOT_ELEVATED(ctx, 'Adding or deleting accounts'));
+    const name = operands[0];
+    if (!name) return ctx.fail(cmdDoc('net')!.topics!.user, 1);
+    if (switches.includes('/add')) {
+      if (findName(localUsers(ctx), name)) return ctx.fail(`The account already exists.${helpMsg(2224)}`, 2);
+      const groups = localGroups(ctx);
+      state.localUsers = [...(state.localUsers ?? []), name];
+      state.localGroups = { ...groups, Users: [...groups.Users, name] };
+    } else {
+      if (!findName(state.localUsers ?? [], name)) return ctx.fail(`The user name could not be found.${helpMsg(2221)}`, 2);
+      state.localUsers = (state.localUsers ?? []).filter(u => u.toLowerCase() !== name.toLowerCase());
+      state.localGroups = Object.fromEntries(Object.entries(localGroups(ctx)).map(([g, m]) => [g, m.filter(u => u.toLowerCase() !== name.toLowerCase())]));
     }
-    if (isAdd) {
-      const newUsername = args[1];
-      if (newUsername && !state.adUsers.find(u => u.sAMAccountName.toLowerCase() === newUsername.toLowerCase())) {
-        state.adUsers.push({
-          sAMAccountName: newUsername,
-          givenName: newUsername,
-          surname: 'User',
-          displayName: `${newUsername} (Added via CLI)`,
-          email: `${newUsername}@corp.local`,
-          department: 'Operations',
-          ou: 'OU=Users,DC=corp,DC=local',
-          enabled: true,
-          locked: false,
-          passwordNeverExpires: false,
-          memberOf: ['Domain Users'],
-        });
+    return ctx.ok(DONE);
+  }
+  if (!operands.length) {
+    const head = domain ? [DC_NOTE, '', '', 'User accounts for \\\\DC01'] : [`User accounts for \\\\${state.hostname}`];
+    const names = domain ? state.adUsers.map(u => u.sAMAccountName) : localUsers(ctx);
+    return ctx.ok([...head, '', RULE, ...threeColumns(names), DONE].join('\n'));
+  }
+  const wanted = operands[0];
+  const ad = state.adUsers.find(u => u.sAMAccountName.toLowerCase() === wanted.toLowerCase());
+  const local = findName(localUsers(ctx), wanted);
+  if (domain ? !ad : !local) {
+    return ctx.fail(`The user name could not be found.${helpMsg(2221)}`, 2,
+      !domain && ad ? `${ad.sAMAccountName} is a domain account, not a local one. Add /domain (net user ${ad.sAMAccountName} /domain) to ask the domain controller.` : undefined);
+  }
+  const name = domain ? ad!.sAMAccountName : local!;
+  const field = (k: string, v = '') => `${k.padEnd(29)}${v}`.trimEnd();
+  const active = domain ? (ad!.locked ? 'Locked' : ad!.enabled ? 'Yes' : 'No') : DISABLED_BUILTINS.has(name) ? 'No' : 'Yes';
+  const localMember = Object.entries(localGroups(ctx)).filter(([, m]) => m.some(u => u.toLowerCase() === name.toLowerCase())).map(([g]) => `*${g}`);
+  return ctx.ok([
+    ...(domain ? [DC_NOTE, ''] : []),
+    field('User name', name),
+    field('Full Name', domain ? ad!.displayName : ''),
+    field('Comment', name === 'Administrator' ? 'Built-in account for administering the computer/domain' : ''),
+    field("User's comment"),
+    field('Country/region code', '000 (System Default)'),
+    field('Account active', active),
+    field('Account expires', 'Never'),
+    '',
+    field('Password last set', '10/1/2026 9:00:00 AM'),
+    field('Password expires', domain && ad!.passwordNeverExpires ? 'Never' : '11/12/2026 9:00:00 AM'),
+    field('Password changeable', '10/2/2026 9:00:00 AM'),
+    field('Password required', 'Yes'),
+    field('User may change password', 'Yes'),
+    '',
+    field('Workstations allowed', 'All'),
+    field('Logon script'),
+    field('User profile'),
+    field('Home directory'),
+    field('Last logon', '10/19/2026 8:45:12 AM'),
+    '',
+    field('Logon hours allowed', 'All'),
+    '',
+    field('Local Group Memberships', domain ? '' : localMember.join(' ')),
+    field('Global Group memberships', domain ? ad!.memberOf.map(g => `*${g}`).join(' ') : '*None'),
+    DONE,
+  ].join('\n'));
+}
+
+function netLocalgroup(ctx: WindowsContext, rest: string[]): WindowsResult {
+  const switches = rest.filter(a => a.startsWith('/')).map(a => a.toLowerCase());
+  const operands = rest.filter(a => !a.startsWith('/'));
+  const groups = localGroups(ctx);
+  if (!operands.length) {
+    return ctx.ok(['', `Aliases for \\\\${ctx.state.hostname}`, '', RULE, ...Object.keys(groups).sort().map(g => `*${g}`), DONE].join('\n'));
+  }
+  const group = findName(Object.keys(groups), operands[0]);
+  const noGroup = () => ctx.fail(`The specified local group does not exist.${helpMsg(3780)}`, 2);
+  if (switches.includes('/add') || switches.includes('/delete')) {
+    if (!ctx.isAdmin) return ctx.fail(DENIED, 2, NOT_ELEVATED(ctx, 'Changing local group membership'));
+    if (!group) return noGroup();
+    let members = [...groups[group]];
+    for (const m of operands.slice(1)) {
+      const bare = m.replace(/^corp\\/i, '');
+      const ad = ctx.state.adUsers.find(u => u.sAMAccountName.toLowerCase() === bare.toLowerCase());
+      const entry = findName(localUsers(ctx), m) ?? (ad ? `CORP\\${ad.sAMAccountName}` : undefined);
+      if (!entry) return ctx.fail(`There is no such global user or group: ${m}.${helpMsg(3783)}`, 2);
+      const has = members.some(x => x.toLowerCase() === entry.toLowerCase());
+      if (switches.includes('/add')) {
+        if (has) return ctx.fail('System error 1378 has occurred.\n\nThe specified account name is already a member of the group.', 2);
+        members.push(entry);
+      } else {
+        if (!has) return ctx.fail('System error 1377 has occurred.\n\nThe specified account name is not a member of the group.', 2);
+        members = members.filter(x => x.toLowerCase() !== entry.toLowerCase());
       }
     }
+    ctx.state.localGroups = { ...groups, [group]: members };
+    return ctx.ok(DONE);
   }
-  return ctx.ok('The command completed successfully.');
+  if (!group) return noGroup();
+  return ctx.ok([
+    `Alias name     ${operands[0]}`,
+    `Comment        ${DEFAULT_LOCAL_GROUPS[group]?.comment ?? ''}`.trimEnd(),
+    '',
+    'Members',
+    '',
+    RULE,
+    ...groups[group],
+    DONE,
+  ].join('\n'));
+}
+
+function netService(ctx: WindowsContext, start: boolean, rest: string[]): WindowsResult {
+  const name = rest.filter(a => !a.startsWith('/')).join(' ');
+  const services = ctx.state.services;
+  if (!name) {
+    if (!start) return ctx.fail(cmdDoc('net')!.topics!.stop, 1);
+    const running = services.filter(s => s.status === 'Running').map(s => s.displayName).sort((a, b) => a.localeCompare(b));
+    return ctx.ok(['These Windows services are started:', '', ...running.map(r => `   ${r}`), '', DONE].join('\n'));
+  }
+  const svc = services.find(s => s.name.toLowerCase() === name.toLowerCase() || s.displayName.toLowerCase() === name.toLowerCase());
+  if (!svc) return ctx.fail(`The service name is invalid.${helpMsg(2185)}`, 2);
+  if (!ctx.isAdmin) return ctx.fail(DENIED, 2, NOT_ELEVATED(ctx, `${start ? 'Starting' : 'Stopping'} a service`));
+  if (start) {
+    if (svc.status === 'Running') return ctx.fail(`The requested service has already been started.${helpMsg(2182)}`, 2);
+    if (svc.startType === 'Disabled') {
+      return ctx.fail('System error 1058 has occurred.\n\nThe service cannot be started, either because it is disabled or because it has no enabled devices associated with it.', 2);
+    }
+    svc.status = 'Running';
+    return ctx.ok(`The ${svc.displayName} service is starting.\nThe ${svc.displayName} service was started successfully.\n`);
+  }
+  if (svc.status !== 'Running') return ctx.fail(`The ${svc.displayName} service is not started.${helpMsg(3521)}`, 2);
+  svc.status = 'Stopped';
+  return ctx.ok(`The ${svc.displayName} service is stopping.\nThe ${svc.displayName} service was stopped successfully.\n`);
+}
+
+function net(ctx: WindowsContext): WindowsResult {
+  const [subRaw, ...rest] = ctx.args;
+  switch (subRaw?.toLowerCase()) {
+    case 'user': case 'users': return netUser(ctx, rest);
+    case 'localgroup': return netLocalgroup(ctx, rest);
+    case 'start': return netService(ctx, true, rest);
+    case 'stop': return netService(ctx, false, rest);
+    case undefined: return ctx.fail(cmdDoc('net')!.usage, 1);
+    default: return ctx.ok(DONE);
+  }
 }
 
 cmdCommands.registerAll({

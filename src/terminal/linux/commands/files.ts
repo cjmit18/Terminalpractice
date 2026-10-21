@@ -1,3 +1,4 @@
+import { FileNode } from '../../../types/terminal';
 import { createNode, removeNode, fileSize, writeFileContent } from '../../filesystem';
 import { LinuxContext, LinuxResult, linuxCommands } from '../context';
 
@@ -19,6 +20,9 @@ function cd(ctx: LinuxContext): LinuxResult {
   ctx.cwd = resolved;
   return ctx.ok();
 }
+
+/** First column of ls -l: d directory, b/c device, - regular file. */
+const typeChar = (n: FileNode) => (n.type === 'directory' ? 'd' : n.device === 'block' ? 'b' : n.device === 'char' ? 'c' : '-');
 
 function ls(ctx: LinuxContext): LinuxResult {
   const { args } = ctx;
@@ -45,7 +49,7 @@ function ls(ctx: LinuxContext): LinuxResult {
 
   if (node.type === 'file') {
     if (showLong) {
-      const perm = '-' + node.permissions.replace(/^[d-]/, '');
+      const perm = typeChar(node) + node.permissions.replace(/^[d-]/, '');
       return ctx.ok(`${perm} 1 ${node.owner} ${node.group} ${fileSize(node)} Oct 19 10:00 ${node.name}`);
     }
     return ctx.ok(node.name);
@@ -65,8 +69,7 @@ function ls(ctx: LinuxContext): LinuxResult {
   const lines = keys.map(k => {
     if (k === '.' || k === '..') return `drwxr-xr-x 2 root root 4096 Oct 19 10:00 ${k}`;
     const child = children[k];
-    const prefix = child.type === 'directory' ? 'd' : '-';
-    const perm = prefix + child.permissions.replace(/^[d-]/, '');
+    const perm = typeChar(child) + child.permissions.replace(/^[d-]/, '');
     const size = fileSize(child).toString().padStart(6, ' ');
     return `${perm} 1 ${child.owner.padEnd(8, ' ')} ${child.group.padEnd(8, ' ')} ${size} Oct 19 10:00 ${child.name}`;
   });
@@ -113,8 +116,10 @@ function touch(ctx: LinuxContext): LinuxResult {
 }
 
 function rm(ctx: LinuxContext): LinuxResult {
-  const { args } = ctx;
-  const targets = args.filter(a => !a.startsWith('-'));
+  const end = ctx.args.indexOf('--');
+  const args = end === -1 ? ctx.args : ctx.args.slice(0, end);
+  // after --, every argument is a file name, even one that starts with -
+  const targets = [...args.filter(a => !a.startsWith('-')), ...(end === -1 ? [] : ctx.args.slice(end + 1))];
   const recursive = args.some(a => /^-[a-zA-Z]*[rR]/.test(a));
   const force = args.some(a => /^-[a-zA-Z]*f/.test(a));
 
