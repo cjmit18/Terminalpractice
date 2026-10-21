@@ -549,3 +549,17 @@ test('Windows labs start healthy unless the scenario breaks something', () => {
     assert.ok(s.processes.some(p => p.pid === 1120 && p.command === 'svchost.exe'), m.id);
   }
 });
+
+test('master re-check: Invoke-GPUpdate -Force counts as a forced policy refresh, a plain refresh does not', () => {
+  const run = labRun('win-pbq-group-policy-mgmt', 'powershell');
+  run('Invoke-GPUpdate');
+  assert.ok(!run.done.has('gpo-gpupdate-force'));
+  run('Invoke-GPUpdate -Force');
+  assert.ok(run.done.has('gpo-gpupdate-force'));
+});
+
+test('master re-check: sudo in front of lspci and df still counts', () => {
+  const hw = objective('lpi-101-1-system-architecture', 'hw-lspci');
+  assert.ok(hw.verifier({} as FileNode, {} as SystemState, ctx('sudo lspci', '00:19.0 Ethernet controller: Intel')));
+  assert.ok(!hw.verifier({} as FileNode, {} as SystemState, ctx('echo lspci', 'Ethernet')));
+});

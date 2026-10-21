@@ -353,3 +353,15 @@ test('H-3: every listed Windows command without a handler gives the not-simulate
     }
   }
 });
+
+test('master re-check R-1: piping into a cmdlet the simulator lacks says so, not a binding error', () => {
+  const run = windowsSession('powershell');
+  for (const line of ['Get-Service | Out-File svc.txt', 'Get-Service | ForEach-Object { $_.Name }', 'Get-Service | Get-Member']) {
+    const res = run(line);
+    assert.notEqual(res.exitCode, 0, line);
+    assert.match(res.stderr, /is not supported in this simulator/, line);
+    assert.doesNotMatch(res.stderr, /InputObjectNotBound/, line);
+  }
+  // A simulated cmdlet given the wrong kind of object still gets PowerShell's own error
+  assert.match(run('Get-Service | Stop-Process').stderr, /InputObjectNotBound/);
+});

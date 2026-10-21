@@ -303,8 +303,13 @@ function consume(ctx: WindowsContext, objs: Objects, stage: PsStage): WindowsRes
   const name = canonical(stage.name);
   const bindTo = BY_PROPERTY[name];
   const handler = psCommands.get(stage.name);
-  if (!bindTo || !handler || !objs.kind || (!bindTo.kinds.includes(objs.kind) && objs.kind !== 'custom')) {
-    const doc = psDoc(stage.name);
+  const doc = psDoc(stage.name);
+  // Only a simulated cmdlet given the wrong kind of input gets PowerShell's binding error. Elsewhere the
+  // limit is the simulator's, and saying so avoids teaching that the cmdlet takes no pipeline input.
+  if (!bindTo || !handler) {
+    return ctx.fail(`${doc?.name ?? stage.name} : piping into ${doc?.name ?? stage.name} is not supported in this simulator.`, 1);
+  }
+  if (!objs.kind || (!bindTo.kinds.includes(objs.kind) && objs.kind !== 'custom')) {
     return ctx.fail(psError(stage.raw, doc?.name ?? stage.name, 'The input object cannot be bound to any parameters for the command either because the command does not take pipeline input or the input and its properties do not match any of the parameters that take pipeline input.',
       'InvalidArgument', '', 'ParameterBindingException', 'InputObjectNotBound'));
   }

@@ -376,7 +376,7 @@ export const PS_DOCS: PsDoc[] = [
     name: 'New-ADUser', commandType: 'Cmdlet', ...AD, aliases: [],
     synopsis: 'Creates an Active Directory user.',
     syntax: ['New-ADUser [-Name] <String> [-AccountPassword <SecureString>] [-ChangePasswordAtLogon <Boolean>] [-Department <String>] [-DisplayName <String>] [-EmailAddress <String>] [-Enabled <Boolean>] [-GivenName <String>] [-Path <String>] [-SamAccountName <String>] [-Surname <String>] [-UserPrincipalName <String>] [-WhatIf] [-Confirm] [<CommonParameters>]'],
-    description: ['Creates a user account in Active Directory. Without -AccountPassword and -Enabled $true the new account is created disabled. The object is created in CN=Users unless -Path names an OU, and -SamAccountName defaults to -Name.'],
+    description: ['Creates a user account in Active Directory. Without -AccountPassword and -Enabled $true the new account is created disabled. The object is created in CN=Users unless -Path names an OU. Always give -SamAccountName (the logon name): real Windows requires it, although this simulator falls back to -Name.'],
     parameters: [
       p('Name', 'String', 'Name of the user object (the CN).', { position: '0', required: true }),
       p('SamAccountName', 'String', 'Logon name (pre-Windows 2000).'),

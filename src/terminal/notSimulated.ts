@@ -24,6 +24,8 @@ export const NOT_SIMULATED_WINDOWS: readonly string[] = [
   'manage-bde', 'wmic', 'mstsc', 'certutil', 'msconfig', 'regedit', 'eventvwr', 'gpedit.msc', 'mmc', 'diskmgmt.msc',
   'services.msc', 'msinfo32', 'perfmon', 'resmon', 'taskmgr', 'control', 'driverquery', 'reg', 'runas', 'cscript', 'wscript',
   // PowerShell cmdlets the lessons mention
+  'Write-Host', 'Get-Date', 'Set-Content', 'Add-Content', 'Move-Item', 'Rename-Item', 'Test-Path', 'Get-Alias',
+  'Add-ADPrincipalGroupMembership', 'Out-File', 'Export-Csv', 'ForEach-Object', 'Get-Member',
   'Read-Host', 'ConvertTo-SecureString', 'Get-EventLog', 'Get-WinEvent', 'Restart-Computer', 'Stop-Computer',
   'Get-ADGroup', 'New-ADGroup', 'Set-ADUser', 'Remove-ADUser', 'Remove-ADGroupMember', 'Get-ADComputer', 'Get-NetAdapter',
   'Get-NetIPAddress', 'Get-DnsClientCache', 'Resolve-DnsName', 'Get-Disk', 'Get-Volume', 'Get-Partition', 'Get-SmbShare',

@@ -370,8 +370,8 @@ export const WINDOWS_PBQS: ExamModule[] = [
         id: 'gpo-gpupdate-force',
         title: 'Force a policy refresh',
         description: 'Reapply all computer and user policy now instead of waiting for the background refresh.',
-        hint: 'Run gpupdate /force.',
-        verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && /gpupdate/i.test(ctx.command) && /\/force/i.test(ctx.command),
+        hint: 'Run gpupdate /force (in PowerShell, Invoke-GPUpdate -Force also works).',
+        verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && /\b(gpupdate|Invoke-GPUpdate)\b/i.test(ctx.command) && /(\/|-)force\b/i.test(ctx.command),
       },
       {
         id: 'gpo-gpresult-r',

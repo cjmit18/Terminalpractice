@@ -282,7 +282,7 @@ export const LPI_MODULES: ExamModule[] = [
         title: 'List the PCI devices',
         description: 'Run lspci and find the Ethernet and VGA controllers.',
         hint: 'Run lspci. On a real system, lspci -k also shows which kernel driver handles each device.',
-        verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && ctx.command.trim().startsWith('lspci') && ctx.stdout.includes('Ethernet'),
+        verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && /^(sudo\s+)?lspci\b/.test(ctx.command.trim()) && ctx.stdout.includes('Ethernet'),
       },
       {
         id: 'hw-lsmod',
@@ -425,7 +425,7 @@ export const LPI_MODULES: ExamModule[] = [
         title: 'Check the mounted filesystems',
         description: 'Show the size, usage and mount point of each mounted filesystem in readable units.',
         hint: 'Run df -h.',
-        verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && ctx.command.trim().startsWith('df') && ctx.stdout.includes('/boot'),
+        verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && /^(sudo\s+)?df\b/.test(ctx.command.trim()) && ctx.stdout.includes('/boot'),
       },
     ],
     initialFs: createDefaultLinuxFs(),
