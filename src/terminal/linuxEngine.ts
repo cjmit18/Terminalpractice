@@ -15,7 +15,9 @@ import './linux/commands/text';
 import './linux/commands/users';
 import './linux/commands/system';
 import './linux/commands/network';
+import './linux/commands/accounts';
 import { helpOptionOutput } from './linux/commands/help';
+import { syncKernelFiles } from './linux/virtualFs';
 
 export interface LinuxExecutionResult extends StageResult {}
 
@@ -108,6 +110,7 @@ function executeLinuxPipeline(
   let input = '';
   let activeFs = cloneFileSystem(fs);
   let activeState = cloneState(state);
+  syncKernelFiles(activeFs, activeState);
   let currentCwd = cwd;
   let exitCode = 0;
   const errors: string[] = [];
@@ -200,7 +203,20 @@ function runLinuxCommand(
 
   if (name === 'sudo') {
     const plain = new LinuxContext('sudo', args, stdin, cwd, fs, runState, false);
-    if (!plain.isRoot && !plain.groups.some(g => SUDO_GROUPS.includes(g))) {
+    const allowed = plain.isRoot || plain.groups.some(g => SUDO_GROUPS.includes(g));
+    if (args[0] === '-h' || args[0] === '--help') return plain.ok(helpOptionOutput('sudo', ['--help'])!.stdout);
+    if (args[0] === '-l' || args[0] === '--list') {
+      const host = runState.hostname;
+      if (!allowed) return plain.fail(`Sorry, user ${plain.user} may not run sudo on ${host}.`, 1);
+      return plain.ok([
+        `Matching Defaults entries for ${plain.user} on ${host}:`,
+        '    env_reset, mail_badpass, secure_path=/usr/local/sbin\\:/usr/local/bin\\:/usr/sbin\\:/usr/bin\\:/sbin\\:/bin\\:/snap/bin, use_pty',
+        '',
+        `User ${plain.user} may run the following commands on ${host}:`,
+        '    (ALL : ALL) ALL',
+      ].join('\n'));
+    }
+    if (!allowed) {
       return plain.fail(
         `${plain.user} is not in the sudoers file.  This incident will be reported.`, 1,
         `${describeIdentity(plain.user, plain.groups)} sudo only lets members of the 'sudo' group (configured in /etc/sudoers) run commands as root.`

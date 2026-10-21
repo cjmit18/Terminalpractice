@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { linuxSession, windowsSession } from './testUtils.ts';
+import { getNodeAtPath } from './filesystem.ts';
 
 // Engine gaps found while writing lessons (DiskPart, AD, counts, filters, accounts ...)
 
@@ -139,6 +140,68 @@ test('net user, net localgroup, net start and net stop', () => {
   const user = windowsSession('cmd', { isRootOrAdmin: false });
   const denied = user('net stop spooler');
   assert.match(denied.stderr, /System error 5 has occurred\.\n\nAccess is denied\./);
+});
+
+test('passwd, userdel, chage and sudo -l', () => {
+  const run = linuxSession();
+  const shadowLine = (u: string) => (getNodeAtPath(run.fs(), '/etc/shadow', false)?.content ?? '').split('\n').find(l => l.startsWith(`${u}:`)) ?? '';
+  const before = shadowLine('student');
+  const self = run('passwd');
+  assert.equal(self.exitCode, 0);
+  assert.match(self.stdout, /^Changing password for student\.\nCurrent password: \nNew password: \nRetype new password: \npasswd: password updated successfully$/);
+  assert.notEqual(shadowLine('student'), before);
+  assert.match(shadowLine('student'), /^student:\$y\$[^:]+:20745:/);
+  assert.match(run('passwd root').stderr, /You may not view or modify password information for root/);
+  assert.match(run('sudo passwd nginx').stdout, /^New password: \nRetype new password: \npasswd: password updated successfully$/);
+  assert.equal(run('sudo passwd -l student').stdout, 'passwd: password changed.');
+  assert.match(shadowLine('student'), /^student:!\$y\$/);
+  assert.match(run('passwd -S').stdout, /^student L 10\/19\/2026 0 99999 7 -1$/);
+  run('sudo passwd -u student');
+  assert.match(run('passwd -S').stdout, /^student P /);
+  assert.match(run('passwd ghost').stderr, /user 'ghost' does not exist/);
+
+  const ageing = run('chage -l student').stdout;
+  assert.match(ageing, /^Last password change +: Oct 19, 2026\nPassword expires +: never/);
+  assert.match(ageing, /Maximum number of days between password change +: 99999/);
+  assert.match(run('chage -l root').stderr, /Permission denied/);
+  assert.match(run('sudo chage -l root').stdout, /Last password change +: Jan 08, 2022/);
+  run('sudo chage -M 90 -W 14 student');
+  assert.match(run('chage -l student').stdout, /Password expires +: Jan 17, 2027[\s\S]*: 90\n[\s\S]*: 14$/);
+
+  run('sudo useradd -m -G developers alice');
+  assert.ok(getNodeAtPath(run.fs(), '/home/alice', false));
+  assert.match(run('userdel alice').stderr, /^userdel: Permission denied\./);
+  const del = run('sudo userdel -r alice');
+  assert.equal(del.exitCode, 0);
+  assert.equal(del.stderr, 'userdel: alice mail spool (/var/mail/alice) not found');
+  assert.equal(getNodeAtPath(run.fs(), '/home/alice', false), null);
+  assert.doesNotMatch(getNodeAtPath(run.fs(), '/etc/passwd', false)?.content ?? '', /alice/);
+  assert.doesNotMatch(getNodeAtPath(run.fs(), '/etc/group', false)?.content ?? '', /alice/);
+  assert.equal(run('sudo userdel alice').exitCode, 6);
+  assert.equal(run('sudo userdel student').exitCode, 8);
+
+  assert.match(run('sudo -l').stdout, /User student may run the following commands on \S+:\n {4}\(ALL : ALL\) ALL/);
+  assert.match(run('sudo -h').stdout, /^Usage: sudo/);
+  const outsider = linuxSession({ currentUser: 'nginx', currentGroup: 'nginx' });
+  assert.match(outsider('sudo -l').stderr, /^Sorry, user nginx may not run sudo on /);
+});
+
+test('/proc, /dev and SUID programs agree with the rest of the system', () => {
+  const run = linuxSession();
+  assert.match(run('ls -l /usr/bin/passwd').stdout, /^-rwsr-xr-x 1 root root .* passwd$/);
+  assert.match(run('find /usr/bin -perm -4000').stdout, /\/usr\/bin\/passwd/);
+  const partitions = run('cat /proc/partitions').stdout;
+  for (const dev of run('lsblk').stdout.match(/sd[a-z]\d*/g) ?? []) assert.match(partitions, new RegExp(` ${dev}$`, 'm'));
+  assert.match(run('cat /proc/version').stdout, new RegExp(`^Linux version ${run('uname -r').stdout.replace(/\./g, '\\.')} `));
+  const memTotal = run('cat /proc/meminfo').stdout.match(/^MemTotal: +(\d+) kB/m)?.[1];
+  assert.match(run('free').stdout, new RegExp(`Mem: +${memTotal} `));
+  assert.match(run('cat /proc/cpuinfo').stdout, /^processor\t: 0\nvendor_id\t: GenuineIntel/);
+  assert.match(run('cat /proc/modules').stdout, /^crc16 16384 1 ext4, Live/m);
+  assert.match(run('cat /proc/mounts').stdout, /^\/dev\/sda3 \/ ext4 /m);
+  assert.match(run('ls -l /dev/sda').stdout, /^brw-rw---- 1 root +disk /);
+  assert.match(run('ls -l /dev/null').stdout, /^crw-rw-rw- /);
+  assert.match(run('cat /dev/sda').stderr, /Permission denied/);
+  assert.match(run('cat /etc/resolv.conf').stdout, new RegExp(`nameserver ${run.state().interfaces[0].dns[0].replace(/\./g, '\\.')}`));
 });
 
 test('uname options, ip filtering by device, journalctl -u', () => {

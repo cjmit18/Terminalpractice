@@ -2,6 +2,7 @@ import { SystemState, WindowsService } from '../../../types/terminal';
 import { createNode, describeIdentity } from '../../filesystem';
 import { parseOptions, optionValue, padNum } from '../../textUtils';
 import { LinuxContext, LinuxResult, linuxCommands } from '../context';
+import { DEFAULT_LINUX_DISKS, KERNEL_RELEASE, KERNEL_VERSION, MEMORY_KIB, MODULES } from '../virtualFs';
 
 // System, hardware, processes, services, packages and archives
 
@@ -26,16 +27,8 @@ const LSPCI = [
   '00:04.0 USB controller: Intel Corporation 82801I (ICH9 Family) USB UHCI Controller #1',
 ].join('\n');
 
-const LSMOD = [
-  'Module                  Size  Used by',
-  'e1000e                286720  0',
-  'ext4                  962560  1',
-  'crc16                  16384  1 ext4',
-  'mbcache                16384  1 ext4',
-  'jbd2                  163840  1 ext4',
-  'ahci                   45056  2',
-  'libahci                49152  1 ahci',
-].join('\n');
+const LSMOD = ['Module                  Size  Used by',
+  ...MODULES.map(([n, size, count, users]) => `${n.padEnd(19)}${String(size).padStart(9)}  ${count}${users.length ? ` ${users.join(',')}` : ''}`)].join('\n');
 
 const JOURNAL_HEAD = '-- Journal begins at Sun 2026-10-19 08:00:00 UTC, ends at Sun 2026-10-19 10:25:00 UTC. --';
 
@@ -63,7 +56,7 @@ function journalctl(ctx: LinuxContext): LinuxResult {
   return ctx.ok([head, ...(entries.length ? entries.map(e => e.line.replace(' lpi-lab ', ` ${ctx.state.hostname} `)) : ['-- No entries --'])].join('\n'));
 }
 
-const KERNEL = { r: '5.15.0-101-generic', v: '#111-Ubuntu SMP Tue Mar 5 20:16:58 UTC 2024' };
+const KERNEL = { r: KERNEL_RELEASE, v: KERNEL_VERSION };
 
 function uname(ctx: LinuxContext): LinuxResult {
   const opts = parseOptions(ctx.args, '', {
@@ -297,14 +290,7 @@ function linuxDisks(ctx: LinuxContext) {
   });
 }
 
-const DEFAULT_DISKS: SystemState['disks'] = [{
-  diskNumber: 0, totalSizeMB: 51200, model: 'QEMU HARDDISK', status: 'Online', partitionTable: 'GPT',
-  partitions: [
-    { id: 1, sizeMB: 512, fsType: 'ext4', mountPoint: '/boot' },
-    { id: 2, sizeMB: 4096, fsType: 'swap' },
-    { id: 3, sizeMB: 46592, fsType: 'ext4', mountPoint: '/' },
-  ],
-}];
+const DEFAULT_DISKS = DEFAULT_LINUX_DISKS;
 
 /** Human-readable size like df -h / lsblk (1024-based, one decimal under 10). */
 function human(mb: number, suffix = ''): string {
@@ -403,7 +389,8 @@ function lsblk(ctx: LinuxContext): LinuxResult {
 
 function free(ctx: LinuxContext): LinuxResult {
   const opts = parseOptions(ctx.args, '', { human: 'h', mega: 'm', giga: 'g', kilo: 'k' });
-  const kib = { total: 8148236, used: 1934520, free: 4120384, shared: 45872, cache: 2093332, avail: 5912500, swap: 4194300 };
+  const m = MEMORY_KIB;
+  const kib = { ...m, cache: m.buffers + m.cached };
   const f = opts.flags;
   const fmt = (k: number): string => {
     if (f.has('h')) {

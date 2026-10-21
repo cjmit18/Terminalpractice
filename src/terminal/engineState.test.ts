@@ -76,6 +76,6 @@ test('/etc/resolv.conf exists at its real path', () => {
   const run = linuxSession();
   const res = run('cat /etc/resolv.conf');
   assert.equal(res.exitCode, 0);
-  assert.match(res.stdout, /nameserver 1\.1\.1\.1/);
+  assert.match(res.stdout, /nameserver 192\.168\.1\.1/);
   assert.ok(run('ls /etc').stdout.includes('resolv.conf'));
 });

@@ -15,6 +15,8 @@ export interface FileNode {
   group: string; // e.g. "root" or "student"
   updatedAt: string;
   children?: { [key: string]: FileNode };
+  /** Device node in /dev (shown as b or c by ls -l). */
+  device?: 'block' | 'char';
 }
 
 export type TerminalShell = 'bash' | 'cmd' | 'powershell';

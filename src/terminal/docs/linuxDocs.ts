@@ -618,7 +618,47 @@ export const LINUX_DOCS: LinuxDoc[] = [
     seeAlso: ['groupdel(8)', 'groupmod(8)', 'useradd(8)', 'group(5)'],
   },
   {
-    name: 'passwd', section: 1, summary: 'change user password', source: 'shadow-utils 4.8.1', pageOnly: true,
+    name: 'userdel', section: 8, summary: 'delete a user account and related files', source: 'shadow-utils 4.8.1',
+    manual: 'System Management Commands', sbin: true, dashH: true,
+    synopsis: ['userdel [options] LOGIN'],
+    description: [
+      'Removes an account from /etc/passwd, /etc/shadow and /etc/group. The user\'s private group goes too when nobody else is in it.',
+      'Files are left alone unless -r is given, which also deletes the home directory and mail spool. An account still running processes is refused unless -f is used.',
+    ],
+    options: [
+      o('-f, --force', 'remove the account even while the user is logged in'),
+      o('-r, --remove', 'also delete the home directory and mail spool'),
+      o('-h, --help', 'show usage and exit'),
+    ],
+    exitStatus: '0 success, 1 cannot update the password file, 2 bad syntax, 6 the user does not exist, 8 the user is logged in, 10 cannot update the group file.',
+    examples: [{ cmd: 'sudo userdel -r alice', desc: 'Delete alice and her home directory.' }],
+    seeAlso: ['useradd(8)', 'usermod(8)', 'groupdel(8)', 'passwd(5)'],
+  },
+  {
+    name: 'chage', section: 1, summary: 'change user password expiry information', source: 'shadow-utils 4.8.1', dashH: true,
+    synopsis: ['chage [options] LOGIN'],
+    description: [
+      'Shows or changes the password ageing fields of an account in /etc/shadow: when the password was last changed, how long it stays valid and when the account expires.',
+      'Users may list their own settings with -l; every change needs root.',
+    ],
+    options: [
+      o('-d, --lastday LAST_DAY', 'set the date of the last password change (0 forces a change at next login)'),
+      o('-E, --expiredate EXPIRE_DATE', 'date the account stops working (YYYY-MM-DD, or -1 for never)'),
+      o('-I, --inactive INACTIVE', 'days after the password expires before the account is locked'),
+      o('-l, --list', 'show the ageing information'),
+      o('-m, --mindays MIN_DAYS', 'minimum days between password changes'),
+      o('-M, --maxdays MAX_DAYS', 'maximum days a password stays valid'),
+      o('-W, --warndays WARN_DAYS', 'days of warning before the password expires'),
+      o('-h, --help', 'show usage and exit'),
+    ],
+    examples: [
+      { cmd: 'chage -l student', desc: 'Show student\'s password ageing.' },
+      { cmd: 'sudo chage -M 90 -W 14 alice', desc: 'alice must change her password every 90 days, with 14 days of warning.' },
+    ],
+    seeAlso: ['passwd(1)', 'shadow(5)', 'usermod(8)'],
+  },
+  {
+    name: 'passwd', section: 1, summary: 'change user password', source: 'shadow-utils 4.8.1',
     synopsis: ['passwd [options] [LOGIN]'],
     description: [
       'Changes the password of an account. Users may change only their own password; root may change anyone\'s and can lock or expire accounts.',
