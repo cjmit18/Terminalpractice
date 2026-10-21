@@ -20,6 +20,9 @@ export interface ModuleObjective {
   id: string;
   title: string;
   description: string;
+  /** Hint ladder, gentlest first: a nudge toward the concept, then the command's shape with blanks, then `hint` (the answer). */
+  nudge?: string;
+  shape?: string;
   hint: string;
   verifier: (fs: FileNode, state: SystemState, ctx?: CommandContext) => boolean;
 }
