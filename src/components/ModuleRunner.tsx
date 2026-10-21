@@ -61,7 +61,13 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
     newlyDone.forEach(id => onCompleteRef.current(mod.id, id));
   }, []);
 
-  const { session, run, setSystemState, clearHistory, reset } = useShellSession(() => freshSession(module), verify);
+  const { session, run, setSystemState, clearHistory, reset: resetSession } = useShellSession(() => freshSession(module), verify);
+  // Counts resets, so the terminal knows a fresh machine started (and shows its login banner)
+  const [resetCount, setResetCount] = useState(0);
+  const reset = useCallback((next: ShellSession) => {
+    resetSession(next);
+    setResetCount(n => n + 1);
+  }, [resetSession]);
 
   // A different module is a different machine
   useEffect(() => {
@@ -250,6 +256,7 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
             history={session.history}
             onExecuteCommand={execute}
             onClearHistory={clearHistory}
+            resetKey={resetCount}
             isDiskpartActive={session.diskpartActive}
             currentUser={state.currentUser}
             hostname={state.hostname}

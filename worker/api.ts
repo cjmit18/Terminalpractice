@@ -156,28 +156,47 @@ async function githubCallback(request: Request, url: URL, env: ApiEnv, deps: Api
   return back(h => h.append('Set-Cookie', cookie(SESSION_COOKIE, sessionToken, SESSION_TTL / 1000)));
 }
 
+/**
+ * Find or create the user for a GitHub account. Safe when two first sign-ins of the same account
+ * run at once (two tabs, a double click): both may get past the first lookup and create a users
+ * row, but only one identities row can exist for (provider, provider_id). The loser's insert does
+ * nothing, it re-reads the winner's user id and deletes its own unused users row.
+ */
 async function upsertGithubUser(
   db: Db,
   now: number,
   p: { providerId: string; login: string; name: string; avatarUrl: string | null },
 ): Promise<string> {
-  const existing = await db
-    .prepare('SELECT user_id FROM identities WHERE provider = ? AND provider_id = ?')
-    .bind('github', p.providerId)
-    .first<{ user_id: string }>();
-  if (existing) {
+  const findUser = () =>
+    db
+      .prepare('SELECT user_id FROM identities WHERE provider = ? AND provider_id = ?')
+      .bind('github', p.providerId)
+      .first<{ user_id: string }>();
+  const refresh = async (userId: string) => {
     // Keep the name, username and picture current with GitHub
-    await db.prepare('UPDATE users SET display_name = ?, avatar_url = ? WHERE id = ?').bind(p.name, p.avatarUrl, existing.user_id).run();
+    await db.prepare('UPDATE users SET display_name = ?, avatar_url = ? WHERE id = ?').bind(p.name, p.avatarUrl, userId).run();
     await db.prepare('UPDATE identities SET login = ? WHERE provider = ? AND provider_id = ?').bind(p.login, 'github', p.providerId).run();
+  };
+
+  const existing = await findUser();
+  if (existing) {
+    await refresh(existing.user_id);
     return existing.user_id;
   }
   const id = crypto.randomUUID();
   await db.prepare('INSERT INTO users (id, display_name, avatar_url, created_at) VALUES (?, ?, ?, ?)').bind(id, p.name, p.avatarUrl, now).run();
   await db
-    .prepare('INSERT INTO identities (provider, provider_id, user_id, login) VALUES (?, ?, ?, ?)')
+    .prepare('INSERT INTO identities (provider, provider_id, user_id, login) VALUES (?, ?, ?, ?) ON CONFLICT (provider, provider_id) DO NOTHING')
     .bind('github', p.providerId, id, p.login)
     .run();
-  return id;
+  const winner = await findUser();
+  if (!winner) throw new Error('GitHub identity missing right after insert');
+  if (winner.user_id !== id) {
+    // Another sign-in created this account first: drop the users row this one made and use theirs
+    await db.prepare('DELETE FROM users WHERE id = ?').bind(id).run();
+    await refresh(winner.user_id);
+  }
+  return winner.user_id;
 }
 
 // --- Sessions ------------------------------------------------------------------------------

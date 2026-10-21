@@ -22,6 +22,8 @@ interface TerminalViewProps {
   currentUser?: string;
   hostname?: string;
   readOnly?: boolean;
+  /** Change it when the session is reset (a fresh machine): the login banner shows again. */
+  resetKey?: number;
 }
 
 const SHELL_NAMES: Record<TerminalShell, string> = {
@@ -43,6 +45,18 @@ const COMPLETIONS: Record<'linux' | 'windows', string[]> = {
 
 const SYMBOL_KEYS = ['|', '>', '<', '&', '/', '~', '-', '_', '.', '$', '*', '"', "'", '\\', ':'];
 
+/**
+ * True when the new history is what is left after a clear: the lines that were on screen are gone.
+ * Only the clear sequence empties the history (or restarts it with the output that followed it,
+ * as in `clear; echo hi`) without a reset.
+ */
+function screenCleared(before: TerminalLine[], after: TerminalLine[]): boolean {
+  if (after.length === 0) return true;
+  if (before.length > 0) return !after.some(h => h.id === before[before.length - 1].id);
+  // From an empty screen, `clear; echo hi` leaves one new line
+  return after.length === 1 && /(^|[;&|]\s*)(clear|cls)(\s|;|&|\||$)/i.test(after[0].command);
+}
+
 /** /home/student -> ~, the way bash shows it */
 function tildePath(cwd: string, user: string) {
   const home = user === 'root' ? '/root' : `/home/${user}`;
@@ -62,6 +76,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
   currentUser = 'student',
   hostname = 'lpi-lab01',
   readOnly = false,
+  resetKey = 0,
 }) => {
   const [input, setInput] = useState('');
   const [copied, setCopied] = useState(false);
@@ -87,11 +102,19 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
     if (el) el.scrollTop = el.scrollHeight;
   }, [history, showBanner]);
 
-  // A new shell starts with its own login line
+  // The login banner: a new shell or a reset machine shows it; `clear`/`cls` (typed, or run from a
+  // walkthrough step) wipes it with the rest of the screen, as the Clear button does
+  const seen = useRef({ history, shell, resetKey });
   useEffect(() => {
-    setShowBanner(true);
-    setHistoryIndex(null);
-  }, [shell]);
+    const before = seen.current;
+    seen.current = { history, shell, resetKey };
+    if (before.shell !== shell || before.resetKey !== resetKey) {
+      setShowBanner(true);
+      setHistoryIndex(null);
+    } else if (before.history !== history && screenCleared(before.history, history)) {
+      setShowBanner(false);
+    }
+  }, [history, shell, resetKey]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
