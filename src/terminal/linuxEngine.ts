@@ -21,6 +21,7 @@ import './linux/commands/system';
 import './linux/commands/network';
 import './linux/commands/accounts';
 import './linux/commands/printf';
+import './linux/commands/lookup';
 import { helpOptionOutput } from './linux/commands/help';
 import { syncKernelFiles } from './linux/virtualFs';
 import { expandArgs } from './linux/glob';

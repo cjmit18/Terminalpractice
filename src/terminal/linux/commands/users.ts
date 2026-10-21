@@ -1,7 +1,10 @@
 import { FileNode } from '../../../types/terminal';
-import { applyChmod, getSpecialBits, applySpecialBits, octalToSymbolic, toOctalField, describeIdentity, writeFileContent } from '../../filesystem';
+import { applyChmod, getSpecialBits, applySpecialBits, octalToSymbolic, toOctalField, describeIdentity, writeFileContent, removeNode } from '../../filesystem';
 import { parseOptions, optionValue } from '../../textUtils';
 import { LinuxContext, LinuxResult, linuxCommands, createInDir } from '../context';
+
+/** The lab clock, 2026-10-19, in days since 1970-01-01 (the unit /etc/shadow uses; chage uses the same day). */
+const LAB_TODAY = Math.floor(Date.UTC(2026, 9, 19) / 86400000);
 
 // Identity, ownership and permissions: su, exit, whoami, id, chmod, chown, chgrp, umask,
 // useradd, usermod, groupadd
@@ -251,7 +254,7 @@ function useradd(ctx: LinuxContext): LinuxResult {
     if (node) writeFileContent(node, line, true);
   };
   append('/etc/passwd', `${username}:x:${uid}:${gid}:${comment}:${home}:${shell}`);
-  append('/etc/shadow', `${username}:!:20015:0:99999:7:::`);
+  append('/etc/shadow', `${username}:!:${LAB_TODAY}:0:99999:7:::`);
   const groupFile = ctx.node('/etc/group');
   if (groupFile) {
     let lines = (groupFile.content ?? '').split('\n');
@@ -287,37 +290,141 @@ function groupadd(ctx: LinuxContext): LinuxResult {
   return ctx.ok();
 }
 
+const USERMOD_USAGE = `Usage: usermod [options] LOGIN
+
+Options:
+  -a, --append                  append the user to the supplemental GROUPS
+                                mentioned by the -G option without removing
+                                the user from other groups
+  -c, --comment COMMENT         new value of the GECOS field
+  -d, --home HOME_DIR           new home directory for the user account
+  -e, --expiredate EXPIRE_DATE  set account expiration date to EXPIRE_DATE
+  -g, --gid GROUP               force use GROUP as new primary group
+  -G, --groups GROUPS           new list of supplementary GROUPS
+  -l, --login NEW_LOGIN         new value of the login name
+  -L, --lock                    lock the user account
+  -m, --move-home               move contents of the home directory to the
+                                new location (use only with -d)
+  -s, --shell SHELL             new login shell for the user account
+  -u, --uid UID                 new UID for the user account
+  -U, --unlock                  unlock the user account`;
+
 function usermod(ctx: LinuxContext): LinuxResult {
-  const { args } = ctx;
-  if (!ctx.isRoot) return ctx.fail('usermod: Permission denied.\nusermod: cannot lock /etc/passwd; try again later.', 1, ctx.needsRoot('usermod edits /etc/passwd and /etc/group, which only root may modify, so it'));
-  const gi = args.findIndex(a => a === '-aG' || a === '-G');
-  const user = args[args.length - 1];
-  if (gi === -1 || !args[gi + 1] || user === args[gi + 1]) {
-    return ctx.fail('Usage: usermod [-a] -G GROUP[,GROUP] LOGIN', 2);
+  if (!ctx.isRoot) return ctx.fail('usermod: Permission denied.\nusermod: cannot lock /etc/passwd; try again later.', 1, ctx.needsRoot('usermod edits /etc/passwd, /etc/shadow and /etc/group, which only root may modify, so it'));
+  const opts = parseOptions(ctx.args, 'cdegGlsu', {
+    append: 'a', comment: 'c', home: 'd', expiredate: 'e', gid: 'g', groups: 'G', login: 'l', lock: 'L',
+    'move-home': 'm', shell: 's', uid: 'u', unlock: 'U',
+  });
+  const f = opts.flags;
+  const user = opts.operands[0];
+  const valueKeys = ['c', 'd', 'e', 'g', 'G', 'l', 's', 'u'].filter(k => optionValue(opts, k) !== undefined);
+  const known = new Set(['a', 'L', 'm', 'U']);
+  const unknown = [...f].find(k => !known.has(k) && k.length === 1);
+  if (unknown) return ctx.fail(`usermod: invalid option -- '${unknown}'\n${USERMOD_USAGE}`, 2);
+  if (!user || opts.operands.length > 1) return ctx.fail(USERMOD_USAGE, 2);
+  if (!valueKeys.length && !f.has('L') && !f.has('U')) return ctx.fail(USERMOD_USAGE, 2);
+  if (f.has('a') && optionValue(opts, 'G') === undefined) return ctx.fail(`usermod: -a flag is ONLY allowed with the -G flag\n${USERMOD_USAGE}`, 2);
+  if (f.has('m') && optionValue(opts, 'd') === undefined) return ctx.fail(`usermod: -m flag is ONLY allowed with the -d flag\n${USERMOD_USAGE}`, 2);
+  if (f.has('L') && f.has('U')) return ctx.fail(`usermod: the -L and -U flags are exclusive\n${USERMOD_USAGE}`, 2);
+
+  const db = accounts(ctx);
+  const entry = db.user(user);
+  if (!entry) return ctx.fail(`usermod: user '${user}' does not exist`, 6);
+  const row = [...entry];
+  while (row.length < 7) row.push('');
+
+  const newLogin = optionValue(opts, 'l');
+  if (newLogin !== undefined && newLogin !== user) {
+    if (!/^[a-z_][a-z0-9_-]*\$?$/.test(newLogin)) return ctx.fail(`usermod: invalid user name '${newLogin}'`, 3);
+    if (db.user(newLogin)) return ctx.fail(`usermod: user '${newLogin}' already exists`, 9);
   }
-  const passwd = ctx.node('/etc/passwd')?.content ?? '';
-  if (!passwd.split('\n').some(l => l.startsWith(user + ':'))) {
-    return ctx.fail(`usermod: user '${user}' does not exist`, 6);
+  const primary = optionValue(opts, 'g');
+  let primaryGid: string | undefined;
+  if (primary !== undefined) {
+    const g = db.group(primary) ?? db.groupByGid(primary);
+    if (!g) return ctx.fail(`usermod: group '${primary}' does not exist`, 6);
+    primaryGid = g[2];
   }
-  const append = args[gi] === '-aG' || args.includes('-a');
-  const wanted = args[gi + 1].split(',').filter(Boolean);
-  const groupFile = ctx.node('/etc/group');
-  if (!groupFile) return ctx.fail('usermod: /etc/group not found');
-  const lines = (groupFile.content ?? '').split('\n');
-  const missing = wanted.find(g => !lines.some(l => l.startsWith(g + ':')));
+  const wanted = optionValue(opts, 'G')?.split(',').filter(Boolean);
+  const missing = wanted?.find(g => !db.group(g));
   if (missing) return ctx.fail(`usermod: group '${missing}' does not exist`, 6);
-  groupFile.content = lines.map(line => {
-    const parts = line.split(':');
-    if (parts.length < 4) return line;
-    let members = parts[3] ? parts[3].split(',').filter(Boolean) : [];
-    if (wanted.includes(parts[0])) {
-      if (!members.includes(user)) members.push(user);
-    } else if (!append) {
-      members = members.filter(m => m !== user);
+  const uid = optionValue(opts, 'u');
+  if (uid !== undefined) {
+    if (!/^\d+$/.test(uid)) return ctx.fail(`usermod: invalid user ID '${uid}'`, 3);
+    if (db.passwd.some(r => r[2] === uid && r[0] !== user)) return ctx.fail(`usermod: UID '${uid}' already exists`, 4);
+  }
+  const expire = optionValue(opts, 'e');
+  let expireDays: string | undefined;
+  if (expire !== undefined) {
+    if (expire === '' || expire === '-1') expireDays = '';
+    else if (/^\d+$/.test(expire)) expireDays = expire;
+    else {
+      const t = Date.parse(`${expire}T00:00:00Z`);
+      if (isNaN(t)) return ctx.fail(`usermod: invalid date '${expire}'`, 3);
+      expireDays = String(Math.floor(t / 86400000));
     }
-    parts[3] = members.join(',');
-    return parts.join(':');
-  }).join('\n');
+  }
+
+  // Home directory move (-d NEW -m) happens before the files are rewritten
+  const newHome = optionValue(opts, 'd');
+  if (newHome !== undefined && f.has('m') && newHome !== row[5]) {
+    const oldNode = ctx.node(row[5]);
+    if (ctx.node(newHome)) return ctx.fail(`usermod: directory ${newHome} exists`, 12);
+    if (oldNode) {
+      const parentPath = newHome.slice(0, newHome.lastIndexOf('/')) || '/';
+      const parent = ctx.node(parentPath);
+      if (!parent || parent.type !== 'directory') return ctx.fail(`usermod: cannot rename directory ${row[5]} to ${newHome}`, 12);
+      const name = newHome.slice(newHome.lastIndexOf('/') + 1);
+      removeNode(ctx.fs, row[5], false);
+      parent.children = { ...(parent.children ?? {}), [name]: { ...oldNode, name } };
+    }
+  }
+
+  const login = newLogin ?? user;
+  if (newLogin !== undefined) row[0] = newLogin;
+  if (uid !== undefined) row[2] = uid;
+  if (primaryGid !== undefined) row[3] = primaryGid;
+  const comment = optionValue(opts, 'c');
+  if (comment !== undefined) row[4] = comment;
+  if (newHome !== undefined) row[5] = newHome;
+  const shell = optionValue(opts, 's');
+  if (shell !== undefined) row[6] = shell;
+  const rewrite = (path: string, fn: (fields: string[]) => string[]) => {
+    const node = ctx.node(path);
+    if (!node) return;
+    writeFileContent(node, (node.content ?? '').split('\n').map(l => (l ? fn(l.split(':')).join(':') : l)).join('\n'));
+  };
+  rewrite('/etc/passwd', r => (r[0] === user ? row : r));
+  // Files belong to the UID, so after a rename (same UID) ls shows the new name everywhere
+  if (login !== user && uid === undefined) walkTree(ctx.fs, '/', true, n => { if (n.owner === user) n.owner = login; });
+
+  // /etc/shadow: rename, lock (! before the hash), unlock, expiry date
+  const shadowNode = ctx.node('/etc/shadow');
+  if (shadowNode && !(shadowNode.content ?? '').split('\n').some(l => l.startsWith(`${user}:`))) {
+    writeFileContent(shadowNode, `${user}:!:${LAB_TODAY}:0:99999:7:::`, true);
+  }
+  rewrite('/etc/shadow', r => {
+    if (r[0] !== user) return r;
+    const s = [...r];
+    while (s.length < 9) s.push('');
+    s[0] = login;
+    if (f.has('L') && !s[1].startsWith('!')) s[1] = `!${s[1]}`;
+    if (f.has('U')) s[1] = s[1].replace(/^!/, '');
+    if (expireDays !== undefined) s[7] = expireDays;
+    return s;
+  });
+
+  // /etc/group: supplementary groups (-G replaces the list, -aG adds) and the rename
+  rewrite('/etc/group', r => {
+    if (r.length < 4) return r;
+    let members = r[3] ? r[3].split(',').filter(Boolean) : [];
+    if (wanted) {
+      if (wanted.includes(r[0])) { if (!members.includes(user)) members.push(user); }
+      else if (!f.has('a')) members = members.filter(m => m !== user);
+    }
+    if (login !== user) members = members.map(m => (m === user ? login : m));
+    return [r[0], r[1], r[2], members.join(','), ...r.slice(4)];
+  });
   return ctx.ok();
 }
 

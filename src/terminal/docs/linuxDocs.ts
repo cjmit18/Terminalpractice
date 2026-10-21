@@ -524,6 +524,49 @@ export const LINUX_DOCS: LinuxDoc[] = [
     info: core('id', 'Print user identity', 'User information', 'logname invocation'),
   },
   {
+    name: 'groups', section: 1, summary: 'print the groups a user is in', source: COREUTILS,
+    synopsis: ['groups [OPTION]... [USERNAME]...'],
+    description: ['Prints the names of the primary and supplementary groups of each USERNAME, or of the current process when none is given. For a named user it reads /etc/passwd and /etc/group, so it shows a membership added with usermod -aG even before that user logs in again.'],
+    options: [HELP, VERSION],
+    examples: [{ cmd: 'groups sarah', desc: "sarah's groups, as 'sarah : sarah developers'." }],
+    info: core('groups', 'Print group names a user is in', 'User information', undefined, 'whoami invocation'),
+  },
+  {
+    name: 'getent', section: 1, summary: 'get entries from Name Service Switch libraries', source: 'GNU C Library 2.35',
+    synopsis: ['getent [OPTION]... DATABASE KEY...'],
+    description: [
+      'Looks up KEY in DATABASE through the Name Service Switch (configured in /etc/nsswitch.conf), so it sees local files and any directory service such as LDAP. With no KEY it lists the whole database, where that is allowed.',
+      'Supported databases include passwd, group, shadow, hosts and services. For passwd and group the key may be a name or a numeric ID.',
+    ],
+    options: [o('-s, --service=CONFIG', 'use only this service (for example files)'), o('-?, --help', 'show this usage summary and exit'), o('-V, --version', 'show version information and exit')],
+    examples: [
+      { cmd: 'getent passwd sarah', desc: "sarah's account line." },
+      { cmd: 'getent group developers', desc: 'The group and its members.' },
+      { cmd: 'getent hosts localhost', desc: 'Resolve a host name the way programs do.' },
+    ],
+    exitStatus: '0 success, 1 missing arguments or unknown database, 2 one or more keys not found, 3 enumeration not supported.',
+  },
+  {
+    name: 'stat', section: 1, summary: 'display file or file system status', source: COREUTILS,
+    synopsis: ['stat [OPTION]... FILE...'],
+    description: [
+      "Shows a file's inode information: size, blocks, file type, device and inode number, link count, the mode in octal and symbolic form, owner and group with their numeric IDs, and the access, modify and change times.",
+      'With -c FORMAT it prints only the fields you ask for: %a octal mode, %A symbolic mode, %U owner name, %G group name, %u and %g numeric IDs, %s size, %F file type, %n file name, %i inode, %h link count.',
+    ],
+    options: [
+      o('-c, --format=FORMAT', 'print FORMAT instead of the default layout'),
+      o('-L, --dereference', 'follow symbolic links'),
+      o('-f, --file-system', 'show file system status instead of file status'),
+      o('-t, --terse', 'print the information in terse form'),
+      HELP, VERSION,
+    ],
+    examples: [
+      { cmd: 'stat /etc/passwd', desc: 'Full status, including Access: (0644/-rw-r--r--).' },
+      { cmd: "stat -c '%a %U:%G %n' /etc/shadow", desc: 'Octal mode, owner and group only.' },
+    ],
+    info: core('stat', 'Report file or file system status', 'Disk usage', undefined, 'du invocation'),
+  },
+  {
     name: 'chmod', section: 1, summary: 'change file mode bits', source: COREUTILS,
     synopsis: ['chmod [OPTION]... MODE[,MODE]... FILE...', 'chmod [OPTION]... OCTAL-MODE FILE...', 'chmod [OPTION]... --reference=RFILE FILE...'],
     description: [

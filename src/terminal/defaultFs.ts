@@ -57,7 +57,7 @@ export function createDefaultLinuxFs(): FileNode {
             owner: 'root',
             group: 'root',
             updatedAt: '2026-10-19T00:00:00Z',
-            content: `root:x:0:\nadm:x:4:syslog,student\nsudo:x:27:student\nshadow:x:42:\ndocker:x:998:\nstudent:x:1000:\nfinance:x:1002:\ndevelopers:x:1003:\nnginx:x:1001:`
+            content: `root:x:0:\nadm:x:4:syslog,student\ntty:x:5:\ndisk:x:6:\nsudo:x:27:student\nshadow:x:42:\ndocker:x:998:\nstudent:x:1000:\nfinance:x:1002:\ndevelopers:x:1003:\nnginx:x:1001:`
           },
           shadow: {
             name: 'shadow',

@@ -162,7 +162,7 @@ test('wc counts like GNU wc', () => {
   assert.equal(run('echo hello world | wc').stdout, '      1       2      12');
   assert.equal(run('wc /etc/hosts').stdout, '  4   8 113 /etc/hosts');
   const two = run('wc -l /etc/passwd /etc/group');
-  assert.equal(two.stdout, '  6 /etc/passwd\n  9 /etc/group\n 15 total');
+  assert.equal(two.stdout, '  6 /etc/passwd\n 11 /etc/group\n 17 total');
 });
 
 test('head and tail: counts, +N, -c and multi-file headers', () => {
