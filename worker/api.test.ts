@@ -129,6 +129,13 @@ test('the callback rejects a missing or mismatched state, and a refused code', a
   assert.equal(cancelled.status, 302);
 });
 
+test('a malformed state cookie is a missing state (400), not a server error', async () => {
+  const s = setup();
+  const res = await s.call('GET', '/api/auth/github/callback?code=good-code&state=abc', { Cookie: '__Host-oauth=%E0%A4%A' });
+  assert.equal(res.status, 400);
+  assert.match(res.headers.getSetCookie().join('\n'), /__Host-oauth=;/);
+});
+
 test('sessions slide forward when used and end when they expire', async () => {
   const s = setup();
   const { session } = await signIn(s);
