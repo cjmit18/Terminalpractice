@@ -57,5 +57,27 @@ test('B1: an internal error is reported and leaves fs, state and cwd unchanged',
   assert.equal(res.newFs, fs);
   assert.equal(res.newState, state);
   assert.equal(res.newCwd, 'C:\\Users\\Student');
-  void STUDENT;
+});
+
+test('B2 (L2-12): PowerShell runs statements separated by ; in order', () => {
+  const lab = WINDOWS_PBQS.find(m => m.id === 'win-pbq-powershell-automation')!;
+  const run = windowsSession('powershell');
+  const res = run('Start-Service W32Time; Get-Service W32Time');
+  assert.equal(res.exitCode, 0);
+  assert.match(res.stdout, /Running +W32Time +Windows Time/);
+  const objective = lab.objectives.find(o => o.id === 'ps-start-service')!;
+  assert.ok(objective.verifier(run.fs(), run.state(), { command: 'Start-Service W32Time; Get-Service W32Time', exitCode: 0, stdout: res.stdout }));
+
+  const both = windowsSession('powershell')('Get-Location; Get-Service W32Time');
+  assert.match(both.stdout, /^\nPath\n----\nC:\\Users\\Student\n/);
+  assert.match(both.stdout, /Stopped +W32Time/);
+  // A ; inside quotes is text, a failing statement does not stop the next, and # starts a comment
+  assert.equal(windowsSession('powershell')('Write-Output "a;b"; Write-Output c').stdout, 'a;b\nc');
+  const failed = windowsSession('powershell')('Get-Service nosuch; Write-Output after');
+  assert.equal(failed.stdout, 'after');
+  assert.match(failed.stderr, /Cannot find any service with service name 'nosuch'/);
+  assert.equal(failed.exitCode, 1);
+  assert.equal(windowsSession('powershell')('Get-Service W32Time # the time service').exitCode, 0);
+  // cd in one statement moves the next one
+  assert.match(windowsSession('powershell')('cd C:\\; Get-Location').stdout, /\nC:\\\n/);
 });

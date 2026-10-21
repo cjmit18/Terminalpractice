@@ -10,7 +10,7 @@ import './windows/psSystem';
 import { runPowerShellPipeline } from './windows/psPipeline';
 import { expandCmdVariables, expandPowerShellEnv, setErrorLevel } from './windows/env';
 import { psExtractRedirects, psNotRecognized, psNotSimulated, psSplitPipeline, psStage } from './windows/psUtil';
-import { psSyntaxError } from './windows/psParse';
+import { psSplitStatements, psSyntaxError } from './windows/psParse';
 import { cmdSyntaxError } from './windows/cmd/syntax';
 import { isNotSimulatedWindows } from './notSimulated';
 import { suggestCmd, suggestPowerShell } from './suggest';
@@ -210,7 +210,36 @@ function executePowerShellCommand(
 ): WindowsExecutionResult {
   const syntax = psSyntaxError(rawLine);
   if (syntax) return { stdout: '', stderr: syntax, exitCode: 1, newCwd: cwd, newFs: fs, newState: state };
-  const { body, redirect } = psExtractRedirects(expandPowerShellEnv(rawLine, state));
+  const statements = psSplitStatements(rawLine);
+  if (statements.length <= 1) return executePowerShellStatement(statements[0] ?? '', cwd, fs, state);
+  // a; b runs each statement in turn, whether or not the one before it failed
+  const out: string[] = [];
+  const errors: string[] = [];
+  const notes: string[] = [];
+  let res: WindowsExecutionResult = { stdout: '', stderr: '', exitCode: 0, newCwd: cwd, newFs: fs, newState: state };
+  let exitCode = 0;
+  for (const statement of statements) {
+    res = executePowerShellStatement(statement, res.newCwd, res.newFs, res.newState);
+    if (res.stdout) out.push(res.stdout);
+    if (res.stderr) errors.push(res.stderr);
+    if (res.explanation && !notes.includes(res.explanation)) notes.push(res.explanation);
+    if (res.exitCode !== 0) exitCode = res.exitCode;
+  }
+  const result: WindowsExecutionResult = { ...res, stdout: out.join('\n'), stderr: errors.join('\n'), exitCode };
+  delete result.explanation;
+  if (notes.length) result.explanation = notes.join('\n');
+  return result;
+}
+
+/** Runs one PowerShell statement (one pipeline with its redirections). */
+function executePowerShellStatement(
+  statement: string,
+  cwd: string,
+  fs: FileNode,
+  state: SystemState
+): WindowsExecutionResult {
+  if (!statement) return { stdout: '', stderr: '', exitCode: 0, newCwd: cwd, newFs: fs, newState: state };
+  const { body, redirect } = psExtractRedirects(expandPowerShellEnv(statement, state));
   let res = runPowerShellLine(body, cwd, fs, state);
   if (redirect.stderr === 'null') res = { ...res, stderr: '' };
   if (redirect.stderr === 'merge') res = { ...res, stdout: [res.stdout, res.stderr].filter(Boolean).join('\n'), stderr: '' };
