@@ -146,6 +146,8 @@ export interface SystemState {
   systemIntegrityCorrupted: boolean;
   dismRepaired: boolean;
   sfcRepaired: boolean;
+  /** Set by any `sfc /scannow` run, whatever its result (sfcRepaired is set only when the scan could fix everything). */
+  sfcScanned?: boolean;
   dnsWorking: boolean;
   gatewayWorking: boolean;
   firewallBlockedPorts: number[];
