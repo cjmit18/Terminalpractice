@@ -5,7 +5,7 @@ import {
 } from './filesystem';
 import { ParsedCommand } from './parser';
 import {
-  splitBashChain, parseBashPipeline, wordText, expandWord, expandToString, assignmentOf, Expander, ExpansionError, Field,
+  splitBashChain, parseBashPipeline, checkBashSyntax, wordText, expandWord, expandToString, assignmentOf, Expander, ExpansionError, Field,
 } from './linux/shell';
 import { shellVariable, homeOf } from './linux/env';
 import { runChain, StageResult } from './chain';
@@ -63,6 +63,9 @@ export function executeLinuxLine(
  * the line's standard output is the terminal (ls then prints columns) or a pipe, file or $(...).
  */
 export function runLinuxLine(line: string, cwd: string, fs: FileNode, state: SystemState, depth: number, tty = false): LinuxExecutionResult {
+  // bash parses the whole line first: a syntax error means nothing on it runs
+  const syntax = checkBashSyntax(line);
+  if (syntax) return { stdout: '', stderr: syntax, exitCode: 2, newCwd: cwd, newFs: fs, newState: { ...state, lastExitCode: 2 } };
   return runChain(splitBashChain(line), cwd, fs, state, (stage, c, f, s) => {
     const res = executeLinuxPipeline(stage, c, f, s, depth, tty);
     // $? reads the status of the last pipeline

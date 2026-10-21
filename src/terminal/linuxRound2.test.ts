@@ -77,3 +77,39 @@ test('A1: ls prints one name per line into a pipe, a file or $(...), columns at 
   assert.equal(run('./l.sh').stdout, 'finance  l.sh  notes.txt  o.txt  scripts');
   assert.equal(run('./l.sh | head -1').stdout, 'finance');
 });
+
+// ---------- A3: syntax errors (texts from bash 5.2) ----------
+
+test('A3: syntax errors stop the whole line with bash\'s message and status 2', () => {
+  const run = linuxSession();
+  const cases: [string, string][] = [
+    ['echo $(echo', "bash: unexpected EOF while looking for matching `)'"],
+    ['echo `x', "bash: unexpected EOF while looking for matching ``'"],
+    ["echo 'x", "bash: unexpected EOF while looking for matching `''"],
+    ['echo "x', "bash: unexpected EOF while looking for matching `\"'"],
+    ['echo ${HOME', "bash: unexpected EOF while looking for matching `}'"],
+    ['|', "bash: syntax error near unexpected token `|'"],
+    [';', "bash: syntax error near unexpected token `;'"],
+    ['echo a && && echo b', "bash: syntax error near unexpected token `&&'"],
+    ['echo a ;; echo b', "bash: syntax error near unexpected token `;;'"],
+    ['echo a | | b', "bash: syntax error near unexpected token `|'"],
+    ['echo a > ;', "bash: syntax error near unexpected token `;'"],
+    ['echo a >', "bash: syntax error near unexpected token `newline'"],
+    ['echo $(echo ))', "bash: syntax error near unexpected token `)'"],
+    ['echo a |', 'bash: syntax error: unexpected end of file'],
+    ['echo a &&', 'bash: syntax error: unexpected end of file'],
+  ];
+  for (const [line, err] of cases) {
+    const res = run(line);
+    assert.equal(res.stdout, '', line);
+    assert.equal(res.stderr, err, line);
+    assert.equal(res.exitCode, 2, line);
+  }
+  assert.equal(run('echo $?').stdout, '2');
+  // Nothing on a line with a syntax error runs, not even the part before it
+  run('touch before.txt; echo a && && echo b');
+  assert.equal(run('ls before.txt').exitCode, 2);
+  // Valid lines with quotes, substitutions, comments and redirections still run
+  assert.equal(run('echo "$(echo "a b")" `echo c` $((1+(2))) \'x;y\' e\\;f # | ;;').stdout, 'a b c 3 x;y e;f');
+  assert.equal(run('echo a; echo b &').stdout, 'a\nb');
+});
