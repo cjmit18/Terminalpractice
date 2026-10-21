@@ -50,11 +50,14 @@ export function executeWindowsLine(
   // CMD expands %VAR% once for the whole line, before splitting on & and |
   const expanded = expandCmdVariables(line, state, cwd);
   const stages = splitChainedCommandLine(expanded, 'cmd');
-  const res = stages.length > 1 ? runChain(stages, cwd, fs, state, executeCmdPipeline) : executeCmdPipeline(expanded, cwd, fs, state);
-  // %ERRORLEVEL% reports the exit code of the last command that sets one
-  const lastName = parsePipelinedLine(stages[stages.length - 1]?.commandLine ?? '', 'cmd').pop()?.name ?? '';
-  setErrorLevel(res.newState, lastName, res.exitCode);
-  return res;
+  // %ERRORLEVEL% reports the exit code of the last command that sets one, updated as each
+  // command of the chain actually runs (ones skipped by && or || leave it alone)
+  const runStage = (pipeline: string, dir: string, f: FileNode, s: SystemState) => {
+    const res = executeCmdPipeline(pipeline, dir, f, s);
+    setErrorLevel(res.newState, parsePipelinedLine(pipeline, 'cmd').pop()?.name ?? '', res.exitCode);
+    return res;
+  };
+  return stages.length > 1 ? runChain(stages, cwd, fs, state, runStage) : runStage(expanded, cwd, fs, state);
 }
 
 /** Runs one CMD command against the pipeline's working copies, then applies its 2> redirect. */

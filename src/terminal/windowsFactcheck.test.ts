@@ -380,3 +380,18 @@ test('PR #10 review: a native program piped on in PowerShell keeps its state cha
   assert.match(run('taskkill /F /PID 3892 | Select-String SUCCESS').stdout, /PID 3892 has been terminated/);
   assert.equal(pids(run).includes(3892), false);
 });
+
+test('PR #10 review: %ERRORLEVEL% follows each command of a chain as it runs', () => {
+  const run = windowsSession('cmd');
+  assert.equal(run('frobnicate & echo done').stdout, 'done');
+  assert.equal(run('echo %ERRORLEVEL%').stdout, '9009');
+  run('ver');
+  assert.equal(run('echo %ERRORLEVEL%').stdout, '0');
+  run('cd C:\\Nope || echo fallback');
+  assert.equal(run('echo %ERRORLEVEL%').stdout, '1');
+  // The skipped command does not count: ver ran last and succeeded
+  run('ver || frobnicate');
+  assert.equal(run('echo %ERRORLEVEL%').stdout, '0');
+  run('frobnicate && ver');
+  assert.equal(run('echo %ERRORLEVEL%').stdout, '9009');
+});
