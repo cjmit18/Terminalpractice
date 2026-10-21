@@ -499,7 +499,7 @@ test('Finding 4: Stderr redirection parsing and execution', () => {
   // Parser check: 2>&1 merge
   const extMerge = extractStderrRedirect('ls /nope 2>&1');
   assert.equal(extMerge.body, 'ls /nope');
-  assert.deepEqual(extMerge.stderr, { type: 'merge' });
+  assert.deepEqual(extMerge.stderr, { type: 'merge', afterStdoutRedirect: false });
 
   const fs = createDefaultLinuxFs();
   const state = {

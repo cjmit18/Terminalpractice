@@ -2,7 +2,14 @@
  * Command line tokenization, quote-aware chaining, pipelines, and redirects
  */
 
-export type StderrRedirect = { type: '>' | '>>'; target: string } | { type: 'merge' };
+export type StderrRedirect =
+  | { type: '>' | '>>'; target: string }
+  /**
+   * 2>&1. Redirections apply left to right, so it sends stderr wherever stdout points at that moment:
+   * `> file 2>&1` (afterStdoutRedirect) puts both in the file, `2>&1 > file` leaves stderr on the
+   * terminal or pipe.
+   */
+  | { type: 'merge'; afterStdoutRedirect: boolean };
 
 /**
  * Quoting rules differ per shell:
@@ -139,8 +146,10 @@ export function extractStderrRedirect(cmd: string, syntax: ShellSyntax = 'bash')
     const m = cmd.slice(i).match(/^2>(>?)\s*(&1|[^\s|&;]+)/);
     if (!m) continue;
     const body = (cmd.slice(0, i) + cmd.slice(i + m[0].length)).trim();
+    // An active ">" earlier in the line is a stdout redirect that 2>&1 then copies
+    const afterStdoutRedirect = cmd.slice(0, i).split('').some((ch, j) => mask[j] && ch === '>');
     const stderr: StderrRedirect = m[2] === '&1'
-      ? { type: 'merge' }
+      ? { type: 'merge', afterStdoutRedirect }
       : { type: m[1] ? '>>' : '>', target: m[2] };
     return { body, stderr };
   }

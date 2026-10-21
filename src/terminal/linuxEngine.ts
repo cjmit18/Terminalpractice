@@ -152,19 +152,29 @@ function executeLinuxPipeline(
     let out = res.stdout;
     let err = res.stderr;
     let note = res.explanation;
-    if (stage.stderrRedirect?.type === 'merge') {
-      // 2>&1: stderr follows stdout (to the terminal, the pipe, or a > file)
-      out = [out, err].filter(Boolean).join('\n');
-      err = '';
-    } else if (stderrTarget) {
-      writeRedirect(activeFs, stderrTarget, err);
-      err = '';
-      note = undefined; // the learner never sees the message, so no note either
-    }
-    if (stdoutTarget) {
+    const merge = stage.stderrRedirect?.type === 'merge' ? stage.stderrRedirect : undefined;
+    if (merge && stdoutTarget && !merge.afterStdoutRedirect) {
+      // 2>&1 > file: stderr took stdout's original target (terminal or pipe) before stdout moved to the file
       writeRedirect(activeFs, stdoutTarget, out);
-      out = '';
+      out = err;
+      err = '';
+    } else {
+      if (merge) {
+        // 2>&1 with stdout already redirected, or not redirected at all: stderr follows stdout
+        out = [out, err].filter(Boolean).join('\n');
+        err = '';
+      } else if (stderrTarget) {
+        writeRedirect(activeFs, stderrTarget, err);
+        err = '';
+        note = undefined; // the learner never sees the message, so no note either
+      }
+      if (stdoutTarget) {
+        writeRedirect(activeFs, stdoutTarget, out);
+        out = '';
+      }
     }
+    // The message went to a file, so the learner never sees it, and there is nothing to explain
+    if (merge && stdoutTarget && merge.afterStdoutRedirect) note = undefined;
     if (err) errors.push(err);
     if (note && !notes.includes(note)) notes.push(note);
     input = out;

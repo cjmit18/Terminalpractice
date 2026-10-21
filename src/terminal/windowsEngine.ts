@@ -72,7 +72,10 @@ function executeSingleCmdCommand(
   const er = parsed.stderrRedirect;
   if (er) {
     if (er.type === 'merge') {
-      res = { ...res, stdout: [res.stdout, res.stderr].filter(Boolean).join('\r\n'), stderr: '' };
+      // "2>&1 > file" is handled by the pipeline: stderr keeps stdout's original target, the console or pipe
+      if (er.afterStdoutRedirect || !parsed.redirect) {
+        res = { ...res, stdout: [res.stdout, res.stderr].filter(Boolean).join('\r\n'), stderr: '' };
+      }
     } else {
       const write = writeWindowsFile(res.newFs, res.newState, normalizePath(er.target, res.newCwd, true), res.stderr, er.type === '>>');
       res = write ? { ...res, stderr: write.error, exitCode: 1, explanation: write.explanation } : { ...res, stderr: '', explanation: undefined };
@@ -129,7 +132,10 @@ function executeCmdPipeline(
     activeState = res.newState;
     exitCode = res.exitCode;
     let out = res.stdout;
-    if (res.stderr) errors.push(res.stderr);
+    const er = stage.stderrRedirect;
+    // 2>&1 before > file: stderr went to stdout's original target before stdout moved to the file
+    const stderrToOldStdout = er?.type === 'merge' && !er.afterStdoutRedirect && !!stage.redirect;
+    if (res.stderr && !stderrToOldStdout) errors.push(res.stderr);
     if (res.explanation && !notes.includes(res.explanation)) notes.push(res.explanation);
     if (stage.redirect) {
       const write = writeWindowsFile(activeFs, activeState, normalizePath(stage.redirect.target, currentCwd, true), out, stage.redirect.type === '>>');
@@ -140,7 +146,7 @@ function executeCmdPipeline(
       }
       out = '';
     }
-    input = out;
+    input = stderrToOldStdout ? res.stderr : out;
   }
   const result: WindowsExecutionResult = {
     stdout: input, stderr: errors.join('\n'), exitCode, newCwd: currentCwd, newFs: activeFs, newState: activeState,
