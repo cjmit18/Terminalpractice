@@ -3,6 +3,7 @@ import { createNode, writeFileContent } from '../../filesystem';
 import { WindowsContext, WindowsResult, cmdCommands } from '../context';
 import { cmdDoc } from '../../docs';
 import { hasConnectivity } from './network';
+import { BOOT_GP, applyGroupPolicy, gpresultTime, windowsNow } from '../clock';
 
 // CMD system tools: whoami, hostname, ver, systeminfo, tasklist, taskkill, sfc, dism, chkdsk,
 // bootrec, gpupdate, gpresult, net
@@ -354,8 +355,14 @@ function systeminfo(ctx: WindowsContext): WindowsResult {
 }
 
 function gpupdate(ctx: WindowsContext): WindowsResult {
+  // gpupdate [/target:{computer | user}] [/force] [/wait:<value>] [/logoff] [/boot] [/sync]
+  const bad = ctx.args.find(a => !/^\/(target:\S*|force|wait:\S*|logoff|boot|sync)$/i.test(a));
+  if (bad !== undefined) return ctx.fail(`ERROR: Invalid argument/option - '${bad}'.\nType "GPUPDATE /?" for usage.`);
   const target = ctx.args.map(a => a.toLowerCase()).find(a => a.startsWith('/target:'))?.slice(8);
-  if (target && target !== 'computer' && target !== 'user') return ctx.fail(`Invalid Syntax: "${target}" is not a valid value for /Target.`);
+  if (target !== undefined && target !== 'computer' && target !== 'user') return ctx.fail(`Invalid Syntax: "${target}" is not a valid value for /Target.`);
+  const wait = ctx.args.map(a => a.toLowerCase()).find(a => a.startsWith('/wait:'))?.slice(6);
+  if (wait !== undefined && !/^-?\d+$/.test(wait)) return ctx.fail(`Invalid Syntax: "${wait}" is not a valid value for /Wait.`);
+  applyGroupPolicy(ctx.state, target as 'computer' | 'user' | undefined);
   const lines = ['Updating policy...', ''];
   if (target !== 'user') lines.push('Computer Policy update has completed successfully.');
   if (target !== 'computer') lines.push('User Policy update has completed successfully.');
@@ -388,11 +395,12 @@ function gpresult(ctx: WindowsContext): WindowsResult {
   if (!lower.includes('/r') && !lower.includes('/v') && !lower.includes('/z')) {
     return ctx.ok('GPRESULT [/S system [/U username [/P [password]]]] [/SCOPE scope]\n           [/USER targetusername] [/R | /V | /Z] [(/X | /H) <filename> [/F]]');
   }
+  const applied = ctx.state.gpApplied ?? {};
   const computer = [
     'COMPUTER SETTINGS',
     '------------------',
     `    CN=${host},OU=Workstations,DC=corp,DC=local`,
-    '    Last time Group Policy was applied: 10/19/2026 at 10:28:44 AM',
+    `    Last time Group Policy was applied: ${gpresultTime(applied.computer ?? BOOT_GP.computer)}`,
     '    Group Policy was applied from:      dc01.corp.local',
     '    Group Policy slow link threshold:   500 kbps',
     '    Domain Name:                        CORP',
@@ -408,19 +416,20 @@ function gpresult(ctx: WindowsContext): WindowsResult {
     'USER SETTINGS',
     '--------------',
     `    CN=${user},CN=Users,DC=corp,DC=local`,
-    '    Last time Group Policy was applied: 10/19/2026 at 10:29:02 AM',
+    `    Last time Group Policy was applied: ${gpresultTime(applied.user ?? BOOT_GP.user)}`,
     '    Group Policy was applied from:      dc01.corp.local',
     '',
     '    Applied Group Policy Objects',
     '    -----------------------------',
     '        Default Domain Policy',
   ];
-  return ctx.ok([
+  const verbose = lower.includes('/v') || lower.includes('/z');
+  return ctx.result([
     '',
     'Microsoft (R) Windows (R) Operating System Group Policy Result tool v2.0',
     '© Microsoft Corporation. All rights reserved.',
     '',
-    `Created on 10/19/2026 at 10:30:15 AM`,
+    `Created on ${gpresultTime(windowsNow(ctx.state))}`,
     '',
     `RSOP data for CORP\\${user} on ${host} : Logging Mode`,
     '-'.repeat(37 + user.length + host.length),
@@ -434,7 +443,9 @@ function gpresult(ctx: WindowsContext): WindowsResult {
     '',
     ...(scope === 'user' ? [] : [...computer, '']),
     ...(scope === 'computer' ? [] : userSection),
-  ].join('\n'));
+  ].join('\n'), '', 0, verbose
+    ? 'This is the /R summary. On a real PC, /V and /Z go on to list each policy setting (security options, scripts, registry settings ...); those sections are not simulated here.'
+    : undefined);
 }
 
 const BUILTIN_LOCAL_USERS = ['Administrator', 'DefaultAccount', 'Guest', 'Student', 'WDAGUtilityAccount'];

@@ -171,3 +171,32 @@ test('B5 (L2-13, N-1, N-6): diskpart keywords by prefix, diskpart.exe, /s, eleva
   }
   assert.equal(windowsSession('cmd', STUDENT)('diskpart').exitCode, 5);
 });
+
+test('B6 (L2-5, L2-9): gpupdate checks its switches, and gpresult shows when it last ran', () => {
+  const gp = labRun('win-pbq-group-policy-mgmt');
+  const applied = (out: string) => [...out.matchAll(/Last time Group Policy was applied: (.*)/g)].map(m => m[1]);
+  const before = gp.run('gpresult /r').stdout;
+  assert.deepEqual(applied(before), ['10/19/2026 at 10:28:44 AM', '10/19/2026 at 10:29:02 AM']);
+  assert.match(before, /Created on 10\/19\/2026 at 10:30:15 AM/);
+
+  const bad = gp.run('gpupdate /forcex');
+  assert.deepEqual([bad.exitCode, bad.stdout], [1, '']);
+  assert.match(bad.stderr, /Invalid argument\/option - '\/forcex'/);
+  assert.equal(gp.done.has('gpo-gpupdate-force'), false);
+  assert.equal(gp.run('gpupdate force').exitCode, 1);
+
+  assert.equal(gp.run('gpupdate /force').exitCode, 0);
+  const after = gp.run('gpresult /r').stdout;
+  assert.notDeepEqual(applied(after), applied(before));
+  assert.deepEqual(applied(after), ['10/19/2026 at 10:30:19 AM', '10/19/2026 at 10:30:22 AM']);
+  assert.match(after, /Created on 10\/19\/2026 at 10:30:27 AM/);
+  assert.deepEqual([...gp.done].sort(), ['gpo-gpresult-r', 'gpo-gpupdate-force']);
+
+  // /target:user refreshes only user policy; Invoke-GPUpdate refreshes too
+  gp.run('gpupdate /target:user');
+  assert.equal(applied(gp.run('gpresult /r').stdout)[0], '10/19/2026 at 10:30:19 AM');
+  const ps = windowsSession('powershell');
+  ps('Invoke-GPUpdate -Force');
+  assert.deepEqual(ps.state().gpApplied, { computer: 4, user: 7 });
+  assert.ok(gp.run('gpresult /v').explanation?.includes('not simulated'));
+});

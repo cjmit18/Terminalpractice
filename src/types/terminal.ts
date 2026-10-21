@@ -160,6 +160,10 @@ export interface SystemState {
   localUsers?: string[];
   /** Windows local group membership changed with net localgroup; unset means the defaults. */
   localGroups?: { [group: string]: string[] };
+  /** Windows lab clock: seconds after 10/19/2026 10:30:15 AM, moved on by commands that take time (gpupdate). */
+  windowsClockSeconds?: number;
+  /** When gpupdate last applied computer and user policy, on the Windows lab clock; unset means at boot. */
+  gpApplied?: { computer?: number; user?: number };
   /** Lines entered in this bash session, oldest first. Maintained by the Linux engine for `history`. */
   commandHistory?: string[];
   /** Exit status of the last bash pipeline, for $?. Maintained by the Linux engine. */

@@ -3,6 +3,7 @@ import { WindowsContext, WindowsResult, psCommands } from './context';
 import { PsBound, PsParamSpec, bindCmdlet, psError } from './psUtil';
 import { connections, hasConnectivity, resolveHost } from './cmd/network';
 import { lineMatcher } from './psPipeline';
+import { applyGroupPolicy } from './clock';
 
 // PowerShell counterparts of CMD tools that labs accept as answers: Clear-DnsClientCache,
 // Test-Connection, Repair-WindowsImage, Invoke-GPUpdate, Get-NetTCPConnection and Select-String.
@@ -116,7 +117,8 @@ function invokeGPUpdate(ctx: WindowsContext): WindowsResult {
   if (target && !['computer', 'user'].includes(target.toLowerCase())) {
     return ctx.fail(psError(ctx.raw, 'Invoke-GPUpdate', `Cannot validate argument on parameter 'Target'. The argument "${target}" does not belong to the set "Computer,User" specified by the ValidateSet attribute.`, 'InvalidData', '', 'ParameterBindingValidationException', 'ParameterArgumentValidationError'));
   }
-  // Like gpupdate, it runs silently when it succeeds
+  applyGroupPolicy(ctx.state, target?.toLowerCase() as 'computer' | 'user' | undefined);
+  // Unlike gpupdate, it runs silently when it succeeds
   return ctx.ok();
 }
 
