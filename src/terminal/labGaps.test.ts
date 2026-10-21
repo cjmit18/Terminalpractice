@@ -204,6 +204,37 @@ test('/proc, /dev and SUID programs agree with the rest of the system', () => {
   assert.match(run('cat /etc/resolv.conf').stdout, new RegExp(`nameserver ${run.state().interfaces[0].dns[0].replace(/\./g, '\\.')}`));
 });
 
+test('PowerShell Sort-Object / Select-Object pipelines and Get-NetIPConfiguration', () => {
+  const run = windowsSession('powershell');
+  const names = (out: string) => out.split('\n').slice(2).map(l => l.trim().split(/\s+/));
+  const byName = names(run('Get-Service | Sort-Object Name').stdout).map(r => r[1]);
+  assert.deepEqual(byName, [...byName].sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' })));
+  const desc = names(run('Get-Service | Sort-Object -Property Name -Descending').stdout).map(r => r[1]);
+  assert.deepEqual(desc, [...byName].reverse());
+  const status = names(run('Get-Service | Sort-Object Status').stdout).map(r => r[0]);
+  assert.equal(status[0], 'Stopped', 'Stopped (1) sorts before Running (4)');
+  assert.equal(status[status.length - 1], 'Running');
+  const top = run('Get-Process | Sort-Object CPU -Descending | Select-Object -First 2').stdout.split('\n').slice(2);
+  assert.equal(top.length, 2);
+  assert.match(top[0], /svchost_update$/);
+  const running = run("Get-Service | Where-Object {$_.Status -eq 'Running'} | sort DisplayName").stdout;
+  assert.doesNotMatch(running, /Stopped/);
+  assert.match(running, /Dhcp +DHCP Client\n/);
+  assert.equal(run('Sort-Object Name').stdout, '');
+  assert.match(run('Get-Help Sort-Object').stdout, /NAME\n {4}Sort-Object/);
+
+  const ip = run('Get-NetIPConfiguration').stdout;
+  assert.match(ip, /^\nInterfaceAlias +: Ethernet0\nInterfaceIndex +: \d+\nInterfaceDescription +: /);
+  assert.match(ip, /IPv4Address +: 169\.254\.82\.114/);
+  assert.match(ip, /NetProfile\.Name +: Unidentified network/);
+  assert.match(ip, /DNSServer +: 192\.168\.1\.10/);
+  run('ipconfig /renew');
+  const after = run('gip -InterfaceAlias Ethernet0 -Detailed').stdout;
+  assert.match(after, /IPv4DefaultGateway +: 192\.168\.1\.1/);
+  assert.match(after, /NetAdapter\.LinkLayerAddress +: 00-50-56-A1-2B-3C/);
+  assert.match(run('Get-NetIPConfiguration -InterfaceAlias Nope').stderr, /No MSFT_NetIPInterface objects found/);
+});
+
 test('uname options, ip filtering by device, journalctl -u', () => {
   const run = linuxSession();
   assert.equal(run('uname -r').stdout, '5.15.0-101-generic');

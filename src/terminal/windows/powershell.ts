@@ -1,6 +1,7 @@
 import { ADUser, WindowsService } from '../../types/terminal';
 import { globToRegex } from '../textUtils';
 import { WindowsContext, WindowsResult, psCommands } from './context';
+import { NetworkInterface } from '../../types/terminal';
 import { bindParams, psError, badParameter } from './psUtil';
 import { resolveHost, hasConnectivity } from './cmd/network';
 import { allProcesses } from './cmd/system';
@@ -41,29 +42,95 @@ const serviceRows = (items: { status: string; name: string; displayName: string 
 const processRows = (items: { mem: number; cpu: number; pid: number; command: string }[]) =>
   items.map(p => `     10     ${p.mem.toFixed(2).padStart(5, ' ')}      ${(p.mem * 2).toFixed(2).padStart(5, ' ')}       ${p.cpu.toFixed(2).padStart(5, ' ')}    ${p.pid.toString().padStart(4, ' ')}   1 ${p.command}`);
 
+/** Objects as the pipeline sees them: the real property names, plus the state fields. */
+const serviceObject = (s: WindowsService): Row => ({ ...s, Status: s.status, Name: s.name, DisplayName: s.displayName, StartType: s.startType, ServiceName: s.name });
+function processObjects(ctx: WindowsContext): Row[] {
+  return allProcesses(ctx).filter(p => p.pid !== 0).map(p => {
+    const name = p.command.replace(/\.exe$/i, '');
+    return { ...p, command: name, ProcessName: name, Name: name, Id: p.pid, CPU: p.cpu, WS: Math.round(p.mem * 2 * 1048576), PM: Math.round(p.mem * 1048576) };
+  });
+}
+
+const STATUS_RANK: Record<string, number> = { Stopped: 1, StartPending: 2, StopPending: 3, Running: 4 };
+
+/** Sort-Object [-Property] a[,b] [-Descending] [-Unique]. */
+function sortObjects(items: Row[], stage: { args: string[]; raw: string }, defaultKey: string): Row[] | string {
+  const p = bindParams(stage.args, { Property: 'value', Descending: 'switch', Unique: 'switch', CaseSensitive: 'switch' });
+  if (typeof p === 'string') return badParameter(stage.raw, 'Sort-Object', p);
+  const props = String(p.named.get('Property') ?? p.positional.join(',') ?? '').split(',').map(x => x.trim()).filter(Boolean);
+  const keys = props.length ? props : [defaultKey];
+  const value = (item: Row, key: string) => {
+    const k = Object.keys(item).find(x => x.toLowerCase() === key.toLowerCase());
+    return k ? item[k] : undefined;
+  };
+  const dir = p.named.has('Descending') ? -1 : 1;
+  const sorted = [...items].sort((a, b) => {
+    for (const k of keys) {
+      const x = value(a, k);
+      const y = value(b, k);
+      // Status is an enum (Stopped = 1 ... Running = 4), so it sorts by number, not by name
+      const rank = (v: unknown) => (k.toLowerCase() === 'status' && typeof v === 'string' && v in STATUS_RANK ? STATUS_RANK[v] : v);
+      const [rx, ry] = [rank(x), rank(y)];
+      const c = typeof rx === 'number' && typeof ry === 'number' ? rx - ry : String(rx ?? '').localeCompare(String(ry ?? ''), 'en', { sensitivity: 'base' });
+      if (c) return c * dir;
+    }
+    return 0;
+  });
+  if (!p.named.has('Unique')) return sorted;
+  return sorted.filter((it, i) => i === 0 || keys.some(k => String(value(it, k)).toLowerCase() !== String(value(sorted[i - 1], k)).toLowerCase()));
+}
+
+/** Select-Object -First/-Last N (other uses are not modelled). */
+function selectObjects(items: Row[], stage: { args: string[]; raw: string }): Row[] | string {
+  const p = bindParams(stage.args, { First: 'value', Last: 'value', Skip: 'value', Property: 'value' });
+  if (typeof p === 'string') return badParameter(stage.raw, 'Select-Object', p);
+  let out = items;
+  if (p.named.has('Skip')) out = out.slice(Number(p.named.get('Skip')) || 0);
+  if (p.named.has('First')) out = out.slice(0, Number(p.named.get('First')) || 0);
+  if (p.named.has('Last')) out = out.slice(-(Number(p.named.get('Last')) || 0));
+  return out;
+}
+
 /**
- * Handles "Get-Service | Where-Object ..." and "Get-Process | Where-Object ...".
- * Returns null when the line is not one of those pipelines.
+ * Runs Get-Service or Get-Process piped into Where-Object, Sort-Object and Select-Object.
+ * Returns null when the line is not such a pipeline.
  */
-export function runPowerShellPipeline(ctx: WindowsContext, stages: { name: string; raw: string }[]): WindowsResult | null {
+export function runPowerShellPipeline(ctx: WindowsContext, stages: { name: string; raw: string; args: string[] }[]): WindowsResult | null {
   if (stages.length < 2) return null;
   const s0 = stages[0].raw.trim();
-  const isService = /^Get-Service/i.test(s0);
-  const isProcess = /^Get-Process/i.test(s0);
+  const isService = /^(Get-Service|gsv)\b/i.test(s0);
+  const isProcess = /^(Get-Process|gps|ps)\b/i.test(s0);
   if (!isService && !isProcess) return null;
 
-  if (!/^(Where-Object|where|\?)/i.test(stages[1].name)) {
-    return ctx.fail(`${stages[1].name}: pipeline filter not supported in this sim`);
-  }
-  const s1 = stages[1].raw.trim();
+  let items: Row[];
   if (isService) {
-    const res = applyWhereObjectFilter(ctx.state.services as unknown as Row[], s1);
-    if (res.error) return ctx.fail(res.error);
-    return ctx.ok(`${SERVICE_HEADER}\n${serviceRows(res.items as never).join('\n')}`);
+    const sub = new WindowsContext(stages[0].name, stages[0].args, '', s0, ctx.cwd, ctx.fs, ctx.state);
+    const m = matchServices(sub, 'Get-Service');
+    if (typeof m === 'string') return ctx.fail(m);
+    items = m.items.map(serviceObject);
+  } else {
+    items = processObjects(ctx);
   }
-  const res = applyWhereObjectFilter(ctx.state.processes as unknown as Row[], s1);
-  if (res.error) return ctx.fail(res.error);
-  return ctx.ok(`${PROCESS_HEADER}\n${processRows(res.items as never).join('\n')}`);
+  for (const stage of stages.slice(1)) {
+    const name = stage.name.toLowerCase();
+    let next: Row[] | string;
+    if (['where-object', 'where', '?'].includes(name)) {
+      const res = applyWhereObjectFilter(items, stage.raw.trim());
+      next = res.error ?? res.items;
+    } else if (name === 'sort-object' || name === 'sort') {
+      next = sortObjects(items, stage, isService ? 'Name' : 'ProcessName');
+    } else if (name === 'select-object' || name === 'select') {
+      next = selectObjects(items, stage);
+    } else {
+      return ctx.fail(`${stage.name}: pipeline filter not supported in this sim`);
+    }
+    if (typeof next === 'string') return ctx.fail(next);
+    items = next;
+  }
+  if (!items.length) return ctx.ok('');
+  return ctx.ok(isService
+    ? `${SERVICE_HEADER}\n${serviceRows(items as never).join('\n')}`
+    : `${PROCESS_HEADER}\n${processRows(items as never).join('\n')}`);
 }
 
 const param = (line: string, name: string): string | undefined => {
@@ -320,7 +387,45 @@ function unlockADAccount(ctx: WindowsContext): WindowsResult {
   return ctx.ok();
 }
 
+/** Get-NetIPConfiguration [-InterfaceAlias name] [-Detailed]: the adapter summary PowerShell shows. */
+function getNetIPConfiguration(ctx: WindowsContext): WindowsResult {
+  const p = bindParams(ctx.args, { InterfaceAlias: 'value', InterfaceIndex: 'value', Detailed: 'switch', All: 'switch' });
+  if (typeof p === 'string') return ctx.fail(badParameter(ctx.raw, 'Get-NetIPConfiguration', p));
+  const alias = (p.named.get('InterfaceAlias') as string | undefined) ?? p.positional[0];
+  const adapters: NetworkInterface[] = ctx.state.interfaces.filter(i => i.name !== 'lo' && !i.ip.startsWith('127.'));
+  const chosen = alias ? adapters.filter(i => globToRegex(alias, true).test(i.name)) : adapters;
+  if (alias && !chosen.length && !/[*?]/.test(alias)) {
+    return ctx.fail(psError(ctx.raw, 'Get-NetIPConfiguration', `No MSFT_NetIPInterface objects found with property 'InterfaceAlias' equal to '${alias}'.  Verify the value of the property and retry.`,
+      'ObjectNotFound', alias, 'CimJobException', 'CmdletizationQuery_NotFound_InterfaceAlias,Get-NetIPInterface'));
+  }
+  const detailed = p.named.has('Detailed');
+  const blocks = chosen.map((i, n) => {
+    const apipa = i.ip.startsWith('169.254.');
+    const rows: [string, string][] = [
+      ['InterfaceAlias', i.name],
+      ['InterfaceIndex', String(12 + n)],
+      ['InterfaceDescription', 'Intel(R) 82574L Gigabit Network Connection'],
+      ...(detailed ? [['NetAdapter.LinkLayerAddress', i.mac], ['NetAdapter.Status', i.status === 'UP' ? 'Up' : 'Disconnected']] as [string, string][] : []),
+      ['NetProfile.Name', apipa ? 'Unidentified network' : 'corp.local'],
+      ...(detailed ? [['NetProfile.NetworkCategory', apipa ? 'Public' : 'DomainAuthenticated'], ['NetProfile.IPv4Connectivity', apipa ? 'NoTraffic' : 'Internet']] as [string, string][] : []),
+      ['IPv4Address', i.ip],
+      ['IPv6DefaultGateway', ''],
+      ['IPv4DefaultGateway', i.gateway],
+      ['DNSServer', i.dns.join('\n')],
+    ];
+    const width = Math.max(...rows.map(([k]) => k.length)) + 1;
+    return rows.map(([k, v]) => {
+      const [first, ...more] = v.split('\n');
+      return [`${k.padEnd(width)}: ${first}`.trimEnd(), ...more.map(m => `${' '.repeat(width + 2)}${m}`)].join('\n');
+    }).join('\n');
+  });
+  return ctx.ok(blocks.length ? `\n${blocks.join('\n\n')}\n` : '');
+}
+
 psCommands.register(['Test-NetConnection', 'tnc'], testNetConnection);
+psCommands.register(['Get-NetIPConfiguration', 'gip'], getNetIPConfiguration);
+// Pipeline cmdlets with nothing piped in output nothing, as in PowerShell
+psCommands.register(['Sort-Object', 'sort', 'Where-Object', 'where', '?', 'Select-Object', 'select'], ctx => ctx.ok(''));
 psCommands.registerAll({
   'Get-Service': getService,
   gsv: getService,
