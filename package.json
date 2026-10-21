@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "test": "tsx --test src/terminal/rules.test.ts",
+    "test": "tsx --test 'src/**/*.test.ts'",
     "e2e": "playwright test"
   },
   "dependencies": {

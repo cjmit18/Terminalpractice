@@ -499,7 +499,7 @@ test('Finding 4: Stderr redirection parsing and execution', () => {
   // Parser check: 2>&1 merge
   const extMerge = extractStderrRedirect('ls /nope 2>&1');
   assert.equal(extMerge.body, 'ls /nope');
-  assert.deepEqual(extMerge.stderr, { type: 'merge' });
+  assert.deepEqual(extMerge.stderr, { type: 'merge', afterStdoutRedirect: false });
 
   const fs = createDefaultLinuxFs();
   const state = {
@@ -908,15 +908,3 @@ test('Review 8: ls -l on a file you cannot read shows its details', () => {
   assert.ok(run('ls /root').stderr.includes('Permission denied'));
 });
 
-// Engine test suites split by area (run through this entry point, see package.json "test")
-import './engineState.test.ts';
-import './explanations.test.ts';
-import './textTools.test.ts';
-import './linuxCommands.test.ts';
-import './windowsCommands.test.ts';
-import '../data/paths.test.ts';
-import '../lib/journey.test.ts';
-import './linuxHelp.test.ts';
-import './windowsHelp.test.ts';
-import './labGaps.test.ts';
-import './glob.test.ts';
