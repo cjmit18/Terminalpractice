@@ -78,7 +78,9 @@ function headOrTail(which: 'head' | 'tail') {
     if (isNaN(num) || (bytes !== undefined && isNaN(parseInt(bytes, 10)))) {
       return ctx.fail(`${which}: invalid number of ${bytes !== undefined ? 'bytes' : 'lines'}: '${bytes ?? spec}'`);
     }
-    const { inputs, errors } = readInputs(ctx, opts.operands);
+    // head -c N can read N bytes from /dev/zero or /dev/urandom
+    const endless = which === 'head' && bytes !== undefined && parseInt(bytes, 10) > 0 ? parseInt(bytes, 10) : undefined;
+    const { inputs, errors } = readInputs(ctx, opts.operands, undefined, endless);
     const pick = (text: string): string => {
       if (bytes !== undefined) {
         const b = parseInt(bytes, 10);

@@ -23,7 +23,7 @@ import './linux/commands/accounts';
 import './linux/commands/printf';
 import './linux/commands/lookup';
 import './linux/commands/extra';
-import { helpOptionOutput } from './linux/commands/help';
+import { helpOptionOutput, programPath } from './linux/commands/help';
 import { syncKernelFiles } from './linux/virtualFs';
 import { expandArgs } from './linux/glob';
 import { checkOptions } from './linux/options';
@@ -68,9 +68,12 @@ export function runLinuxLine(line: string, cwd: string, fs: FileNode, state: Sys
   const syntax = checkBashSyntax(line);
   if (syntax) return { stdout: '', stderr: syntax, exitCode: 2, newCwd: cwd, newFs: fs, newState: { ...state, lastExitCode: 2 } };
   return runChain(splitBashChain(line), cwd, fs, state, (stage, c, f, s) => {
-    const res = executeLinuxPipeline(stage, c, f, s, depth, tty);
+    // `! pipeline` inverts the pipeline's exit status
+    const bang = stage.match(/^!(?:\s+|$)/);
+    const res = executeLinuxPipeline(bang ? stage.slice(bang[0].length) : stage, c, f, s, depth, tty);
+    const exitCode = bang ? (res.exitCode === 0 ? 1 : 0) : res.exitCode;
     // $? reads the status of the last pipeline
-    return { ...res, newState: { ...res.newState, lastExitCode: res.exitCode } };
+    return { ...res, exitCode, newState: { ...res.newState, lastExitCode: exitCode } };
   });
 }
 
@@ -403,6 +406,17 @@ function runLinuxCommand(
   ctx.pipeline = pipeline;
   ctx.tty = tty;
   if (!name) return ctx.fail('bash: : command not found', 127);
+
+  // /usr/bin/ls and /bin/ls are the ls program (the simulator's disk holds only a few binary stubs)
+  const program = name.match(/^\/(?:usr\/)?s?bin\/([^/]+)$/);
+  if (program) {
+    const path = programPath(program[1]);
+    const node = getNodeAtPath(fs, name, false);
+    if (path && (name === path || name === path.replace(/^\/usr/, '')) && (!node || /binary$/.test(node.content ?? ''))) {
+      name = program[1];
+      ctx.name = name;
+    }
+  }
 
   let res: StageResult;
   const binHelp = /^\/(usr\/)?s?bin\/[^/]+$/.test(name) ? helpOptionOutput(name.slice(name.lastIndexOf('/') + 1), args) : null;

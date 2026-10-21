@@ -531,13 +531,78 @@ export function splitBashChain(line: string): ChainedStage[] {
   return stages.filter(s => s.commandLine.length > 0);
 }
 
+/** The alternatives a brace group's inside stands for, or null when bash would leave it literal. */
+function braceAlternatives(inner: string): string[] | null {
+  // Split at commas outside nested braces
+  const alts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < inner.length; i++) {
+    if (inner[i] === '{') depth++;
+    else if (inner[i] === '}') depth--;
+    else if (inner[i] === ',' && depth === 0) { alts.push(inner.slice(start, i)); start = i + 1; }
+  }
+  if (alts.length) return [...alts, inner.slice(start)];
+  const r = inner.match(/^(-?\d+|[A-Za-z])\.\.(-?\d+|[A-Za-z])(?:\.\.(-?\d+))?$/);
+  if (!r) return null;
+  const [, a, b, stepText] = r;
+  const numeric = /\d/.test(a);
+  if (numeric !== /\d/.test(b)) return null;
+  const from = numeric ? Number(a) : a.charCodeAt(0);
+  const to = numeric ? Number(b) : b.charCodeAt(0);
+  const step = Math.abs(Number(stepText ?? 1)) || 1;
+  // Zero-padded when either end is written with a leading zero ({01..10})
+  const width = numeric && (/^-?0\d/.test(a) || /^-?0\d/.test(b)) ? Math.max(a.length, b.length) : 0;
+  const out: string[] = [];
+  for (let v = from; from <= to ? v <= to : v >= to; v += from <= to ? step : -step) {
+    if (out.length >= 10000) break;
+    out.push(numeric ? (v < 0 ? '-' + String(-v).padStart(width - 1, '0') : String(v).padStart(width, '0')) : String.fromCharCode(v));
+  }
+  return out;
+}
+
+/**
+ * Brace expansion, done before any other expansion: a{b,c}d gives abd acd, {1..3} gives 1 2 3,
+ * {a..e} gives a b c d e, {a,{b,c}} gives a b c. Only braces in unquoted text count.
+ */
+export function braceExpand(word: Word): Word[] {
+  for (let pi = 0; pi < word.parts.length; pi++) {
+    const part = word.parts[pi];
+    if (part.k !== 'lit' || part.quoted) continue;
+    const text = part.text;
+    for (let open = text.indexOf('{'); open !== -1; open = text.indexOf('{', open + 1)) {
+      let close = -1;
+      for (let i = open + 1, depth = 1; i < text.length; i++) {
+        if (text[i] === '{') depth++;
+        else if (text[i] === '}' && --depth === 0) { close = i; break; }
+      }
+      if (close === -1) continue;
+      const inner = text.slice(open + 1, close);
+      const alts = braceAlternatives(inner);
+      if (!alts) continue;
+      const out: Word[] = [];
+      for (const alt of alts) {
+        const parts = [...word.parts];
+        parts[pi] = { k: 'lit', text: text.slice(0, open) + alt + text.slice(close + 1), quoted: false };
+        out.push(...braceExpand({ parts }));
+        if (out.length > 10000) break;
+      }
+      return out;
+    }
+  }
+  return [word];
+}
+
 /** Parses one chain stage (a pipeline) into commands. */
 export function parseBashPipeline(line: string): BashCommand[] {
   const cmds: BashCommand[] = [];
   let cur: BashCommand = { words: [], redirs: [] };
   for (const tok of lex(line)) {
-    if (tok.t === 'word') cur.words.push(tok.w);
-    else if (tok.t === 'redir') cur.redirs.push(tok.r);
+    if (tok.t === 'word') {
+      // Brace expansion applies to every word except the leading NAME=value assignments
+      const leadingAssignment = cur.words.every(w => assignmentOf(w)) && assignmentOf(tok.w);
+      cur.words.push(...(leadingAssignment ? [tok.w] : braceExpand(tok.w)));
+    } else if (tok.t === 'redir') cur.redirs.push(tok.r);
     else if (tok.op === '|' || tok.op === '|&') {
       if (tok.op === '|&') cur.pipeStderr = true;
       cmds.push(cur);
@@ -568,8 +633,25 @@ export function assignmentOf(word: Word): { name: string; value: Word } | null {
   const m = first.text.match(/^([A-Za-z_]\w*)=/);
   if (!m) return null;
   const rest = first.text.slice(m[0].length);
-  const value: Word = { parts: [...(rest ? [{ k: 'lit' as const, text: rest, quoted: false }] : []), ...word.parts.slice(1)] };
-  return { name: m[1], value };
+  // In an assignment, ~ is expanded after the = and after each : (X=~, PATH=~/bin:~/tools)
+  const parts: WordPart[] = [];
+  const lit = (text: string) => {
+    if (!text) return;
+    const last = parts[parts.length - 1];
+    if (last && last.k === 'lit') last.text += text;
+    else parts.push({ k: 'lit', text, quoted: false });
+  };
+  const segs = rest.split(':');
+  segs.forEach((seg, idx) => {
+    if (idx > 0) lit(':');
+    const t = seg.match(/^~([\w.-]*)(\/[\s\S]*)?$/);
+    // The tilde prefix ends at / or : (or the end of the word)
+    if (t && (t[2] !== undefined || idx < segs.length - 1 || word.parts.length === 1)) {
+      parts.push({ k: 'tilde', user: t[1] });
+      lit(t[2] ?? '');
+    } else lit(seg);
+  });
+  return { name: m[1], value: { parts: [...parts, ...word.parts.slice(1)] } };
 }
 
 // ---------- expansion ----------

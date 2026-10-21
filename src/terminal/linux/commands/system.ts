@@ -472,7 +472,7 @@ function dfHuman(kib: number): string {
 }
 
 function fdisk(ctx: LinuxContext): LinuxResult {
-  const opts = parseOptions(ctx.args);
+  const opts = parseOptions(ctx.args, '', { list: 'l' });
   const disks = linuxDisks(ctx);
   const target = opts.operands[0];
   const known = target ? disks.find(d => d.dev === target) : undefined;
@@ -569,7 +569,8 @@ function df(ctx: LinuxContext): LinuxResult {
       const fmt = (n: number) => (h ? (n < 1024 ? String(n) : dfHuman(n / 1024).replace(/[KMGT]$/, c => c)) : num(n));
       cols.push(fmt(x.inodes), fmt(x.iused), fmt(ifree), pct);
     } else {
-      const avail = Math.round(x.kib * 0.95) - x.usedKib;
+      // ext4 reserves 5% of its blocks for root; tmpfs reserves nothing
+      const avail = (x.type === 'tmpfs' ? x.kib : Math.round(x.kib * 0.95)) - x.usedKib;
       const pct = x.kib ? `${Math.ceil(x.usedKib / (x.usedKib + avail) * 100)}%` : '-';
       const fmt = (k: number) => (h ? dfHuman(k) : num(k));
       cols.push(fmt(x.kib), fmt(x.usedKib), fmt(Math.max(0, avail)), pct);

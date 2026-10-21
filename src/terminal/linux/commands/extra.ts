@@ -257,11 +257,15 @@ function swapon(ctx: LinuxContext): LinuxResult {
   return ctx.ok();
 }
 
+/** Unique partition GUIDs of /dev/sda1..3 (GPT PARTUUIDs, lower case as blkid prints them). */
+const PART_GUIDS = ['2f8a6c41-9d3e-4b57-a1c0-6e5d4b3a2f19', '7b1e9f02-3c4d-4e8a-b6f1-0a9c8d7e6f53', 'c4d2a7e8-15b9-4f60-8e3a-d1f0b2c3a4e7'];
+
 function blkid(ctx: LinuxContext): LinuxResult {
   const rows = blockDevices(ctx.state).flatMap(d => d.parts.map(p => {
     const key = p.fsType === 'swap' ? 'swap' : p.mount ?? '';
     const uuid = UUIDS[key] ?? `0000${p.minor}-0000-4000-8000-00000000000${p.minor}`;
-    const partuuid = `b7413988-0${p.minor}`;
+    // The disk is GPT, so each partition has its own GUID (an MBR disk would show DISKID-NN)
+    const partuuid = PART_GUIDS[p.minor - 1] ?? `5c0e8d2a-7f31-4b6e-9a4d-0c1b2e3f4a${String(p.minor).padStart(2, '0')}`;
     return p.fsType === 'swap'
       ? `/dev/${p.name}: UUID="${uuid}" TYPE="swap" PARTUUID="${partuuid}"`
       : `/dev/${p.name}: UUID="${uuid}" BLOCK_SIZE="4096" TYPE="${p.fsType}" PARTUUID="${partuuid}"`;

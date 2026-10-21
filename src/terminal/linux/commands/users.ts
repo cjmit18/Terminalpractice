@@ -211,7 +211,8 @@ function umask(ctx: LinuxContext): LinuxResult {
     ctx.state.umask = parseInt(value, 8) & 0o777;
     return ctx.ok();
   }
-  if (/^[0-9]+$/.test(value)) return ctx.fail(`bash: umask: ${value}: octal number out of range`);
+  // Anything that starts with a digit is read as octal (0o27, 8 and 9a are all out of range)
+  if (/^[0-9]/.test(value)) return ctx.fail(`bash: umask: ${value}: octal number out of range`);
   // Symbolic form (u=rwx,g=rx,o=) describes the permissions to keep
   const allowed = applyChmod(octalToSymbolic(toOctalField(0o777 & ~ctx.state.umask)), value);
   if (!allowed) return ctx.fail(`bash: umask: \`${value[0]}': invalid symbolic mode operator`);

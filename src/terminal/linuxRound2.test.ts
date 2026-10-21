@@ -293,3 +293,38 @@ test('A9: $(( )) is 64-bit, takes any base and has bash\'s full operator set', (
     assert.equal(res.exitCode, 1, line);
   }
 });
+
+test('A9: X=~ expands, ! inverts a status, brace expansion', () => {
+  const run = linuxSession();
+  assert.equal(run('X=~; echo $X').stdout, '/home/student');
+  assert.equal(run('P=~/bin:~root; echo $P').stdout, '/home/student/bin:/root');
+  assert.equal(run('X="~"; echo $X').stdout, '~');
+  assert.equal(run('! true; echo $?').stdout, '1');
+  assert.equal(run('! false; echo $?').stdout, '0');
+  assert.equal(run('! grep -q zzz notes.txt && echo absent').stdout, 'absent');
+  assert.equal(run('echo {a,b}').stdout, 'a b');
+  assert.equal(run('echo {1..3}').stdout, '1 2 3');
+  assert.equal(run('echo x{a,b}y{1,2}').stdout, 'xay1 xay2 xby1 xby2');
+  assert.equal(run('echo {a..e} {3..1} {01..03} {1..10..3}').stdout, 'a b c d e 3 2 1 01 02 03 1 4 7 10');
+  assert.equal(run('echo {a} {} "{a,b}" \\{a,b\\} {a,{b,c}}').stdout, '{a} {} {a,b} {a,b} a b c');
+  assert.equal(run('X={a,b}; echo $X').stdout, '{a,b}');
+  run('mkdir d{1,2}');
+  assert.equal(run('ls -d d*').stdout, 'd1  d2');
+});
+
+test('A9: /bin and /usr/bin paths, umask, fdisk --list, blkid, df tmpfs, /dev/zero', () => {
+  const run = linuxSession();
+  assert.equal(run('/bin/pwd').stdout, '/home/student');
+  assert.equal(run('/usr/bin/ls scripts').stdout, 'backup.sh');
+  assert.equal(run('/usr/bin/rm -Q notes.txt').exitCode, 1);
+  assert.equal(run('/usr/bin/cd /').stderr, 'bash: /usr/bin/cd: No such file or directory');
+  assert.equal(run('umask 0o27').stderr, 'bash: umask: 0o27: octal number out of range');
+  assert.equal(run('umask 8').stderr, 'bash: umask: 8: octal number out of range');
+  assert.equal(run('sudo fdisk --list').stdout, run('sudo fdisk -l').stdout);
+  assert.match(run('sudo fdisk -l').stdout, /Disklabel type: gpt/);
+  const blkid = run('blkid').stdout;
+  assert.equal((blkid.match(/PARTUUID="[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"/g) ?? []).length, 3);
+  assert.match(run('df -h').stdout, /^tmpfs +3\.9G +0 +3\.9G +0% \/dev\/shm$/m);
+  assert.equal(run('head -c 10 /dev/zero').stdout, '\0'.repeat(10));
+  assert.equal(run('head -c 16 /dev/urandom').stdout.length, 16);
+});
