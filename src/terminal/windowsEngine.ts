@@ -8,8 +8,10 @@ import { DISKPART_BANNER, handleDiskpartCommand } from './windows/diskpart';
 import './windows/powershell';
 import './windows/psSystem';
 import { runPowerShellPipeline } from './windows/psPipeline';
-import { expandCmdVariables, expandPowerShellEnv, setErrorLevel } from './windows/env';
+import { expandCmdVariables, expandPowerShellAutomatic, expandPowerShellEnv, setErrorLevel } from './windows/env';
 import { psExtractRedirects, psNotRecognized, psNotSimulated, psSplitPipeline, psStage } from './windows/psUtil';
+import { psSplitStatements, psSyntaxError } from './windows/psParse';
+import { cmdSyntaxError } from './windows/cmd/syntax';
 import { isNotSimulatedWindows } from './notSimulated';
 import { suggestCmd, suggestPowerShell } from './suggest';
 import './windows/psFiles';
@@ -31,6 +33,27 @@ export function executeWindowsLine(
   shell: TerminalShell = 'cmd',
   isDiskpartSession = false
 ): WindowsExecutionResult {
+  try {
+    return runWindowsLine(rawInput, cwd, fs, state, shell, isDiskpartSession);
+  } catch (err) {
+    // A simulator bug must not take the session with it: report it and leave everything as it was
+    const why = err instanceof Error ? err.message : String(err);
+    return {
+      stdout: '', stderr: `The simulator hit an internal error and did not run this command (${why}).`, exitCode: 1,
+      newCwd: cwd, newFs: fs, newState: state, diskpartActive: isDiskpartSession,
+      explanation: 'This is a bug in the simulator, not in your command. Nothing was changed; you can carry on.',
+    };
+  }
+}
+
+function runWindowsLine(
+  rawInput: string,
+  cwd: string,
+  fs: FileNode,
+  state: SystemState,
+  shell: TerminalShell,
+  isDiskpartSession: boolean
+): WindowsExecutionResult {
   const line = rawInput.trim();
   if (!line) {
     return { stdout: '', stderr: '', exitCode: 0, newCwd: cwd, newFs: fs, newState: state, diskpartActive: isDiskpartSession };
@@ -42,11 +65,26 @@ export function executeWindowsLine(
     return { stdout: diskpartUsage(), stderr: '', exitCode: 0, newCwd: cwd, newFs: fs, newState: state, diskpartActive: false };
   }
 
-  if (line.toLowerCase() === 'diskpart') {
-    return { stdout: DISKPART_BANNER, stderr: '', exitCode: 0, newCwd: cwd, newFs: fs, newState: state, diskpartActive: true };
+  const launch = line.match(/^diskpart(?:\.exe)?(?:\s+(\/s\b.*))?$/i);
+  if (launch) {
+    const unchanged = { newCwd: cwd, newFs: fs, newState: state, diskpartActive: false };
+    // diskpart.exe's manifest requires administrator rights: Windows asks through UAC and opens it in a new window
+    if (!state.isRootOrAdmin) {
+      return {
+        ...unchanged, stdout: '', stderr: 'The requested operation requires elevation.', exitCode: 5,
+        explanation: `You are '${state.currentUser}' in a prompt that is not elevated. diskpart needs administrator rights: on a real PC, Windows shows a User Account Control prompt and opens DiskPart in a new elevated window. Open the prompt with Run as administrator to use diskpart.`,
+      };
+    }
+    if (launch[1]) {
+      return { ...unchanged, stdout: '', stderr: 'Script mode (/s) is not simulated here; type the commands at the DISKPART> prompt.', exitCode: 1 };
+    }
+    return { ...unchanged, stdout: DISKPART_BANNER, stderr: '', exitCode: 0, diskpartActive: true };
   }
 
   if (shell === 'powershell') return executePowerShellCommand(line, cwd, fs, state);
+
+  const syntax = cmdSyntaxError(line);
+  if (syntax) return { stdout: '', stderr: syntax, exitCode: 1, newCwd: cwd, newFs: fs, newState: state };
 
   // CMD expands %VAR% once for the whole line, before splitting on & and |
   const expanded = expandCmdVariables(line, state, cwd);
@@ -69,6 +107,27 @@ function executeSingleCmdCommand(
   state: SystemState,
   stdin = ''
 ): WindowsExecutionResult {
+  // CMD ends an internal command's name at . \ or /, so cd.. cd\ cd/d and dir/w work without a space
+  const glued = cmdCommands.has(parsed.name) ? null : parsed.name.match(/^(cd|chdir|dir|md|mkdir|rd|rmdir)([.\\/].*)$/i);
+  if (glued && cmdCommands.has(glued[1])) parsed = { ...parsed, name: glued[1], args: [glued[2], ...parsed.args] };
+  // < file: the command reads the file as its standard input
+  const lt = /</.test(parsed.raw.replace(/"[^"]*"?|\^./g, '')) ? parsed.args.findIndex(a => a.startsWith('<')) : -1;
+  if (lt >= 0) {
+    const target = parsed.args[lt] === '<' ? parsed.args[lt + 1] : parsed.args[lt].slice(1);
+    if (!target) return { stdout: '', stderr: 'The syntax of the command is incorrect.', exitCode: 1, newCwd: cwd, newFs: fs, newState: state };
+    const probe = new WindowsContext('', [], '', '', cwd, fs, state);
+    const abs = probe.resolve(target);
+    const why = probe.protectedReason(abs, 'read');
+    if (why) return { stdout: '', stderr: 'Access is denied.', exitCode: 1, newCwd: cwd, newFs: fs, newState: state, explanation: why };
+    const node = probe.node(abs);
+    if (!node || node.type !== 'file') {
+      return { stdout: '', stderr: node ? 'Access is denied.' : 'The system cannot find the file specified.', exitCode: 1, newCwd: cwd, newFs: fs, newState: state };
+    }
+    stdin = node.content ?? '';
+    const args = [...parsed.args];
+    args.splice(lt, parsed.args[lt] === '<' ? 2 : 1);
+    parsed = { ...parsed, args, raw: parsed.raw.replace(/\s*<\s*("[^"]*"|[^\s|&>]+)/, '') };
+  }
   const ctx = new WindowsContext(parsed.name, parsed.args, stdin, parsed.raw, cwd, fs, cloneState(state));
   const handler = cmdCommands.get(parsed.name);
   // <command> /? prints the command's usage instead of running it
@@ -182,8 +241,45 @@ function executePowerShellCommand(
   fs: FileNode,
   state: SystemState
 ): WindowsExecutionResult {
-  const { body, redirect } = psExtractRedirects(expandPowerShellEnv(rawLine, state));
+  const syntax = psSyntaxError(rawLine);
+  if (syntax) return { stdout: '', stderr: syntax, exitCode: 1, newCwd: cwd, newFs: fs, newState: state };
+  const statements = psSplitStatements(rawLine);
+  if (statements.length <= 1) return executePowerShellStatement(statements[0] ?? '', cwd, fs, state);
+  // a; b runs each statement in turn, whether or not the one before it failed
+  const out: string[] = [];
+  const errors: string[] = [];
+  const notes: string[] = [];
+  let res: WindowsExecutionResult = { stdout: '', stderr: '', exitCode: 0, newCwd: cwd, newFs: fs, newState: state };
+  let exitCode = 0;
+  for (const statement of statements) {
+    res = executePowerShellStatement(statement, res.newCwd, res.newFs, res.newState);
+    if (res.stdout) out.push(res.stdout);
+    if (res.stderr) errors.push(res.stderr);
+    if (res.explanation && !notes.includes(res.explanation)) notes.push(res.explanation);
+    if (res.exitCode !== 0) exitCode = res.exitCode;
+  }
+  const result: WindowsExecutionResult = { ...res, stdout: out.join('\n'), stderr: errors.join('\n'), exitCode };
+  delete result.explanation;
+  if (notes.length) result.explanation = notes.join('\n');
+  return result;
+}
+
+/** Runs one PowerShell statement (one pipeline with its redirections). */
+function executePowerShellStatement(
+  statement: string,
+  cwd: string,
+  fs: FileNode,
+  state: SystemState
+): WindowsExecutionResult {
+  if (!statement) return { stdout: '', stderr: '', exitCode: 0, newCwd: cwd, newFs: fs, newState: state };
+  // $PWD on its own (or written out) is the PathInfo object, shown as Get-Location shows it
+  if (/^((write-output|echo|write)\s+)?\$pwd$/i.test(statement)) statement = 'Get-Location';
+  const { body, redirect } = psExtractRedirects(expandPowerShellAutomatic(expandPowerShellEnv(statement, state), cwd, state));
   let res = runPowerShellLine(body, cwd, fs, state);
+  // -ErrorAction SilentlyContinue or Ignore hides non-terminating errors (not parameter binding errors)
+  if (/(^|\s)-(ea|errora\w*)(:|\s+)['"]?(silentlycontinue|ignore|0|4)\b/i.test(body) && !/ParameterBindingException/.test(res.stderr)) {
+    res = { ...res, stderr: '' };
+  }
   if (redirect.stderr === 'null') res = { ...res, stderr: '' };
   if (redirect.stderr === 'merge') res = { ...res, stdout: [res.stdout, res.stderr].filter(Boolean).join('\n'), stderr: '' };
   for (const [stream, target] of [['stdout', redirect.stdout], ['stderr', typeof redirect.stderr === 'object' ? redirect.stderr : undefined]] as const) {
