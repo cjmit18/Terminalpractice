@@ -38,6 +38,8 @@ test('hint ladder: a nudge, then the shape, then the full hint, at no cost', asy
   await task.getByRole('button', { name: 'Hide hints' }).click();
   await expect(task.getByText('Many hardware listing tools', { exact: false })).toBeHidden();
   await expect(task.getByRole('button', { name: 'Show a nudge' })).toBeVisible();
+  // "Hide hints" goes away with the hints; focus moves to the button that brings them back
+  await expect(task.getByRole('button', { name: 'Show a nudge' })).toBeFocused();
 });
 
 test('did you mean: a mistyped command gets a suggestion in the note, the shell output is unchanged', async ({ page }) => {
