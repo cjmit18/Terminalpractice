@@ -17,15 +17,49 @@ const DMESG = [
   '[    4.201944] EXT4-fs (sda3): mounted filesystem with ordered data mode. Opts: (null)',
 ].join('\n');
 
-const LSPCI = [
-  '00:00.0 Host bridge: Intel Corporation 440FX - 82441FX PMC [Natoma]',
-  '00:01.0 ISA bridge: Intel Corporation 82371SB PIIX3 ISA [Natoma/Triton II]',
-  '00:01.1 IDE interface: Intel Corporation 82371SB PIIX3 IDE [Natoma/Triton II]',
-  '00:02.0 VGA compatible controller: Red Hat, Inc. QXL paravirtual graphic card',
-  '00:19.0 Ethernet controller: Intel Corporation 82574L Gigabit Network Connection',
-  '00:1f.2 SATA controller: Intel Corporation 82801IR/IO/IH (ICH9R/DO/DH) 6 port SATA Controller [AHCI mode] (rev 02)',
-  '00:04.0 USB controller: Intel Corporation 82801I (ICH9 Family) USB UHCI Controller #1',
-].join('\n');
+/** PCI devices, in bus order as lspci prints them, with the driver bound to each. */
+const PCI: { addr: string; cls: string; desc: string; ids: string; sub: string; irq: number; driver?: string; modules?: string }[] = [
+  { addr: '00:00.0', cls: 'Host bridge', desc: 'Intel Corporation 440FX - 82441FX PMC [Natoma]', ids: '[0600]: Intel Corporation 440FX - 82441FX PMC [Natoma] [8086:1237]', sub: 'Red Hat, Inc. Qemu virtual machine', irq: 0 },
+  { addr: '00:01.0', cls: 'ISA bridge', desc: 'Intel Corporation 82371SB PIIX3 ISA [Natoma/Triton II]', ids: '[0601]: Intel Corporation 82371SB PIIX3 ISA [Natoma/Triton II] [8086:7000]', sub: 'Red Hat, Inc. Qemu virtual machine', irq: 0 },
+  { addr: '00:01.1', cls: 'IDE interface', desc: 'Intel Corporation 82371SB PIIX3 IDE [Natoma/Triton II]', ids: '[0101]: Intel Corporation 82371SB PIIX3 IDE [Natoma/Triton II] [8086:7010]', sub: 'Red Hat, Inc. Qemu virtual machine', irq: 0, driver: 'ata_piix', modules: 'pata_acpi' },
+  { addr: '00:02.0', cls: 'VGA compatible controller', desc: 'Red Hat, Inc. QXL paravirtual graphic card', ids: '[0300]: Red Hat, Inc. QXL paravirtual graphic card [1b36:0100] (rev 05)', sub: 'Red Hat, Inc. QEMU Virtual Machine', irq: 10, driver: 'qxl', modules: 'qxl' },
+  { addr: '00:04.0', cls: 'USB controller', desc: 'Intel Corporation 82801I (ICH9 Family) USB UHCI Controller #1', ids: '[0c03]: Intel Corporation 82801I (ICH9 Family) USB UHCI Controller #1 [8086:2934] (rev 03)', sub: 'Red Hat, Inc. QEMU Virtual Machine', irq: 11, driver: 'uhci_hcd' },
+  { addr: '00:19.0', cls: 'Ethernet controller', desc: 'Intel Corporation 82574L Gigabit Network Connection', ids: '[0200]: Intel Corporation 82574L Gigabit Network Connection [8086:10d3]', sub: 'Intel Corporation Gigabit CT Desktop Adapter', irq: 11, driver: 'e1000e', modules: 'e1000e' },
+  { addr: '00:1f.2', cls: 'SATA controller', desc: 'Intel Corporation 82801IR/IO/IH (ICH9R/DO/DH) 6 port SATA Controller [AHCI mode] (rev 02)', ids: '[0106]: Intel Corporation 82801IR/IO/IH (ICH9R/DO/DH) 6 port SATA Controller [AHCI mode] [8086:2922] (rev 02)', sub: 'Red Hat, Inc. QEMU Virtual Machine', irq: 10, driver: 'ahci', modules: 'ahci' },
+];
+
+/** lspci [-k] [-v] [-nn] [-s [[bus]:][slot][.func]] */
+function lspci(ctx: LinuxContext): LinuxResult {
+  const nn = ctx.args.includes('-nn');
+  const opts = parseOptions(ctx.args.filter(a => a !== '-nn'), 'sd');
+  const f = opts.flags;
+  const verbose = f.has('v');
+  const kernel = f.has('k') || verbose;
+  const numeric = nn || f.has('n');
+  let devices = PCI;
+  const slot = optionValue(opts, 's');
+  if (slot !== undefined) {
+    const m = slot.match(/^(?:([0-9a-f]{0,2}):)?([0-9a-f]{0,2})(?:\.([0-7]))?$/i);
+    if (!m) return ctx.fail('lspci: -s: Invalid slot number', 1);
+    const [, bus, dev, fn] = m;
+    const hex = (x: string) => parseInt(x, 16);
+    devices = devices.filter(d => {
+      const [b, rest] = d.addr.split(':');
+      const [dv, fu] = rest.split('.');
+      return (!bus || hex(bus) === hex(b)) && (!dev || hex(dev) === hex(dv)) && (fn === undefined || fn === fu);
+    });
+  }
+  const out = devices.map(d => {
+    const lines = [`${d.addr} ${numeric ? `${d.cls} ${d.ids}` : `${d.cls}: ${d.desc}`}`];
+    if (verbose) lines.push(`\tSubsystem: ${d.sub}`, `\tFlags: ${d.driver ? 'bus master, ' : ''}fast devsel, latency 0${d.irq ? `, IRQ ${d.irq}` : ''}`);
+    if (kernel && d.driver) lines.push(`\tKernel driver in use: ${d.driver}`);
+    if (kernel && d.modules) lines.push(`\tKernel modules: ${d.modules}`);
+    return lines.join('\n');
+  });
+  // -v leaves a blank line after each device
+  return ctx.ok(out.join(verbose ? '\n\n' : '\n'));
+}
+
 
 const LSMOD = ['Module                  Size  Used by',
   ...MODULES.map(([n, size, count, users]) => `${n.padEnd(19)}${String(size).padStart(9)}  ${count}${users.length ? ` ${users.join(',')}` : ''}`)].join('\n');
@@ -72,21 +106,99 @@ function uname(ctx: LinuxContext): LinuxResult {
   return ctx.ok([...order].map(f => fields[f]).join(' '));
 }
 
+const SIGNALS = [
+  'HUP', 'INT', 'QUIT', 'ILL', 'TRAP', 'ABRT', 'BUS', 'FPE', 'KILL', 'USR1', 'SEGV', 'USR2', 'PIPE', 'ALRM', 'TERM', 'STKFLT',
+  'CHLD', 'CONT', 'STOP', 'TSTP', 'TTIN', 'TTOU', 'URG', 'XCPU', 'XFSZ', 'VTALRM', 'PROF', 'WINCH', 'IO', 'PWR', 'SYS',
+];
+/** Signal numbers and names as bash's kill -l lists them (32 and 33 are reserved by glibc). */
+const SIGNAL_TABLE: [number, string][] = [
+  ...SIGNALS.map((n, i) => [i + 1, `SIG${n}`] as [number, string]),
+  [34, 'SIGRTMIN'],
+  ...Array.from({ length: 15 }, (_, i) => [35 + i, `SIGRTMIN+${i + 1}`] as [number, string]),
+  ...Array.from({ length: 14 }, (_, i) => [50 + i, `SIGRTMAX-${14 - i}`] as [number, string]),
+  [64, 'SIGRTMAX'],
+];
+
+function killList(ctx: LinuxContext, specs: string[]): LinuxResult {
+  if (specs.length === 0) {
+    const cells = SIGNAL_TABLE.map(([n, name]) => `${String(n).padStart(2)}) ${name}`);
+    const rows: string[] = [];
+    for (let i = 0; i < cells.length; i += 5) rows.push(cells.slice(i, i + 5).join('\t'));
+    return ctx.ok(rows.join('\n'));
+  }
+  const out: string[] = [];
+  for (const s of specs) {
+    // A number gives the name; a name gives the number (an exit status above 128 means 128 + signal)
+    const n = /^\d+$/.test(s) ? (Number(s) > 128 ? Number(s) - 128 : Number(s)) : null;
+    const entry = n !== null ? SIGNAL_TABLE.find(([k]) => k === n) : SIGNAL_TABLE.find(([, name]) => name === s.toUpperCase() || name === `SIG${s.toUpperCase()}`);
+    if (!entry) return ctx.fail(`bash: kill: ${s}: invalid signal specification`, 1);
+    out.push(n !== null ? entry[1].replace(/^SIG/, '') : String(entry[0]));
+  }
+  return ctx.ok(out.join('\n'));
+}
+
+/** Process table plus the ps process itself and the other commands of its pipeline (ps aux | grep x shows the grep). */
+function psRows(ctx: LinuxContext) {
+  const tty = (cmd: string) => (cmd === 'bash' ? 'pts/0' : '?');
+  const procs = ctx.state.processes.map(p => ({ ...p, ppid: p.pid === 1 ? 0 : p.command === 'bash' ? 1450 : 1, tty: tty(p.command) }));
+  const shell = ctx.state.processes.find(p => p.command === 'bash')?.pid ?? 2100;
+  const mine = (ctx.pipeline.length ? ctx.pipeline : [['ps', ...ctx.args].join(' ')]).map((cmd, i) => ({
+    pid: 2400 + i, user: ctx.user, cpu: 0, mem: 0.1, command: cmd, ppid: shell, tty: 'pts/0',
+  }));
+  return [...procs, ...mine];
+}
+
 function ps(ctx: LinuxContext): LinuxResult {
-  const header = 'USER       PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND';
-  const rows = ctx.state.processes.map(p =>
-    `${p.user.padEnd(8, ' ')} ${p.pid.toString().padStart(5, ' ')}  ${p.cpu.toFixed(1)}  ${p.mem.toFixed(1)}  24500  4210 ?        Ss   10:00   0:01 ${p.command}`);
-  return ctx.ok(`${header}\n${rows.join('\n')}`);
+  const raw = ctx.args.join(' ');
+  const bsd = ctx.args.some(a => !a.startsWith('-') && /^[auxef]+$/.test(a));
+  const opts = parseOptions(ctx.args.filter(a => a.startsWith('-')), 'upCo', { user: 'u', pid: 'p' });
+  const f = opts.flags;
+  let rows = psRows(ctx);
+  const userFilter = optionValue(opts, 'u');
+  const pidFilter = optionValue(opts, 'p');
+  const cmdFilter = optionValue(opts, 'C');
+  const all = bsd ? /a/.test(raw) || /x/.test(raw) : f.has('e') || f.has('A');
+  if (userFilter) rows = rows.filter(p => userFilter.split(',').includes(p.user));
+  else if (pidFilter) rows = rows.filter(p => pidFilter.split(',').map(Number).includes(p.pid));
+  else if (cmdFilter) rows = rows.filter(p => p.command.split(' ')[0].split('/').pop() === cmdFilter);
+  else if (!all) rows = rows.filter(p => p.tty === 'pts/0');
+
+  const time = (p: { cpu: number }) => (p.cpu > 1 ? '00:00:12' : '00:00:00');
+  if (bsd && /u/.test(raw)) {
+    const header = 'USER         PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND';
+    return ctx.ok([header, ...rows.map(p =>
+      `${p.user.padEnd(8)} ${String(p.pid).padStart(7)} ${p.cpu.toFixed(1).padStart(4)} ${p.mem.toFixed(1).padStart(4)} ${String(24500).padStart(6)} ${String(4210).padStart(5)} ${p.tty.padEnd(8)} ${(p.tty === '?' ? 'Ss' : p.pid >= 2400 ? 'R+' : 'Ss').padEnd(4)} 10:00   0:01 ${p.command}`)].join('\n'));
+  }
+  if (f.has('f') || (bsd && /f/.test(raw))) {
+    const header = 'UID          PID    PPID  C STIME TTY          TIME CMD';
+    return ctx.ok([header, ...rows.map(p =>
+      `${p.user.padEnd(8)} ${String(p.pid).padStart(7)} ${String(p.ppid).padStart(7)} ${String(Math.round(p.cpu)).padStart(2)} 10:00 ${p.tty.padEnd(8)} ${time(p)} ${p.command}`)].join('\n'));
+  }
+  const header = '    PID TTY          TIME CMD';
+  return ctx.ok([header, ...rows.map(p =>
+    `${String(p.pid).padStart(7)} ${p.tty.padEnd(8)} ${time(p)} ${p.command.split(' ')[0].split('/').pop()}`)].join('\n'));
 }
 
 function kill(ctx: LinuxContext): LinuxResult {
-  const targets = ctx.args.filter(a => !a.startsWith('-') && a !== 'KILL' && a !== 'TERM');
+  if (ctx.args[0] === '-l' || ctx.args[0] === '-L' || ctx.args[0] === '--list') return killList(ctx, ctx.args.slice(1));
+  const args = [...ctx.args];
+  // -9, -KILL, -SIGKILL, -s KILL, -n 9
+  if (args[0] === '-s' || args[0] === '-n') args.splice(0, 2);
+  else if (args[0]?.startsWith('-') && args[0] !== '--') {
+    const spec = args[0].slice(1);
+    const known = /^\d+$/.test(spec) ? SIGNAL_TABLE.some(([n]) => n === Number(spec)) || spec === '0'
+      : SIGNAL_TABLE.some(([, name]) => name === spec.toUpperCase() || name === `SIG${spec.toUpperCase()}`);
+    if (!known) return ctx.fail(`bash: kill: ${spec}: invalid signal specification`, 1);
+    args.shift();
+  }
+  if (args[0] === '--') args.shift();
+  const targets = args;
   if (targets.length === 0) return ctx.fail('kill: usage: kill [-s sigspec | -n signum | -sigspec] pid | jobspec ... or kill -l [sigspec]', 2);
   const errors: string[] = [];
   for (const t of targets) {
     const pid = parseInt(t, 10);
     const proc = ctx.state.processes.find(p => p.pid === pid);
-    if (isNaN(pid)) { errors.push(`bash: kill: ${t}: arguments must be process or job IDs`); continue; }
+    if (isNaN(pid) || !/^-?\d+$/.test(t)) { errors.push(`bash: kill: ${t}: arguments must be process or job IDs`); continue; }
     if (!proc) { errors.push(`bash: kill: (${pid}) - No such process`); continue; }
     if (!ctx.isRoot && proc.user !== ctx.user) {
       errors.push(`bash: kill: (${pid}) - Operation not permitted`);
@@ -600,7 +712,7 @@ linuxCommands.registerAll({
   hostname: ctx => ctx.ok(ctx.state.hostname),
   uname,
   dmesg: ctx => ctx.ok(DMESG),
-  lspci: ctx => ctx.ok(LSPCI),
+  lspci,
   lsmod: ctx => ctx.ok(LSMOD),
   journalctl,
   df,

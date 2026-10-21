@@ -77,6 +77,9 @@ export class LinuxContext {
   /** Script nesting level (0 for a line typed at the prompt). */
   depth = 0;
 
+  /** The commands of the pipeline this one runs in, as typed (ps lists them as processes). */
+  pipeline: string[] = [];
+
   private record(check: AccessCheck): AccessCheck {
     if (!check.ok && check.explanation && !this.denials.includes(check.explanation)) {
       this.denials.push(check.explanation);

@@ -78,31 +78,55 @@ interface GrepOptions {
   onlyMatching: boolean;
   quiet: boolean;
   showNames: boolean;
+  /** Lines of context before and after each match (-B, -A, -C) */
+  before: number;
+  after: number;
+  /** Stop after this many matching lines (-m) */
+  max: number;
 }
 
 function grepLines(text: string, name: string | null, o: GrepOptions, out: string[]): { matched: boolean } {
-  let count = 0;
-  const prefix = (n: number) => `${name !== null ? name + ':' : ''}${o.lineNumbers ? n + ':' : ''}`;
+  // Matching lines use ':' after the file name and line number, context lines use '-'
+  const prefix = (n: number, sep = ':') => `${name !== null ? name + sep : ''}${o.lineNumbers ? n + sep : ''}`;
   const lines = toLines(text);
-  const hits: string[] = [];
-  lines.forEach((line, idx) => {
+  const matches: number[] = [];
+  for (let idx = 0; idx < lines.length && matches.length < o.max; idx++) {
     o.regex.lastIndex = 0;
-    const has = o.regex.test(line);
-    if (has === o.invert) return;
-    count++;
-    if (o.onlyMatching && !o.invert) {
-      for (const m of line.matchAll(new RegExp(o.regex.source, o.regex.flags.includes('g') ? o.regex.flags : o.regex.flags + 'g'))) {
-        if (m[0]) hits.push(prefix(idx + 1) + m[0]);
-      }
-    } else {
-      hits.push(prefix(idx + 1) + line);
-    }
-  });
+    if (o.regex.test(lines[idx]) !== o.invert) matches.push(idx);
+  }
+  const count = matches.length;
   if (o.quiet) return { matched: count > 0 };
-  if (o.filesWith) { if (count) out.push(name ?? '(standard input)'); }
-  else if (o.filesWithout) { if (!count) out.push(name ?? '(standard input)'); }
-  else if (o.count) out.push(`${name !== null ? name + ':' : ''}${count}`);
-  else out.push(...hits);
+  if (o.filesWith) { if (count) out.push(name ?? '(standard input)'); return { matched: count > 0 }; }
+  if (o.filesWithout) { if (!count) out.push(name ?? '(standard input)'); return { matched: count > 0 }; }
+  if (o.count) { out.push(`${name !== null ? name + ':' : ''}${count}`); return { matched: count > 0 }; }
+
+  if (o.onlyMatching && !o.invert) {
+    for (const idx of matches) {
+      for (const m of lines[idx].matchAll(new RegExp(o.regex.source, o.regex.flags.includes('g') ? o.regex.flags : o.regex.flags + 'g'))) {
+        if (m[0]) out.push(prefix(idx + 1) + m[0]);
+      }
+    }
+    return { matched: count > 0 };
+  }
+  if (!o.before && !o.after) {
+    for (const idx of matches) out.push(prefix(idx + 1) + lines[idx]);
+    return { matched: count > 0 };
+  }
+  // With context: print each match with its neighbours; groups that do not touch are separated by --
+  const isMatch = new Set(matches);
+  let last = -1;
+  for (const idx of matches) {
+    const from = Math.max(0, idx - o.before, last + 1);
+    const to = Math.min(lines.length - 1, idx + o.after);
+    if (last >= 0 && from > last + 1) out.push('--');
+    for (let i = from; i <= to; i++) {
+      if (i <= last) continue;
+      // After the last allowed match (-m), trailing context still prints but stops at the next match
+      if (i > idx && isMatch.has(i)) break;
+      out.push(prefix(i + 1, isMatch.has(i) ? ':' : '-') + lines[i]);
+      last = i;
+    }
+  }
   return { matched: count > 0 };
 }
 
@@ -112,7 +136,20 @@ function grep(ctx: LinuxContext): LinuxResult {
     'line-number': 'n', recursive: 'r', 'dereference-recursive': 'R', 'extended-regexp': 'E', 'fixed-strings': 'F',
     'word-regexp': 'w', 'line-regexp': 'x', 'only-matching': 'o', quiet: 'q', silent: 'q', 'no-messages': 's',
     'with-filename': 'H', 'no-filename': 'h', regexp: 'e', file: 'f', 'basic-regexp': 'G',
+    'after-context': 'A', 'before-context': 'B', context: 'C', 'max-count': 'm',
   });
+  const num = (k: string): number | null => {
+    const v = optionValue(opts, k);
+    if (v === undefined) return 0;
+    return /^\d+$/.test(v) ? Number(v) : null;
+  };
+  const ctxA = num('A'), ctxB = num('B'), ctxC = num('C');
+  if (ctxA === null || ctxB === null || ctxC === null) {
+    const bad = [optionValue(opts, 'A'), optionValue(opts, 'B'), optionValue(opts, 'C')].find(v => v !== undefined && !/^\d+$/.test(v));
+    return ctx.fail(`grep: ${bad}: invalid context length argument`, 2);
+  }
+  const maxArg = optionValue(opts, 'm');
+  if (maxArg !== undefined && !/^-?\d+$/.test(maxArg)) return ctx.fail(`grep: invalid max count`, 2);
   const f = opts.flags;
   const operands = [...opts.operands];
   const patterns = opts.values.get('e') ?? (operands.length ? [operands.shift()!] : null);
@@ -144,6 +181,9 @@ function grep(ctx: LinuxContext): LinuxResult {
     onlyMatching: f.has('o'),
     quiet: f.has('q'),
     showNames: (f.has('H') || recursive || targets.length > 1) && !f.has('h'),
+    before: optionValue(opts, 'B') !== undefined ? ctxB : ctxC,
+    after: optionValue(opts, 'A') !== undefined ? ctxA : ctxC,
+    max: maxArg === undefined || Number(maxArg) < 0 ? Infinity : Number(maxArg),
   };
 
   const out: string[] = [];

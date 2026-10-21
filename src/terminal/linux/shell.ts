@@ -312,6 +312,19 @@ export function parseBashPipeline(line: string): BashCommand[] {
   return cmds;
 }
 
+/** A word as the user typed it, minus quotes (expansions shown in their $ form), e.g. for ps listings. */
+export function wordText(word: Word): string {
+  return word.parts.map(p => {
+    switch (p.k) {
+      case 'lit': return p.text;
+      case 'tilde': return `~${p.user}`;
+      case 'param': return p.op || p.arg ? `\${${p.name}${p.op ?? ''}${p.arg ?? ''}}` : `$${p.name}`;
+      case 'cmd': return `$(${p.src})`;
+      case 'arith': return `$((${p.src}))`;
+    }
+  }).join('');
+}
+
 /** A leading NAME=value word (before expansion). */
 export function assignmentOf(word: Word): { name: string; value: Word } | null {
   const first = word.parts[0];

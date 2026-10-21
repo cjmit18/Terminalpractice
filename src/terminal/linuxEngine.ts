@@ -5,7 +5,7 @@ import {
 } from './filesystem';
 import { ParsedCommand } from './parser';
 import {
-  splitBashChain, parseBashPipeline, expandWord, expandToString, assignmentOf, Expander, ExpansionError, Field,
+  splitBashChain, parseBashPipeline, wordText, expandWord, expandToString, assignmentOf, Expander, ExpansionError, Field,
 } from './linux/shell';
 import { shellVariable, homeOf } from './linux/env';
 import { runChain, StageResult } from './chain';
@@ -158,6 +158,7 @@ function executeLinuxPipeline(
   depth: number
 ): LinuxExecutionResult {
   const stages = parseBashPipeline(pipelineStr);
+  const pipeline = stages.map(st => st.words.map(wordText).join(' '));
   let input = '';
   let activeFs = cloneFileSystem(fs);
   let activeState = cloneState(state);
@@ -256,11 +257,11 @@ function executeLinuxPipeline(
         args: rest.map(f => f.text),
         argGlobs: rest.some(f => f.glob) ? rest.map(f => f.glob) : undefined,
       };
-      if (!assignments.length) return runLinuxCommand(cmd, currentCwd, activeFs, activeState, stdin, depth);
+      if (!assignments.length) return runLinuxCommand(cmd, currentCwd, activeFs, activeState, stdin, depth, pipeline);
       // NAME=value cmd: the variables are set for this command only
       const saved = activeState.envVars;
       const runState = { ...activeState, envVars: { ...saved, ...Object.fromEntries(assignments.map(a => [a.name, a.value])) } };
-      const out = runLinuxCommand(cmd, currentCwd, activeFs, runState, stdin, depth);
+      const out = runLinuxCommand(cmd, currentCwd, activeFs, runState, stdin, depth, pipeline);
       return { ...out, newState: { ...out.newState, envVars: saved } };
     })();
 
@@ -315,7 +316,8 @@ function runLinuxCommand(
   fs: FileNode,
   state: SystemState,
   stdin: string,
-  depth: number
+  depth: number,
+  pipeline: string[] = []
 ): StageResult {
   let { name, args } = cmd;
   // Pathname expansion happens in the calling shell, as the calling user, before sudo or the command runs
@@ -374,6 +376,7 @@ function runLinuxCommand(
 
   const ctx = new LinuxContext(name, args, stdin, cwd, fs, runState, isSudo);
   ctx.depth = depth;
+  ctx.pipeline = pipeline;
   if (!name) return ctx.fail('bash: : command not found', 127);
 
   let res: StageResult;
