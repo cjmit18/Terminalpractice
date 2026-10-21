@@ -326,6 +326,7 @@ const IDENTITY = /^(whoami|id)$/;
  * - `shell:<bash|cmd|ps>`: a command was run in that shell
  * - `cmd:<shell>:<name>`: that command ran successfully (name only, lower case outside bash)
  * - `help:<linux|windows>:<topic>`: a manual or help page opened (only topics that exist)
+ * - `manual`: that page was opened with man, info, help or Get-Help, not with a command's own --help
  * - `flaghelp`: `--help`, `/?` or `-?`; `search`: apropos, `man -k`, `Get-Help *word*`
  * - `whoami`, `pipe`, `redirect`, `notsim`, `history`
  * - `recover:retry`, `recover:permission`, `recover:typo`
@@ -347,7 +348,13 @@ export function classifyCommand(outcome: CommandOutcome, shell: TerminalShell, p
   const exits = outcome.stageExits?.length === stages.length ? outcome.stageExits : undefined;
   const stageOk = (i: number) => (exits ? exits[i] === 0 : i === stages.length - 1 && ok);
   const helpTopic = (topic: string | undefined) => {
-    if (topic && isKnownTopic(norm(topic, shell), shell)) facts.add(`help:${os}:${norm(topic, shell)}`);
+    if (!topic || !isKnownTopic(norm(topic, shell), shell)) return false;
+    facts.add(`help:${os}:${norm(topic, shell)}`);
+    return true;
+  };
+  // A manual or help page opened with man, info, help or Get-Help (not a command's own --help)
+  const helpPage = (topic: string | undefined) => {
+    if (helpTopic(topic)) facts.add('manual');
   };
 
   if (NOT_SIMULATED.test(outcome.stderr)) facts.add('notsim');
@@ -366,7 +373,7 @@ export function classifyCommand(outcome: CommandOutcome, shell: TerminalShell, p
       if (shell === 'bash') {
         if (IDENTITY.test(name) || (name === 'echo' && c.args.some(a => /\$\{?(USER|LOGNAME)\b/.test(a)))) facts.add('whoami');
         if (name === 'apropos' || (name === 'man' && c.args.some(a => a === '-k' || a === '--apropos'))) facts.add('search');
-        else if (HELP_LINUX.has(name)) helpTopic(words.find(w => !/^\d/.test(w)) ?? (name === 'help' ? 'help' : undefined));
+        else if (HELP_LINUX.has(name)) helpPage(words.find(w => !/^\d/.test(w)) ?? (name === 'help' ? 'help' : undefined));
         if (c.args.includes('--help')) {
           facts.add('flaghelp');
           helpTopic(c.name);
@@ -374,7 +381,7 @@ export function classifyCommand(outcome: CommandOutcome, shell: TerminalShell, p
         if (name === 'history') facts.add('history');
       } else if (shell === 'cmd') {
         if (name === 'whoami' || (name === 'echo' && /%USERNAME%/i.test(c.args.join(' ')))) facts.add('whoami');
-        if (name === 'help') helpTopic(words[0] ?? 'help');
+        if (name === 'help') helpPage(words[0] ?? 'help');
         if (c.args.includes('/?')) {
           facts.add('flaghelp');
           helpTopic(c.name);
@@ -385,7 +392,7 @@ export function classifyCommand(outcome: CommandOutcome, shell: TerminalShell, p
         if (HELP_PS.has(name)) {
           const topic = c.args.find(a => !a.startsWith('-'));
           if (topic && topic.includes('*')) facts.add('search');
-          else helpTopic(topic ?? 'get-help');
+          else helpPage(topic ?? 'get-help');
         }
         if (c.args.includes('-?')) {
           facts.add('flaghelp');
