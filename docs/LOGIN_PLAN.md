@@ -63,11 +63,25 @@ CREATE TABLE sessions (
   created_at    INTEGER NOT NULL
 );
 
-CREATE TABLE progress (                      -- one row per user; documents mirror the localStorage shapes
-  user_id       TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-  labs_json     TEXT NOT NULL,               -- { moduleId: objectiveId[] }
-  journey_json  TEXT NOT NULL,               -- { lessonsRead, quizBest, last }
-  updated_at    INTEGER NOT NULL
+-- Phase 3. One row per earned item, so each one carries the reset epoch it was earned under
+CREATE TABLE progress_items (
+  user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind          TEXT NOT NULL,               -- 'objective' | 'lesson' | 'quiz'
+  item_key      TEXT NOT NULL,               -- 'moduleId/objectiveId' or 'pathId/stepId'
+  scope         TEXT NOT NULL,               -- reset scope it belongs to, e.g. 'track:linux', 'path:lpic1-101'
+  epoch         INTEGER NOT NULL,            -- the scope's reset epoch when it was earned (see Syncing)
+  correct       INTEGER,                     -- quiz only: best score
+  total         INTEGER,
+  earned_at     INTEGER NOT NULL,            -- client time, for display only, never for conflict decisions
+  PRIMARY KEY (user_id, kind, item_key)
+);
+
+-- Persistent reset markers: one counter per scope, raised by each reset and never removed
+CREATE TABLE progress_epochs (
+  user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  scope         TEXT NOT NULL,
+  epoch         INTEGER NOT NULL,
+  PRIMARY KEY (user_id, scope)
 );
 ```
 
@@ -82,7 +96,8 @@ Storing progress as JSON documents keeps the server simple and matches what the 
 | `GET /api/me` | Who is signed in (or 401) |
 | `POST /api/logout` | Deletes the session row and clears the cookie |
 | `GET /api/progress` | The stored progress documents |
-| `PUT /api/progress` | Sends local progress; the server merges and returns the merged result |
+| `PUT /api/progress` | Sends queued items with their epochs; the server keeps those matching the current epochs, merges, and returns the result plus current epochs |
+| `POST /api/progress/reset` | Raises a scope's epoch and deletes its items (same-origin only) |
 | `GET /api/account/export` | All of the user's data as JSON |
 | `DELETE /api/account` | Deletes the user and everything linked (cascade) |
 
@@ -94,19 +109,35 @@ Storing progress as JSON documents keeps the server simple and matches what the 
 
 ### Syncing progress (the important part)
 
-Progress only ever grows, so merging is safe and needs no conflict screen:
+Two rules make sync safe: progress belongs to exactly one owner (an account, or "this browser, signed out"), and a reset is a persistent marker that later uploads cannot undo.
 
-- Lab objectives and lessons read: **union** of both sides.
+**Merging (within one owner).** Progress only grows between resets, so no conflict screen is needed:
+
+- Lab objectives and lessons read: **union**.
 - Quiz scores: keep the **best** per quiz.
-- "Last visited" step: keep the most recent by timestamp.
-- Reset progress: a reset is an explicit action, so it sends a `reset` flag with a timestamp; the server clears what was reset before that time. (Without this, a reset on one device would be undone by another device's union.)
+- "Last visited" step: the most recent wins (it is a convenience, not progress).
 
-Flow:
-1. On sign-in, the app sends its local progress; the server merges with the stored copy and returns the result; the app saves it locally.
-2. While signed in, changes are saved locally first (as now), then sent with a short debounce.
-3. Offline: changes queue locally and send when back online. Nothing waits on the network.
+**Resets: epochs, not timestamps.** A timestamped reset flag is not enough: device A resets, offline device B still holds the old snapshot, and B's next upload would bring everything back through the union. Comparing client clocks does not fix it either, because clocks drift.
 
-The merge function is pure TypeScript shared by the app and the Worker, so one set of unit tests covers both sides.
+- Each reset scope (`all`, `track:linux`, `path:lpic1-101`, …) has an **epoch** counter on the server (`progress_epochs`). A reset raises it by one and the server deletes that scope's items. Epochs are never lowered or removed, so the marker persists.
+- Every item records the epoch of its scope at the moment it was earned, as last known by that device.
+- On upload, the server keeps an item only if its epoch equals the scope's current epoch. B's pre-reset items carry the old epoch and are dropped; work done after B has synced the reset carries the new one and is kept.
+- Consequence, stated in the UI: a reset wins over work done offline on another device at the same time. Resetting is rare and explicit, so this is the predictable choice.
+- Responses always include the current epochs, so every device learns about a reset on its next sync.
+
+**Who owns local progress (one browser, several people).** Today's `certsim:progress:v1` and `certsim:journey:v1` keys belong to whoever uses the browser signed out. Account data never mixes with them:
+
+- Signed-out progress stays in the existing keys. Each account gets its own keys, `certsim:acct:<userId>:progress`, `…:journey` and `…:queue` (its offline queue).
+- Signing in switches the app to that account's data, downloaded from the server. It never uploads the signed-out data automatically.
+- If the browser has signed-out progress, the app asks once per account: "Add the progress saved in this browser to your account?" (Add / Not now). Only Add imports it, stamped with the account's current epochs at that moment, because importing is a deliberate choice.
+- Signing out stops sync, drops that account's queue from memory and removes its cached keys from the browser (the server keeps the data), so the next person on a shared computer starts from the signed-out data, not the previous account's.
+- Every sync request carries the user id it was started for and an `AbortController`. A response that arrives after the account changed is discarded, and switching accounts aborts requests still in flight. The server always takes the user from the session cookie, never from the request body.
+
+**Flow (signed in).** Changes save locally first (as now), go into that account's queue and are sent with a short debounce. Offline, the queue waits and sends when back online. Nothing waits on the network.
+
+**Existing data.** No server data exists before Phase 3, so there is nothing to migrate on the server. Signed-out snapshots have no epochs; they enter an account only through the explicit Add, which stamps them.
+
+The merge and epoch rules are pure TypeScript shared by the app and the Worker, so one set of unit tests covers both sides.
 
 ### App changes
 
@@ -129,7 +160,8 @@ The merge function is pure TypeScript shared by the app and the Worker, so one s
 
 ## Testing
 
-- Unit: merge rules (union, best score, reset), session token hashing, OAuth state checks.
+- Unit: merge rules (union, best score), session token hashing, OAuth state checks.
+- Sync cases, as unit tests on the shared rules and as Worker route tests: **reset then reconnect** (A resets, offline B uploads its old snapshot, nothing comes back; B's work after syncing the reset is kept), **two accounts in one browser** (A signs out, B signs in: none of A's progress reaches B), **late response after an account switch** is discarded, **signed-out progress is imported only after Add**.
 - Worker: route tests with Cloudflare's Vitest integration against a local D1.
 - E2E (Playwright): a fake OAuth provider route in test builds, then sign in, sync between two browser contexts, sign out, delete account. Existing signed-out tests keep passing unchanged.
 
@@ -139,7 +171,7 @@ The merge function is pure TypeScript shared by the app and the Worker, so one s
 |---|---|---|
 | 1. Worker API skeleton | `main` Worker, `/api/health`, D1 database and migrations, service worker ignores `/api` | Deployed; static site unchanged; e2e green |
 | 2. GitHub sign-in | OAuth flow, sessions, `/api/me`, Sign in / Sign out in the header | A user can sign in and out on production |
-| 3. Progress sync | Merge function, `GET/PUT /api/progress`, sync on sign-in and on change, offline queue | Progress made on one device appears on another; offline work survives |
+| 3. Progress sync | Account-scoped storage, merge and epoch rules, `GET/PUT /api/progress`, reset endpoint, opt-in import, per-account offline queue | Progress made on one device appears on another; offline work survives; the reset and shared-browser cases above pass |
 | 4. Account page | Export, delete, privacy note, Google sign-in | A user can export and delete everything |
 | 5. More sign-in options | Email one-time codes (needs an email provider), passkeys | Optional, based on demand |
 
