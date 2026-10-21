@@ -1,7 +1,12 @@
 name: Deploy to GitHub Pages
 
+# Publishes only what CI has passed: this runs when the CI workflow finishes on a push to main,
+# and the build job is skipped unless CI succeeded. A manual run (workflow_dispatch) skips that
+# gate, but still typechecks and tests before building.
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
@@ -16,9 +21,16 @@ concurrency:
 
 jobs:
   build:
+    # head_branch can be main for a pull request from a fork, so check the event too
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The commit CI tested, not whatever main points at by now
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - uses: actions/setup-node@v4
         with:
@@ -26,6 +38,7 @@ jobs:
           cache: 'npm'
 
       - run: npm ci
+      - run: npm run lint
       - run: npm test
       - run: npm run build
         env:

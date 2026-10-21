@@ -1,5 +1,6 @@
 import { StageResult } from '../chain';
 import { LinuxContext, linuxCommands } from './context';
+import { checkOptions } from './options';
 
 // Running files: ./script.sh, /usr/bin/ls, bash script.sh, bash -c "...", source / .
 
@@ -13,7 +14,7 @@ export function isScriptPath(name: string): boolean {
 
 // Imported lazily to avoid a module cycle with linuxEngine.ts (which imports this file).
 type LineRunner = (line: string, cwd: string, fs: import('../../types/terminal').FileNode,
-  state: import('../../types/terminal').SystemState, depth: number) => StageResult;
+  state: import('../../types/terminal').SystemState, depth: number, tty?: boolean) => StageResult;
 let lineRunner: LineRunner | null = null;
 export function setLineRunner(fn: LineRunner): void {
   lineRunner = fn;
@@ -26,7 +27,7 @@ export function setLineRunner(fn: LineRunner): void {
 export function runChildLine(ctx: LinuxContext, line: string): StageResult {
   if (!lineRunner || ctx.depth >= MAX_DEPTH) return ctx.fail('bash: maximum nesting level exceeded', 1);
   const state = ctx.isSudo ? { ...ctx.state, currentUser: 'root', currentGroup: 'root', isRootOrAdmin: true } : ctx.state;
-  const res = lineRunner(line, ctx.cwd, ctx.fs, state, ctx.depth + 1);
+  const res = lineRunner(line, ctx.cwd, ctx.fs, state, ctx.depth + 1, ctx.tty);
   ctx.fs = res.newFs;
   ctx.state = {
     ...res.newState,
@@ -55,7 +56,7 @@ function runLines(ctx: LinuxContext, text: string, subshell: boolean, args: stri
     let line = raw.trim();
     if (!line || line.startsWith('#')) continue;
     line = line.replace(/\$(\d)/g, (_, n) => (n === '0' ? ctx.name : args[Number(n) - 1] ?? ''));
-    const res = lineRunner(line, cwd, fs, state, depth + 1);
+    const res = lineRunner(line, cwd, fs, state, depth + 1, ctx.tty);
     ({ newFs: fs, newState: state, newCwd: cwd } = res);
     if (res.stdout) out.push(res.stdout);
     if (res.stderr) err.push(res.stderr);
@@ -101,7 +102,8 @@ export function runScriptFile(ctx: LinuxContext, name: string, needsExec: boolea
     const builtin = linuxCommands.get(base);
     if (BIN_DIRS.includes(dir) && builtin) {
       ctx.name = base;
-      return builtin(ctx);
+      const invalid = checkOptions(base, ctx.args);
+      return invalid ? ctx.fail(invalid.stderr, invalid.code) : builtin(ctx);
     }
   }
   if (!ctx.access(node, path, 'r').ok) return ctx.fail(`bash: ${name}: Permission denied`, needsExec ? 126 : 1);

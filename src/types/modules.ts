@@ -53,4 +53,19 @@ export interface ExamModule {
     underlyingConcept: string;
   }[];
   examTips: string[];
+  /**
+   * Optional story note: the lab as a help-desk ticket from a coworker at Northwind Supplies, a
+   * fictional small company. `ask` shows above the scenario, `thanks` in the finished-lab recap.
+   * One or two plain sentences each. The learner (the admin) is "you" and never given a gender.
+   */
+  ticket?: LabTicket;
+}
+
+export interface LabTicket {
+  /** Coworker's name */
+  from: string;
+  /** Their team or job, e.g. "Finance" */
+  role: string;
+  ask: string;
+  thanks: string;
 }

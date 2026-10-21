@@ -1,22 +1,23 @@
 import { removeNode, writeFileContent } from '../../filesystem';
 import { parseOptions, optionValue } from '../../textUtils';
 import { LinuxContext, LinuxResult, linuxCommands } from '../context';
+import { LAB_DAY, MS_PER_DAY } from '../../labClock';
 
 // Password and account management: passwd, userdel, chage. They edit /etc/passwd,
 // /etc/shadow and /etc/group directly (the real programs run as root: passwd is SUID).
 
 /** The lab clock: 2026-10-19, as days since 1970-01-01 (the unit /etc/shadow uses). */
-const TODAY = Math.floor(Date.UTC(2026, 9, 19) / 86400000);
+const TODAY = LAB_DAY;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 /** "Oct 19, 2026" for a shadow day count. */
 function chageDate(days: number): string {
-  const d = new Date(days * 86400000);
+  const d = new Date(days * MS_PER_DAY);
   return `${MONTHS[d.getUTCMonth()]} ${String(d.getUTCDate()).padStart(2, '0')}, ${d.getUTCFullYear()}`;
 }
 /** "10/19/2026" as passwd -S prints dates. */
 function slashDate(days: number): string {
-  const d = new Date(days * 86400000);
+  const d = new Date(days * MS_PER_DAY);
   return `${String(d.getUTCMonth() + 1).padStart(2, '0')}/${String(d.getUTCDate()).padStart(2, '0')}/${d.getUTCFullYear()}`;
 }
 
@@ -131,7 +132,7 @@ function chage(ctx: LinuxContext): LinuxResult {
   const shadow = read(ctx, '/etc/shadow');
   const row = shadowRow(shadow, user);
   if (changes.length) {
-    const toDays = (v: string) => (/^-?\d+$/.test(v) ? v : String(Math.floor(Date.parse(`${v}T00:00:00Z`) / 86400000)));
+    const toDays = (v: string) => (/^-?\d+$/.test(v) ? v : String(Math.floor(Date.parse(`${v}T00:00:00Z`) / MS_PER_DAY)));
     const index: Record<string, number> = { d: 2, m: 3, M: 4, W: 5, I: 6, E: 7 };
     for (const k of changes) {
       const v = optionValue(opts, k)!;

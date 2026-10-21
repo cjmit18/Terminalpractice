@@ -12,6 +12,9 @@ import { TasksPanel, ConceptsPanel, WalkthroughPanel } from './lab/LabManual';
 import { PageHeader, ResetButton, segmentClass } from './lab/PageHeader';
 import { useGameLayer } from './celebrate/GameLayer';
 import { LabRecap } from './celebrate/LabRecap';
+import { TicketThanks } from './lab/Ticket';
+import { CHALLENGES } from '../data/challenges';
+import { routeHref } from '../lib/router';
 import { hintFact, resetFact } from '../lib/activity';
 
 interface ModuleRunnerProps {
@@ -184,6 +187,8 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
   const total = module.objectives.length;
   const done = module.objectives.filter(o => completed.has(o.id)).length;
   const isComplete = total > 0 && done === total;
+  // Offered in the recap: a mini challenge that runs on this lab's machine
+  const challenge = CHALLENGES.find(c => c.machineFrom === module.id);
   const { state } = session;
 
   const renderSimulator = () => {
@@ -310,8 +315,21 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
             className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 py-6"
           >
             <div hidden={currentTab !== 'tasks'}>
-              {isComplete && finishedHere && <LabRecap module={module} passedBy={passedBy} next={next ?? null} />}
-              {isComplete && finishedHere && recap}
+              {isComplete && finishedHere && (
+                <>
+                  <TicketThanks ticket={module.ticket} />
+                  {challenge && (
+                    <p className="mb-4 text-sm">
+                      <span className="text-muted">A short challenge on this machine: </span>
+                      <a href={routeHref({ section: 'sandbox', challengeId: challenge.id })} className="font-medium text-accent underline-offset-2 hover:underline rounded-sm">
+                        {challenge.title}
+                      </a>
+                    </p>
+                  )}
+                  <LabRecap module={module} passedBy={passedBy} next={next ?? null} />
+                  {recap}
+                </>
+              )}
               <TasksPanel key={module.id} module={module} completed={completed} onHint={objectiveId => handleHint(objectiveId)} />
             </div>
             {module.simType !== 'terminal-only' && <div hidden={currentTab !== 'simulator'} className="h-full">{renderSimulator()}</div>}

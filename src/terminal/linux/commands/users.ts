@@ -3,8 +3,7 @@ import { applyChmod, getSpecialBits, applySpecialBits, octalToSymbolic, toOctalF
 import { parseOptions, optionValue } from '../../textUtils';
 import { LinuxContext, LinuxResult, linuxCommands, createInDir } from '../context';
 
-/** The lab clock, 2026-10-19, in days since 1970-01-01 (the unit /etc/shadow uses; chage uses the same day). */
-const LAB_TODAY = Math.floor(Date.UTC(2026, 9, 19) / 86400000);
+import { LAB_DAY as LAB_TODAY, MS_PER_DAY } from '../../labClock';
 
 // Identity, ownership and permissions: su, exit, whoami, id, chmod, chown, chgrp, umask,
 // useradd, usermod, groupadd
@@ -212,7 +211,8 @@ function umask(ctx: LinuxContext): LinuxResult {
     ctx.state.umask = parseInt(value, 8) & 0o777;
     return ctx.ok();
   }
-  if (/^[0-9]+$/.test(value)) return ctx.fail(`bash: umask: ${value}: octal number out of range`);
+  // Anything that starts with a digit is read as octal (0o27, 8 and 9a are all out of range)
+  if (/^[0-9]/.test(value)) return ctx.fail(`bash: umask: ${value}: octal number out of range`);
   // Symbolic form (u=rwx,g=rx,o=) describes the permissions to keep
   const allowed = applyChmod(octalToSymbolic(toOctalField(0o777 & ~ctx.state.umask)), value);
   if (!allowed) return ctx.fail(`bash: umask: \`${value[0]}': invalid symbolic mode operator`);
@@ -272,7 +272,20 @@ function useradd(ctx: LinuxContext): LinuxResult {
   }
   // Ubuntu's useradd only creates the home directory with -m (CREATE_HOME is off by default)
   if (opts.flags.has('m') && !ctx.node(home)) {
-    createInDir(ctx.fs, home, 'directory', '', username, primaryName ?? username, 750);
+    const group = primaryName ? db.group(primaryName)?.[0] ?? db.groupByGid(primaryName)?.[0] ?? primaryName : username;
+    // HOME_MODE 0750 in /etc/login.defs
+    createInDir(ctx.fs, home, 'directory', '', username, group, 750);
+    // ...then the skeleton files, owned by the new user (-k picks another skeleton directory)
+    const skelPath = optionValue(opts, 'k') ?? '/etc/skel';
+    const skel = ctx.node(ctx.resolve(skelPath));
+    const copyInto = (src: FileNode, dest: string) => {
+      for (const [name, child] of Object.entries(src.children ?? {})) {
+        const path = `${dest}/${name}`;
+        createInDir(ctx.fs, path, child.type, child.content ?? '', username, group, child.octal);
+        if (child.type === 'directory') copyInto(child, path);
+      }
+    };
+    if (skel?.type === 'directory') copyInto(skel, home);
   }
   return ctx.ok();
 }
@@ -363,7 +376,7 @@ function usermod(ctx: LinuxContext): LinuxResult {
     else {
       const t = Date.parse(`${expire}T00:00:00Z`);
       if (isNaN(t)) return ctx.fail(`usermod: invalid date '${expire}'`, 3);
-      expireDays = String(Math.floor(t / 86400000));
+      expireDays = String(Math.floor(t / MS_PER_DAY));
     }
   }
 

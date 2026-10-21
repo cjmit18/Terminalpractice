@@ -3,6 +3,8 @@ import { removeNode, fileSize, writeFileContent } from '../../filesystem';
 import { parseOptions } from '../../textUtils';
 import { LinuxContext, LinuxResult, linuxCommands, createInDir } from '../context';
 import { deviceNumbers, inode } from './lookup';
+import { MAX_PATH_DEPTH, pathDepth } from '../../limits';
+import { labNowIso } from '../../labClock';
 
 // Navigation and file management: pwd, cd, ls, mkdir, touch, rm, tee (cat lives with the text filters)
 
@@ -121,10 +123,9 @@ function ls(ctx: LinuxContext): LinuxResult {
   const f = opts.flags;
   const o: LsOptions = {
     long: f.has('l') || f.has('n') || f.has('g'), human: f.has('h'), classify: f.has('F'), inode: f.has('i'), numeric: f.has('n'),
-    one: f.has('1'), sortTime: f.has('t'), sortSize: f.has('S'), reverse: f.has('r'),
+    // Like GNU ls, one name per line unless stdout is a terminal (or -C / -x ask for columns)
+    one: f.has('1') || (!ctx.tty && !f.has('C') && !f.has('x')), sortTime: f.has('t'), sortSize: f.has('S'), reverse: f.has('r'),
   };
-  const bad = [...f].find(c => c.length === 1 && !'aAdhRFinrlg1tSxCU'.includes(c));
-  if (bad) return ctx.fail(`ls: invalid option -- '${bad}'\nTry 'ls --help' for more information.`, 2);
   const all = f.has('a');
   const almostAll = f.has('A') && !all;
   const dirSelf = f.has('d');
@@ -189,6 +190,7 @@ function mkdir(ctx: LinuxContext): LinuxResult {
       if (parents) continue;
       return ctx.fail(`mkdir: cannot create directory '${d}': File exists`);
     }
+    if (pathDepth(targetPath) > MAX_PATH_DEPTH) return ctx.fail(`mkdir: cannot create directory '${d}': File name too long`);
     const parts = targetPath.split('/').filter(Boolean);
     const chain = parents ? parts.map((_, i) => '/' + parts.slice(0, i + 1).join('/')) : [targetPath];
     for (const p of chain) {
@@ -210,7 +212,7 @@ function touch(ctx: LinuxContext): LinuxResult {
     if (!check.ok) return ctx.fail(`touch: cannot touch '${f}': ${check.error || 'Permission denied'}`);
     const existing = ctx.node(targetPath);
     if (existing) {
-      existing.updatedAt = new Date().toISOString();
+      existing.updatedAt = labNowIso();
     } else {
       createInDir(ctx.fs, targetPath, 'file', '', ctx.user, ctx.group, ctx.fileMode());
     }
