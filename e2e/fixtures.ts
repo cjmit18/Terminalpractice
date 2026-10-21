@@ -24,7 +24,7 @@ export { expect };
 
 /** The header's overall count, e.g. "4 of 37 tasks done" (desktop) or "4 of 37 done" (phone). */
 export const headerProgress = (page: Page): Locator =>
-  page.getByRole('banner').getByText(/^\d+ of \d+ (tasks )?done$/);
+  page.getByRole('banner').getByText(/^\d+ of \d+ (lab tasks |tasks )?done$/);
 
 export async function readHeaderProgress(page: Page): Promise<{ done: number; total: number }> {
   const text = (await headerProgress(page).textContent()) ?? '';

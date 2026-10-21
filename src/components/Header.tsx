@@ -75,7 +75,8 @@ export const Header: React.FC<HeaderProps> = ({ current, hrefs, tasksDone, tasks
         </nav>
 
         <div className="ml-auto flex items-center gap-3 lg:gap-4 shrink-0">
-          <p className="hidden lg:block text-sm text-muted whitespace-nowrap tabular-nums">
+          {/* Hidden only at tablet widths, where the top nav needs the room; phones use the bottom nav */}
+          <p className="md:hidden lg:block text-sm text-muted whitespace-nowrap tabular-nums">
             {tasksDone} of {tasksTotal}
             <span className="hidden xl:inline"> lab tasks</span> done
           </p>

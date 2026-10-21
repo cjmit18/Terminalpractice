@@ -31,14 +31,14 @@ test('permissions lab: typed commands complete every task, progress persists and
   await expect(terminalLog(page)).toContainText('drwxrwxrwx');
 
   // The header total and the lab's own count both move to 4
-  await expect(headerProgress(page)).toHaveText(new RegExp(`^4 of ${before.total} (tasks )?done$`));
+  await expect(headerProgress(page)).toHaveText(new RegExp(`^4 of ${before.total} (lab tasks |tasks )?done$`));
   await showLab(page);
   await expect(page.getByText('4 of 4 done')).toBeVisible();
   await expect(page.getByRole('heading', { level: 1 })).toContainText('Done');
 
   // Progress is saved in this browser
   await page.reload();
-  await expect(headerProgress(page)).toHaveText(new RegExp(`^4 of ${before.total} (tasks )?done$`));
+  await expect(headerProgress(page)).toHaveText(new RegExp(`^4 of ${before.total} (lab tasks |tasks )?done$`));
   await expect(page.getByText('4 of 4 done')).toBeVisible();
 
   // Reset it from the catalog, accepting the confirm dialog
@@ -50,12 +50,12 @@ test('permissions lab: typed commands complete every task, progress persists and
     void dialog.accept();
   });
   await page.getByRole('button', { name: 'Reset progress' }).click();
-  await expect(headerProgress(page)).toHaveText(new RegExp(`^0 of ${before.total} (tasks )?done$`));
+  await expect(headerProgress(page)).toHaveText(new RegExp(`^0 of ${before.total} (lab tasks |tasks )?done$`));
   await expect(lab).toContainText('0 of 4 tasks');
   await expect(page.getByRole('button', { name: 'Reset progress' })).toBeHidden();
 
   await page.reload();
-  await expect(headerProgress(page)).toHaveText(new RegExp(`^0 of ${before.total} (tasks )?done$`));
+  await expect(headerProgress(page)).toHaveText(new RegExp(`^0 of ${before.total} (lab tasks |tasks )?done$`));
 });
 
 test('DiskPart lab: running every walkthrough step completes the lab', async ({ page }) => {

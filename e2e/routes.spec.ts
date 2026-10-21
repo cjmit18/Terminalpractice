@@ -1,7 +1,15 @@
 import { test, expect, expectNoHorizontalOverflow } from './fixtures';
+import { LEARNING_PATHS } from '../src/data/paths';
+
+const firstPath = LEARNING_PATHS[0];
+const firstLesson = firstPath.stages.flatMap(s => s.steps).find(s => s.kind === 'lesson');
 
 /** Every page, by hash route, with the level-1 heading it should show. */
 const ROUTES: { path: string; heading: string }[] = [
+  { path: '', heading: 'Learning paths' },
+  { path: '#/learn', heading: 'Learning paths' },
+  { path: `#/learn/${firstPath.id}`, heading: firstPath.title },
+  ...(firstLesson && firstLesson.kind === 'lesson' ? [{ path: `#/learn/${firstPath.id}/${firstLesson.id}`, heading: firstLesson.title }] : []),
   { path: '#/linux', heading: 'Linux labs' },
   { path: '#/windows', heading: 'Windows labs' },
   { path: '#/linux/lpi-104-5-permissions', heading: 'Manage file permissions and ownership' },
@@ -18,7 +26,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
     test.use({ colorScheme });
 
     for (const { path, heading } of ROUTES) {
-      test(`${path} renders without errors or horizontal overflow`, async ({ page }) => {
+      test(`${path || 'home'} renders without errors or horizontal overflow`, async ({ page }) => {
         await page.goto(path);
         await expect(page.getByRole('heading', { level: 1, name: heading })).toBeVisible();
         // The page follows the OS theme when the user has not picked one
