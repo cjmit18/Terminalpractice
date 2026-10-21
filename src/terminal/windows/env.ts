@@ -77,7 +77,35 @@ export function expandCmdVariables(line: string, state: SystemState, cwd: string
 /** Expands $env:NAME in a PowerShell line. */
 export function expandPowerShellEnv(line: string, state: SystemState): string {
   const vars = windowsEnvironment(state);
-  return line.replace(/\$env:([A-Za-z_][\w()]*)/gi, (_, name: string) => lookup(vars, name) ?? '');
+  let result = '';
+  let quote: '"' | "'" | null = null;
+  for (let i = 0; i < line.length;) {
+    const ch = line[i];
+    if (ch === '`' && i + 1 < line.length) {
+      result += line.slice(i, i + 2);
+      i += 2;
+      continue;
+    }
+    if ((ch === '"' || ch === "'") && (!quote || quote === ch)) {
+      quote = quote ? null : ch;
+      result += ch;
+      i++;
+      continue;
+    }
+    if (ch === '$' && quote !== "'") {
+      const match = line.slice(i).match(/^\$env:([A-Za-z_][\w()]*)/i);
+      if (match) {
+        const value = lookup(vars, match[1]) ?? '';
+        const escaped = value.replace(/[`"]/g, c => `\`${c}`);
+        result += quote === '"' ? escaped : `"${escaped}"`;
+        i += match[0].length;
+        continue;
+      }
+    }
+    result += ch;
+    i++;
+  }
+  return result;
 }
 
 /** Integer arithmetic for `set /a`: + - * / % unary minus and parentheses; names read variables. */

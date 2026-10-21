@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { getNodeAtPath } from './filesystem.ts';
+import { createNode, getNodeAtPath } from './filesystem.ts';
 import { windowsSession } from './testUtils.ts';
 
 const STUDENT = { currentUser: 'Student', currentGroup: 'Users', isRootOrAdmin: false };
@@ -19,6 +19,11 @@ test('CMD: %VAR% expansion from state.envVars and dynamic variables', () => {
   assert.equal(student('echo %USERNAME% %USERPROFILE%').stdout, 'Student C:\\Users\\Student');
   assert.equal(windowsSession('powershell')('echo %USERNAME%').stdout, '%USERNAME%', 'PowerShell does not expand %VAR%');
   assert.equal(windowsSession('powershell')('echo $env:USERNAME').stdout, 'Administrator');
+  const ps = windowsSession('powershell');
+  assert.equal(ps("Write-Output '$env:USERNAME'").stdout, '$env:USERNAME', 'single-quoted strings are literal');
+  assert.equal(ps('Write-Output $env:ProgramFiles').stdout, 'C:\\Program Files', 'expanded values stay one argument');
+  assert.equal(ps('Write-Output "$env:ProgramFiles"').stdout, 'C:\\Program Files');
+  assert.equal(ps('Write-Output `$env:USERNAME').stdout, '$env:USERNAME', 'backtick-escaped variables are literal');
 });
 
 test('CMD: set lists, assigns, filters and computes', () => {
@@ -76,6 +81,7 @@ test('CMD: mkdir/md, copy, del, type', () => {
 
 test('CMD: standard users get Access is denied with an explanation', () => {
   const run = windowsSession('cmd', STUDENT);
+  createNode(run.fs(), 'C:\\Users\\Administrator\\secret.txt', 'file', 'private', true, 'Administrator', 'Administrators', 600);
   const md = run('mkdir C:\\Windows\\Evil');
   assert.equal(md.stderr, 'Access is denied.');
   assert.match(md.explanation ?? '', /standard user .*C:\\Windows is protected/);
@@ -85,6 +91,10 @@ test('CMD: standard users get Access is denied with an explanation', () => {
   assert.equal(node(run, 'C:\\Windows\\System32\\x.txt'), null);
   const other = run('dir C:\\Users\\Administrator');
   assert.match(other.explanation ?? '', /belongs to another account/);
+  const findstr = run('findstr private C:\\Users\\Administrator\\secret.txt');
+  assert.equal(findstr.stderr, 'Access is denied.');
+  assert.equal(findstr.stdout, '');
+  assert.match(findstr.explanation ?? '', /belongs to another account/);
   assert.equal(run('mkdir mine').exitCode, 0, 'own profile is writable');
   const del = run('del C:\\Windows\\System32\\drivers\\etc\\hosts');
   assert.match(del.stderr, /Access is denied\./);
@@ -244,16 +254,51 @@ test('PowerShell: New-Item, Copy-Item, Remove-Item, Write-Output', () => {
   assert.match(run('mkdir Reports').stderr, /An item with the specified name C:\\Users\\Student\\Reports already exists/);
   run('New-Item -ItemType File -Path Reports\\a.txt -Value hello');
   assert.equal(node(run, 'C:\\Users\\Student\\Reports\\a.txt')?.content, 'hello');
+  const selfCopy = run('Copy-Item Reports Reports\\inner -Recurse');
+  assert.equal(selfCopy.exitCode, 1);
+  assert.match(selfCopy.stderr, /copy an item into itself/);
+  assert.equal(node(run, 'C:\\Users\\Student\\Reports\\inner'), null, 'reject before creating the destination');
   run('Copy-Item Reports\\a.txt b.txt');
   assert.equal(node(run, 'C:\\Users\\Student\\b.txt')?.content, 'hello');
   assert.match(run('Remove-Item Reports').stdout, /has children and the Recurse parameter was not specified/);
   assert.ok(node(run, 'C:\\Users\\Student\\Reports'));
+  assert.match(run('Remove-Item Reports -Recurse:$false').stdout, /Recurse parameter was not specified/);
+  assert.ok(node(run, 'C:\\Users\\Student\\Reports'), 'an explicit false switch is not recursive');
   run('Remove-Item Reports -Recurse');
   assert.equal(node(run, 'C:\\Users\\Student\\Reports'), null);
+  run('New-Item -ItemType File -Path a.txt');
+  const nested = run('New-Item -ItemType File -Path a.txt\\b.txt');
+  assert.equal(nested.exitCode, 1);
+  assert.match(nested.stderr, /Could not find a part of the path/);
   assert.equal(run('echo a b').stdout, 'a\nb', 'Write-Output prints one item per line');
   const denied = windowsSession('powershell', STUDENT)('New-Item C:\\Windows\\x.txt');
   assert.match(denied.stderr, /Access to the path 'C:\\Windows\\x\.txt' is denied/);
   assert.ok(denied.explanation);
+});
+
+test('PowerShell recursive file operations honor protected profile boundaries', () => {
+  const listing = windowsSession('powershell', STUDENT);
+  createNode(listing.fs(), 'C:\\Users\\Administrator\\secret.txt', 'file', 'private', true, 'Administrator', 'Administrators', 600);
+  const listed = listing('Get-ChildItem C:\\Users -Recurse -Name');
+  assert.equal(listed.exitCode, 1);
+  assert.ok(listed.stdout.includes('Student\\Desktop\\TroubleTicket.txt'));
+  assert.ok(!listed.stdout.includes('Administrator\\secret.txt'));
+  assert.match(listed.stderr, /Access to the path 'C:\\Users\\Administrator' is denied/);
+  assert.match(listed.explanation ?? '', /belongs to another account/);
+
+  const copy = windowsSession('powershell', STUDENT);
+  createNode(copy.fs(), 'C:\\Users\\Administrator\\secret.txt', 'file', 'private', true, 'Administrator', 'Administrators', 600);
+  const copied = copy('Copy-Item C:\\Users C:\\Logs\\user-copy -Recurse');
+  assert.equal(copied.exitCode, 1);
+  assert.equal(node(copy, 'C:\\Logs\\user-copy\\Administrator\\secret.txt'), null);
+  assert.match(copied.explanation ?? '', /belongs to another account/);
+
+  const remove = windowsSession('powershell', STUDENT);
+  createNode(remove.fs(), 'C:\\Users\\Administrator\\secret.txt', 'file', 'private', true, 'Administrator', 'Administrators', 600);
+  const removed = remove('Remove-Item C:\\Users -Recurse');
+  assert.equal(removed.exitCode, 1);
+  assert.ok(node(remove, 'C:\\Users\\Administrator\\secret.txt'), 'protected profile content must remain');
+  assert.match(removed.explanation ?? '', /belongs to another account/);
 });
 
 test('PowerShell: Get-Service by name, service errors, Test-NetConnection host', () => {

@@ -45,7 +45,17 @@ function getChildItem(ctx: WindowsContext): WindowsResult {
   }
   const blocks: string[] = [];
   const names: string[] = [];
+  const errors: string[] = [];
+  let note: string | undefined;
   const walk = (dirNode: FileNode, dirPath: string, rel: string) => {
+    if (rel) {
+      const why = ctx.protectedReason(dirPath, 'read');
+      if (why) {
+        errors.push(accessDenied(ctx.raw, name, dirPath));
+        note = why;
+        return;
+      }
+    }
     const entries = Object.entries(dirNode.children ?? {}).sort(([a], [b]) => a.toLowerCase().localeCompare(b.toLowerCase()));
     const rows = entries.filter(([k, n]) => keep(n, k));
     if (rows.length) {
@@ -57,7 +67,7 @@ function getChildItem(ctx: WindowsContext): WindowsResult {
     }
   };
   walk(node, base, '');
-  return ctx.ok(p.named.has('Name') ? names.join('\n') : blocks.join('\n'));
+  return ctx.result(p.named.has('Name') ? names.join('\n') : blocks.join('\n'), errors.join('\n'), errors.length ? 1 : 0, note);
 }
 
 function getContent(ctx: WindowsContext): WindowsResult {
@@ -138,8 +148,14 @@ function newItem(ctx: WindowsContext): WindowsResult {
       createNode(ctx.fs, dir, 'directory', '', true, ctx.state.currentUser, 'Users', 755);
     }
   }
-  if (!ctx.node(abs)) createNode(ctx.fs, abs, type as 'file' | 'directory', String(p.named.get('Value') ?? ''), true, ctx.state.currentUser, 'Users', type === 'directory' ? 755 : 644);
-  return ctx.ok(listing(parentOf(abs), [itemRow(ctx.node(abs)!, leaf(abs))]));
+  if (!ctx.node(abs) && !createNode(ctx.fs, abs, type as 'file' | 'directory', String(p.named.get('Value') ?? ''), true,
+    ctx.state.currentUser, 'Users', type === 'directory' ? 755 : 644)) {
+    return ctx.fail(psError(ctx.raw, name, `Could not find a part of the path '${abs}'.`, 'WriteError', abs,
+      'DirectoryNotFoundException', 'NewItemIOError'));
+  }
+  const created = ctx.node(abs);
+  if (!created) return ctx.fail(pathNotFound(ctx.raw, name, abs));
+  return ctx.ok(listing(parentOf(abs), [itemRow(created, leaf(abs))]));
 }
 
 function copyItem(ctx: WindowsContext): WindowsResult {
@@ -154,10 +170,26 @@ function copyItem(ctx: WindowsContext): WindowsResult {
   if (!node) return ctx.fail(pathNotFound(ctx.raw, name, srcAbs));
   let destAbs = ctx.resolve(dest);
   if (ctx.node(destAbs)?.type === 'directory') destAbs = join(destAbs, leaf(srcAbs));
+  const from = srcAbs.replace(/\\+$/, '').toLowerCase();
+  const to = destAbs.replace(/\\+$/, '').toLowerCase();
+  if (node.type === 'directory' && (to === from || to.startsWith(`${from}\\`))) {
+    return ctx.fail(psError(ctx.raw, name, 'Cannot copy an item into itself.', 'InvalidOperation', srcAbs,
+      'InvalidOperationException', 'CopyItemArgumentError'));
+  }
   if (!ctx.node(parentOf(destAbs))) return ctx.fail(psError(ctx.raw, name, `Could not find a part of the path '${destAbs}'.`, 'WriteError', destAbs, 'DirectoryNotFoundException', 'CopyItemIOError'));
   const why = ctx.protectedReason(destAbs, 'write') ?? ctx.protectedReason(srcAbs, 'read');
   if (why) return ctx.fail(accessDenied(ctx.raw, name, destAbs), 1, why);
-  const copy = (n: FileNode, to: string, top: boolean) => {
+  const errors: string[] = [];
+  let note: string | undefined;
+  const copy = (n: FileNode, to: string, top: boolean, from: string) => {
+    const sourceWhy = ctx.protectedReason(from, 'read');
+    const destWhy = ctx.protectedReason(to, 'write');
+    if (sourceWhy || destWhy) {
+      const deniedPath = sourceWhy ? from : to;
+      errors.push(accessDenied(ctx.raw, name, deniedPath));
+      note = sourceWhy || destWhy || undefined;
+      return;
+    }
     const existing = ctx.node(to);
     if (n.type === 'file') {
       if (existing) writeFileContent(existing, n.content || '');
@@ -167,10 +199,10 @@ function copyItem(ctx: WindowsContext): WindowsResult {
     if (!existing) createNode(ctx.fs, to, 'directory', '', true, ctx.state.currentUser, 'Users', 755);
     // Without -Recurse, Copy-Item copies only the empty folder
     if (top && !p.named.has('Recurse')) return;
-    for (const [k, child] of Object.entries(n.children ?? {})) copy(child, join(to, k), false);
+    for (const [k, child] of Object.entries(n.children ?? {})) copy(child, join(to, k), false, join(from, k));
   };
-  copy(node, destAbs, true);
-  return ctx.ok();
+  copy(node, destAbs, true, srcAbs);
+  return ctx.result('', errors.join('\n'), errors.length ? 1 : 0, note);
 }
 
 function removeItem(ctx: WindowsContext): WindowsResult {
@@ -197,7 +229,26 @@ function removeItem(ctx: WindowsContext): WindowsResult {
         out.push(`\nConfirm\nThe item at ${m} has children and the Recurse parameter was not specified. If you continue,\nall children will be removed with the item. Are you sure you want to continue?\n[Y] Yes  [A] Yes to All  [N] No  [L] No to All  [S] Suspend  [?] Help (default is "Y"): N`);
         continue;
       }
-      removeNode(ctx.fs, m, true);
+      if (n.type === 'directory' && p.named.has('Recurse')) {
+        const removeTree = (path: string) => {
+          const current = ctx.node(path);
+          if (!current) return;
+          const protectedWhy = ctx.protectedReason(path, 'write');
+          if (protectedWhy) {
+            errors.push(accessDenied(ctx.raw, name, path));
+            note = protectedWhy;
+            return;
+          }
+          if (current.type === 'directory') {
+            for (const child of Object.keys(current.children ?? {})) removeTree(join(path, child));
+            if (Object.keys(current.children ?? {}).length > 0) return;
+          }
+          removeNode(ctx.fs, path, true);
+        };
+        removeTree(m);
+      } else {
+        removeNode(ctx.fs, m, true);
+      }
     }
   }
   return ctx.result(out.join('\n'), errors.join('\n'), errors.length ? 1 : 0, note);

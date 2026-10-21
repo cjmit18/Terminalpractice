@@ -61,7 +61,7 @@ function cp(ctx: LinuxContext): LinuxResult {
         return;
       }
       if (existing && f.has('n')) return;
-      const check = existing ? ctx.access(existing, destAbs, 'w') : ctx.canWrite(destAbs);
+      const check = ctx.canWrite(destAbs);
       if (!check.ok) {
         errors.push(`cp: cannot create regular file '${destLabel}': ${check.error}`);
         return;

@@ -59,6 +59,7 @@ function find(ctx: LinuxContext): LinuxResult {
   const errors: string[] = [];
   const stderrFromExec: string[] = [];
   let hasAction = false;
+  let deleteAction = false;
 
   // Expression: OR of AND-groups of (optionally negated) primaries
   const groups: Test[][] = [[]];
@@ -96,9 +97,14 @@ function find(ctx: LinuxContext): LinuxResult {
         case '-print': hasAction = true; test = e => { out.push(e.label); return true; }; break;
         case '-delete': {
           hasAction = true;
+          deleteAction = true;
           test = e => {
             const check = ctx.canDelete(e.abs);
             if (!check.ok) { errors.push(`find: cannot delete '${e.label}': ${check.error}`); return false; }
+            if (e.node.type === 'directory' && Object.keys(e.node.children ?? {}).length > 0) {
+              errors.push(`find: cannot delete '${e.label}': Directory not empty`);
+              return false;
+            }
             removeNode(ctx.fs, e.abs, false);
             return true;
           };
@@ -134,23 +140,29 @@ function find(ctx: LinuxContext): LinuxResult {
 
   const matches = (e: Entry) => groups.some(g => g.every(t => t(e)));
   const visit = (e: Entry) => {
-    if (e.depth >= minDepth && matches(e) && !hasAction) out.push(e.label);
-    if (e.node.type !== 'directory' || e.depth >= maxDepth) return;
-    const why = `Searching inside ${e.abs} needs read (r) and execute (x) on it, but it`;
-    if (!ctx.access(e.node, e.abs, 'r', why).ok || !ctx.access(e.node, e.abs, 'x', why).ok) {
-      errors.push(`find: '${e.label}': Permission denied`);
-      return;
-    }
-    for (const name of Object.keys(e.node.children ?? {}).sort()) {
-      const child = e.node.children?.[name];
-      if (!child) continue; // removed by -delete or -exec
-      visit({
-        node: child,
-        abs: e.abs === '/' ? `/${name}` : `${e.abs}/${name}`,
-        label: e.label.endsWith('/') ? e.label + name : `${e.label}/${name}`,
-        depth: e.depth + 1,
-      });
-    }
+    const apply = () => {
+      if (e.depth >= minDepth && matches(e) && !hasAction) out.push(e.label);
+    };
+    const descend = () => {
+      if (e.node.type !== 'directory' || e.depth >= maxDepth) return;
+      const why = `Searching inside ${e.abs} needs read (r) and execute (x) on it, but it`;
+      if (!ctx.access(e.node, e.abs, 'r', why).ok || !ctx.access(e.node, e.abs, 'x', why).ok) {
+        errors.push(`find: '${e.label}': Permission denied`);
+        return;
+      }
+      for (const name of Object.keys(e.node.children ?? {}).sort()) {
+        const child = e.node.children?.[name];
+        if (!child) continue; // removed by -delete or -exec
+        visit({
+          node: child,
+          abs: e.abs === '/' ? `/${name}` : `${e.abs}/${name}`,
+          label: e.label.endsWith('/') ? e.label + name : `${e.label}/${name}`,
+          depth: e.depth + 1,
+        });
+      }
+    };
+    if (deleteAction) { descend(); apply(); }
+    else { apply(); descend(); }
   };
 
   for (const s of starts) {

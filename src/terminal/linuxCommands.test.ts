@@ -32,6 +32,18 @@ test('cp copies files and (with -r) directories, honoring permissions', () => {
   assert.equal(node(run, '/tmp/sh')?.owner, 'root');
 });
 
+test('cp checks traversal permissions before overwriting an existing destination', () => {
+  const run = linuxSession();
+  run('mkdir /tmp/locked');
+  run('touch /tmp/locked/dest');
+  run('chmod 666 /tmp/locked');
+  const denied = run('cp notes.txt /tmp/locked/dest');
+  assert.equal(denied.exitCode, 1);
+  assert.match(denied.stderr, /cannot create regular file '\/tmp\/locked\/dest': Permission denied/);
+  assert.match(denied.explanation ?? '', /To reach \/tmp\/locked\/dest/);
+  assert.equal(node(run, '/tmp/locked/dest')?.content, '');
+});
+
 test('mv renames and moves, checking both directories', () => {
   const run = linuxSession();
   assert.equal(run('mv notes.txt renamed.txt').exitCode, 0);
@@ -81,6 +93,11 @@ test('find: -name -iname -type -perm -user -group -size -empty -maxdepth -exec -
   run('touch a.tmp b.tmp');
   assert.equal(run('find . -name "*.tmp" -delete').exitCode, 0);
   assert.equal(node(run, '/home/student/a.tmp'), null);
+  const unmatched = run('find finance -type d -delete');
+  assert.equal(unmatched.exitCode, 1);
+  assert.match(unmatched.stderr, /cannot delete 'finance': Directory not empty/);
+  assert.ok(node(run, '/home/student/finance/q3_payroll.csv'), 'unmatched descendants must remain');
+  assert.ok(node(run, '/home/student/finance'), 'nonempty directories must not be removed');
   assert.equal(run('find nowhere').stderr, "find: 'nowhere': No such file or directory");
   assert.equal(run('find . -bogus').stderr, "find: unknown predicate `-bogus'");
   assert.equal(run('find . -type x').stderr, 'find: Unknown argument to -type: x');

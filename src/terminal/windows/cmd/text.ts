@@ -16,7 +16,10 @@ function findstr(ctx: WindowsContext): WindowsResult {
   if (!ctx.stdin && args.length > 0) {
     const lastArg = args[args.length - 1];
     if (lastArg !== pattern && !lastArg.startsWith('/')) {
-      const node = ctx.node(ctx.resolve(lastArg));
+      const abs = ctx.resolve(lastArg);
+      const why = ctx.protectedReason(abs, 'read');
+      if (why) return ctx.fail('Access is denied.', 1, why);
+      const node = ctx.node(abs);
       if (node && node.type === 'file') content = node.content || '';
     }
   }
