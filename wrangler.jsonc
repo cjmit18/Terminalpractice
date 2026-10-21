@@ -22,12 +22,25 @@
   "d1_databases": [
     {
       "binding": "DB",
-      // The D1 database keeps its original name; the binding works from any Worker on the account
-      "database_name": "terminalpractice",
-      "database_id": "741adee3-13fb-48e7-90c1-34024d069bfa",
+      "database_name": "terminuscli",
+      "database_id": "a1e3a142-a5d2-4b68-b68b-1e32c95995ee",
       "migrations_dir": "migrations"
     }
   ],
+  // Pull-request builds run `wrangler preview`, which needs its own preview-safe settings (nothing here
+  // is inherited from above). Previews get sign-in turned off and an empty database of their own, so a
+  // preview link can never touch real accounts.
+  "previews": {
+    "vars": { "GITHUB_CLIENT_ID": "" },
+    "d1_databases": [
+      {
+        "binding": "DB",
+        "database_name": "terminalpractice-preview",
+        "database_id": "e671f478-ea60-41d5-a2ec-a3668c02c05a",
+        "migrations_dir": "migrations"
+      }
+    ]
+  },
   "vars": {
     // Client ID of the GitHub App used for "Sign in with GitHub" (public, not a secret).
     // The client secret is set separately: npx wrangler secret put GITHUB_CLIENT_SECRET
