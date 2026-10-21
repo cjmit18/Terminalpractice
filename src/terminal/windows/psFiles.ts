@@ -173,16 +173,12 @@ function copyItem(ctx: WindowsContext): WindowsResult {
   const from = srcAbs.replace(/\\+$/, '').toLowerCase();
   const to = destAbs.replace(/\\+$/, '').toLowerCase();
   if (node.type === 'directory' && (to === from || to.startsWith(`${from}\\`))) {
-    return ctx.fail(psError(ctx.raw, name, `Cannot copy '${srcAbs}' into itself or a subdirectory.`, 'WriteError', srcAbs, 'IOException', 'CopyItemIOError'));
+    return ctx.fail(psError(ctx.raw, name, 'Cannot copy an item into itself.', 'InvalidOperation', srcAbs,
+      'InvalidOperationException', 'CopyItemArgumentError'));
   }
   if (!ctx.node(parentOf(destAbs))) return ctx.fail(psError(ctx.raw, name, `Could not find a part of the path '${destAbs}'.`, 'WriteError', destAbs, 'DirectoryNotFoundException', 'CopyItemIOError'));
   const why = ctx.protectedReason(destAbs, 'write') ?? ctx.protectedReason(srcAbs, 'read');
   if (why) return ctx.fail(accessDenied(ctx.raw, name, destAbs), 1, why);
-  if (node.type === 'directory' && (destAbs.toLowerCase() === srcAbs.toLowerCase() ||
-      destAbs.toLowerCase().startsWith(`${srcAbs.toLowerCase()}\\`))) {
-    return ctx.fail(psError(ctx.raw, name, 'Cannot copy an item into itself.', 'InvalidOperation', srcAbs,
-      'InvalidOperationException', 'CopyItemArgumentError'));
-  }
   const errors: string[] = [];
   let note: string | undefined;
   const copy = (n: FileNode, to: string, top: boolean, from: string) => {
