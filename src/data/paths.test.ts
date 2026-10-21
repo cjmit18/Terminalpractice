@@ -94,3 +94,24 @@ test('First steps: two short lessons, then a five-minute Beginner lab for bash a
   assert.equal(win.defaultShell, 'cmd');
   assert.deepEqual(win.allowedShells, ['cmd', 'powershell']);
 });
+
+test('Quizzes: the right answer cannot be guessed by picking the longest choice', () => {
+  // With four choices about a quarter of the keys are the longest by chance. Well above that,
+  // learners can pass on length alone, so each path stays at or under 35%, and no key may be
+  // more than 1.4 times as long as its longest distractor.
+  for (const path of LEARNING_PATHS) {
+    let total = 0;
+    let longest = 0;
+    for (const stage of path.stages) for (const step of stage.steps) {
+      if (step.kind !== 'quiz') continue;
+      for (const q of step.questions) {
+        total++;
+        const key = q.choices[q.answer].length;
+        const maxOther = Math.max(...q.choices.filter((_, i) => i !== q.answer).map(c => c.length));
+        if (key > maxOther) longest++;
+        assert.ok(key <= 1.4 * maxOther, `${path.id}/${q.id}: the answer is ${(key / maxOther).toFixed(2)} times the longest distractor`);
+      }
+    }
+    if (total > 0) assert.ok(longest / total <= 0.35, `${path.id}: the answer is the unique longest choice in ${longest} of ${total} questions`);
+  }
+});

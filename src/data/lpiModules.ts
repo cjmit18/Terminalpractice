@@ -1,7 +1,10 @@
 import { ExamModule } from '../types/modules';
 import { FileNode, SystemState } from '../types/terminal';
 import { createDefaultLinuxFs, getNodeAtPath } from '../terminal/filesystem';
-import { countedSourceIps, extractedSourceIps, financeDirShown, passwdEntryShown, sarahCreated, sarahHomeOwned, sataInDmesg } from './verifiers';
+import {
+  countedSourceIps, extractedSourceIps, failedLinesFound, financeDirShown, modulesListed, mountsShown, partitionTableListed,
+  passwdEntryShown, pciListed, sarahCreated, sarahHomeChecked, sataInDmesg,
+} from './verifiers';
 import { WELCOME_MARKER, folderListed, helpRead, notesEntered, welcomeRead, workingDirShown } from './firstStepsVerifiers';
 
 const baseLinuxState: SystemState = {
@@ -225,7 +228,7 @@ export const LPI_MODULES: ExamModule[] = [
         nudge: 'You want the tool that prints only the lines matching a pattern. The pattern has a space in it, so think about quotes.',
         shape: 'grep "______ ________" /var/log/auth.log',
         hint: 'Run grep "Failed password" /var/log/auth.log. Keep the quotes: without them, grep searches for "Failed" alone, reports that a file called password does not exist, and still prints the lines that contain Failed.',
-        verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && /grep/.test(ctx.command) && ctx.stdout.includes('198.51.100.44'),
+        verifier: (_, __, ctx) => failedLinesFound(ctx),
       },
       {
         id: 'obj-pipe-awk',
@@ -299,7 +302,7 @@ export const LPI_MODULES: ExamModule[] = [
         nudge: 'Many hardware listing tools are named "ls" plus the name of a bus. Network and video cards sit on the PCI bus.',
         shape: 'ls___',
         hint: 'Run lspci. On a real system, lspci -k also shows which kernel driver handles each device.',
-        verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && /^(sudo\s+)?lspci\b/.test(ctx.command.trim()) && ctx.stdout.includes('Ethernet'),
+        verifier: (_, __, ctx) => pciListed(ctx),
       },
       {
         id: 'hw-lsmod',
@@ -307,8 +310,8 @@ export const LPI_MODULES: ExamModule[] = [
         description: 'Check that the e1000e module is loaded.',
         nudge: 'Drivers loaded into the kernel are called modules, and the tool that lists them follows the same "ls" naming. A pipe to grep narrows the list.',
         shape: 'ls___ | grep e1000e',
-        hint: 'Run lsmod, or lsmod | grep e1000e to show only that module.',
-        verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && ctx.command.includes('lsmod') && (ctx.stdout.includes('e1000e') || ctx.stdout.includes('Module')),
+        hint: 'Run lsmod, or lsmod | grep e1000e to show only that module. lsmod formats /proc/modules, so grep e1000e /proc/modules works too.',
+        verifier: (_, __, ctx) => modulesListed(ctx),
       },
       {
         id: 'hw-dmesg',
@@ -382,7 +385,7 @@ export const LPI_MODULES: ExamModule[] = [
         nudge: 'Ask ls for a long listing of the directory itself, not of what is inside it.',
         shape: 'ls -__ /home/sarah',
         hint: 'Run ls -ld /home/sarah.',
-        verifier: (fs) => sarahHomeOwned(fs),
+        verifier: (fs, _, ctx) => sarahHomeChecked(fs, ctx),
       },
       {
         id: 'usr-verify-passwd',
@@ -447,7 +450,7 @@ export const LPI_MODULES: ExamModule[] = [
         nudge: 'The partitioning tool can list partition tables without changing anything. It reads the disk device directly, so it needs root.',
         shape: 'sudo fdisk -_',
         hint: 'Run sudo fdisk -l. It needs root because it reads the disk device directly.',
-        verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && ctx.command.includes('fdisk') && ctx.command.includes('-l') && ctx.stdout.includes('Disk /dev/sda'),
+        verifier: (_, __, ctx) => partitionTableListed(ctx),
       },
       {
         id: 'disk-df',
@@ -456,7 +459,7 @@ export const LPI_MODULES: ExamModule[] = [
         nudge: 'The tool that reports free disk space has an option for human-readable sizes such as M and G.',
         shape: 'df -_',
         hint: 'Run df -h.',
-        verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && /^(sudo\s+)?df\b/.test(ctx.command.trim()) && ctx.stdout.includes('/boot'),
+        verifier: (_, __, ctx) => mountsShown(ctx),
       },
     ],
     initialFs: createDefaultLinuxFs(),
@@ -505,7 +508,7 @@ export const LPI_MODULES: ExamModule[] = [
         description: 'The terminal is always working inside one folder. Ask which one: type pwd and press Enter.',
         nudge: 'pwd is short for "print working directory". Directory is another word for folder, so it means "show me the folder I am in".',
         shape: 'p_d   (three lower-case letters, no spaces)',
-        hint: 'Type pwd and press Enter. It prints /home/student: the student folder, inside the home folder, starting from the very top of the disk (the first /). That is your home folder.',
+        hint: 'Type pwd and press Enter. It prints /home/student: the student folder, inside the home folder, starting from the very top of the whole filesystem (the first /). That is your home folder.',
         verifier: (_, __, ctx) => workingDirShown('linux', ctx),
       },
       {
@@ -590,7 +593,7 @@ export const LPI_MODULES: ExamModule[] = [
         step: 1,
         title: 'See where you are',
         command: 'pwd',
-        explanation: 'pwd prints /home/student. Reading from the left: the first / is the top of the disk, home is a folder there, and student is a folder inside home.',
+        explanation: 'pwd prints /home/student. Reading from the left: the first / is the top of the whole filesystem, home is a folder there, and student is a folder inside home.',
         underlyingConcept: 'Every command runs "in" a folder, called the working directory. When you name a file without saying where it is, the terminal looks for it in that folder.',
       },
       {
