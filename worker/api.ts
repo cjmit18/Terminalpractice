@@ -218,14 +218,22 @@ async function me(request: Request, env: ApiEnv, deps: ApiDeps): Promise<Respons
   if (!token) return json({ user: null, providers });
 
   const hash = await sha256(token);
-  const row = await env.DB.prepare(
-    `SELECT s.expires_at, u.id, u.display_name, u.avatar_url,
-            (SELECT login FROM identities i WHERE i.user_id = u.id AND i.provider = 'github') AS login
-       FROM sessions s JOIN users u ON u.id = s.user_id
-      WHERE s.token_hash = ?`,
-  )
-    .bind(hash)
-    .first<{ expires_at: number; id: string; display_name: string; avatar_url: string | null; login: string | null }>();
+  let row: { expires_at: number; id: string; display_name: string; avatar_url: string | null; login: string | null } | null;
+  try {
+    row = await env.DB.prepare(
+      `SELECT s.expires_at, u.id, u.display_name, u.avatar_url,
+              (SELECT login FROM identities i WHERE i.user_id = u.id AND i.provider = 'github') AS login
+         FROM sessions s JOIN users u ON u.id = s.user_id
+        WHERE s.token_hash = ?`,
+    )
+      .bind(hash)
+      .first();
+  } catch (err) {
+    // A database without the account tables (a preview build's empty D1, where sign-in is off) has
+    // no sessions, so a stray cookie means signed out rather than a 500
+    if (!isMissingTable(err)) throw err;
+    return json({ user: null, providers }, 200, { 'Set-Cookie': clearCookie(SESSION_COOKIE) });
+  }
 
   const now = deps.now();
   if (!row || row.expires_at <= now) {
@@ -254,6 +262,11 @@ async function logout(request: Request, url: URL, env: ApiEnv): Promise<Response
 /** Only in-app hash routes are allowed as a place to return to, so the callback cannot redirect elsewhere. */
 export function safeReturn(value: string | null): string {
   return value && /^#\/[A-Za-z0-9\-_/.]*$/.test(value) && !value.includes('..') ? value : DEFAULT_RETURN;
+}
+
+/** SQLite's (and so D1's) error for a query on a table that was never created */
+function isMissingTable(err: unknown): boolean {
+  return err instanceof Error && /no such table/i.test(err.message);
 }
 
 function randomToken(): string {
