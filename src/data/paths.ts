@@ -2998,4 +2998,89 @@ const netsecWindows: LearningPath = {
   ],
 };
 
-export const LEARNING_PATHS: LearningPath[] = [lpic101, lpic102, aplusCore2, netsecWindows];
+// ---------------------------------------------------------------------------------------------
+// Your first terminal: for people who have never typed a command
+// ---------------------------------------------------------------------------------------------
+
+/** A terminal line shown exactly as it appears, with no prompt added (e.g. a prompt itself). */
+const screen = (text: string, caption?: string): LessonBlock => ({ type: 'code', code: text, ...(caption ? { caption } : {}) });
+
+/**
+ * A short, separate path offered on the Learn page to learners with no progress yet. It has one
+ * stage, so nothing in it is locked, and a lab for each track: the Linux and Windows labs teach
+ * the same five ideas. `track` is only a label here; paths.test.ts allows this path both kinds of lab.
+ */
+const firstSteps: LearningPath = {
+  id: 'first-steps',
+  track: 'linux',
+  title: 'Your first terminal',
+  summary: 'Never typed a command before? Two short readings, then five small commands on Linux or Windows. Nothing you do here can break anything.',
+  exam: 'Before any exam',
+  audience: 'For anyone who has never used a command line, or has not used one for a long time. You do not need to know anything yet.',
+  stages: [
+    {
+      id: 'first-terminal',
+      title: 'Your first terminal',
+      goal: 'Read the prompt, look around, read a file, move into a folder and ask for help, on Linux or Windows.',
+      steps: [
+        {
+          kind: 'lesson',
+          id: 'what-the-prompt-means',
+          title: 'What the prompt means',
+          minutes: 2,
+          blocks: [
+            p(`A terminal is a window where you give the computer instructions by typing them instead of clicking. Each instruction is called a command. You type it, press Enter, and the computer writes its answer on the lines below. Then it waits for the next one.`),
+            p(`The text at the start of the line where it waits is called the prompt. You do not type it: the computer writes it to show that it is ready, and to remind you who and where you are. On the Linux practice computer it looks like this:`),
+            screen(`student@lpi-lab01:~$`),
+            table(`Part`, `What it means`, [
+              [`student`, `The account you are using: your user name.`],
+              [`@`, `Read it as "at", like in an email address.`],
+              [`lpi-lab01`, `The name of the computer you are typing on.`],
+              [`:`, `A colon, separating the computer's name from the folder.`],
+              [`~`, `The folder you are in right now. The tilde (~) is short for your home folder, /home/student, where your own files live.`],
+              [`$`, `The end of the prompt. A dollar sign means an ordinary user. What you type goes after it.`],
+            ]),
+            p(`When you move into another folder, the part between the colon and the dollar sign changes. In the notes folder inside your home folder, the prompt becomes student@lpi-lab01:~/notes$. The forward slash (/) separates one folder from the next.`),
+            h(`On Windows`),
+            p(`Windows has two command lines. Command Prompt (often called CMD) is the older one, and PowerShell is the newer one. Their prompts are shorter and show only the folder:`),
+            screen(`C:\\Users\\Student>`, `Command Prompt`),
+            screen(`PS C:\\Users\\Student>`, `PowerShell. The PS at the start is how you tell them apart.`),
+            p(`C: is the drive. Users is a folder on it, and Student is a folder inside Users. On Windows a backslash (\\) separates the folders. The greater-than sign (>) marks the end of the prompt, like the $ on Linux.`),
+            tip(`You never type the prompt itself. When a lesson shows $ pwd, type only pwd, then press Enter.`),
+          ],
+        },
+        {
+          kind: 'lesson',
+          id: 'you-cannot-break-anything',
+          title: `You can't break anything here`,
+          minutes: 2,
+          blocks: [
+            p(`Everything in this app runs on a practice computer inside your web browser. There is no real computer at the other end, nothing you type is sent anywhere, and nothing you do can harm your own computer or anyone else's. If a lab gets into a muddle, the Reset lab button gives you a fresh copy. Tasks you have already finished stay finished.`),
+            h(`Mistakes explain themselves`),
+            p(`People who use a terminal every day mistype commands all the time. When a command does not work, the terminal prints a message saying why. A misspelled command looks like this:`),
+            bash([`lss`, `bash: lss: command not found`]),
+            p(`"Command not found" means there is no command with that name. Check the spelling and try again. On Linux, capital letters count too: LS is not the same as ls.`),
+            bash([`cat welcom.txt`, `cat: welcom.txt: No such file or directory`]),
+            p(`Read the message from the left: which command is talking (cat), what it was working on (welcom.txt), and what went wrong. Here the file name is missing an e.`),
+            h(`Two keys that save typing`),
+            table(`Key`, `What it does`, [
+              [`Tab`, `Finishes a command name for you. Type pw and press Tab, and the terminal fills in pwd.`],
+              [`Up arrow`, `Brings back the command you ran before. Press it again to go further back. Change the line if you want, then press Enter to run it again.`],
+              [`Down arrow`, `Goes forward again through the commands you brought back.`],
+            ]),
+            tip(`On a phone, Tab and the arrows are in the row of keys just above the keyboard, next to symbols such as - . / and ~ that phone keyboards tend to hide.`),
+            p(`On a real computer, Tab also finishes the names of files and folders. This practice terminal finishes command names only, so type file names in full here.`),
+            p(`Next comes a short lab with five small tasks. Pick the Linux lab or the Windows lab, whichever matches the exam you are thinking about. They teach the same five ideas, and doing both is fine.`),
+          ],
+        },
+        { kind: 'lab', id: 'lab-first-steps-linux', moduleId: 'lpi-000-first-steps', note: 'Linux, in the bash shell: the command line the LPIC-1 exams use.' },
+        { kind: 'lab', id: 'lab-first-steps-windows', moduleId: 'win-000-first-steps', note: 'Windows Command Prompt, with PowerShell if you want to try it: the command lines the CompTIA exams use.' },
+      ],
+    },
+  ],
+};
+
+/** Id of the beginners' path, which the Learn page offers to learners with no progress yet. */
+export const FIRST_STEPS_PATH_ID = firstSteps.id;
+
+export const LEARNING_PATHS: LearningPath[] = [lpic101, lpic102, aplusCore2, netsecWindows, firstSteps];

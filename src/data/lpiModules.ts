@@ -1,7 +1,8 @@
 import { ExamModule } from '../types/modules';
-import { SystemState } from '../types/terminal';
+import { FileNode, SystemState } from '../types/terminal';
 import { createDefaultLinuxFs, getNodeAtPath } from '../terminal/filesystem';
 import { countedSourceIps, extractedSourceIps, financeDirShown, passwdEntryShown, sarahCreated, sarahHomeOwned, sataInDmesg } from './verifiers';
+import { WELCOME_MARKER, folderListed, helpRead, notesEntered, welcomeRead, workingDirShown } from './firstStepsVerifiers';
 
 const baseLinuxState: SystemState = {
   hostname: 'lpi-lab01',
@@ -98,6 +99,8 @@ export const LPI_MODULES: ExamModule[] = [
         id: 'perm-check',
         title: 'Check the current permissions',
         description: 'Look at the mode, owner and group of the /home/student/finance directory itself.',
+        nudge: 'Plain ls describes what is inside a directory. One extra option makes it describe the directory itself.',
+        shape: 'ls -l_ /home/student/finance',
         hint: 'Run ls -ld /home/student/finance. Without -d, ls lists the files inside the directory instead of the directory. ls -la /home/student and stat /home/student/finance also work.',
         verifier: (_, __, ctx) => financeDirShown(ctx),
       },
@@ -105,6 +108,8 @@ export const LPI_MODULES: ExamModule[] = [
         id: 'perm-chmod',
         title: 'Set the mode to 750',
         description: 'Give the owner rwx, the group r-x and others no access (750).',
+        nudge: 'In a numeric mode each digit adds up read (4), write (2) and execute (1): the first digit is the owner, the second the group, the third everyone else.',
+        shape: 'chmod ___ /home/student/finance',
         hint: 'Run chmod 750 /home/student/finance. Do this before the chown: you own the directory now, but once root owns it you need sudo to change the mode.',
         verifier: (fs) => {
           const node = getNodeAtPath(fs, '/home/student/finance', false);
@@ -115,6 +120,8 @@ export const LPI_MODULES: ExamModule[] = [
         id: 'perm-chown',
         title: 'Change the owner to root:finance',
         description: 'Make root the owner of /home/student/finance and finance its group.',
+        nudge: 'The command that changes ownership takes user and group together as user:group. Giving a file to someone else needs root.',
+        shape: 'sudo _____ root:finance /home/student/finance',
         hint: 'Run sudo chown root:finance /home/student/finance. Only root can give a file to another user, so you need sudo.',
         verifier: (fs) => {
           const node = getNodeAtPath(fs, '/home/student/finance', false);
@@ -125,6 +132,8 @@ export const LPI_MODULES: ExamModule[] = [
         id: 'perm-umask',
         title: 'Set the umask to 027',
         description: 'Set the umask of your current shell to 027, so new directories get 750 and new files get 640.',
+        nudge: 'The umask lists the permission bits taken away from new files. It is a shell builtin, so it changes only this shell.',
+        shape: '_____ 027',
         hint: 'Run umask 027 (umask 0027 is the same). Run umask with no argument to check the current value.',
         verifier: (_, state) => state.umask === 0o027,
       },
@@ -213,6 +222,8 @@ export const LPI_MODULES: ExamModule[] = [
         id: 'obj-grep',
         title: 'Find the failed logins',
         description: 'Search /var/log/auth.log for lines containing "Failed password".',
+        nudge: 'You want the tool that prints only the lines matching a pattern. The pattern has a space in it, so think about quotes.',
+        shape: 'grep "______ ________" /var/log/auth.log',
         hint: 'Run grep "Failed password" /var/log/auth.log. Keep the quotes: without them, grep searches for "Failed" alone, reports that a file called password does not exist, and still prints the lines that contain Failed.',
         verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && /grep/.test(ctx.command) && ctx.stdout.includes('198.51.100.44'),
       },
@@ -220,6 +231,8 @@ export const LPI_MODULES: ExamModule[] = [
         id: 'obj-pipe-awk',
         title: 'Extract the source IP',
         description: 'Print only the source IP address of each failed login, one per line, with nothing else on the line.',
+        nudge: 'Pipe the matching lines into awk. Count fields from the end of the line, because some lines have extra words in the middle.',
+        shape: 'grep "Failed password" /var/log/auth.log | awk \'{print $(NF-_)}\'',
         hint: 'Run grep "Failed password" /var/log/auth.log | awk \'{print $(NF-3)}\'. The IP is always the fourth field from the end of the line. A fixed field number such as $11 or cut -f11 breaks on the "invalid user" lines, which have two extra words.',
         verifier: (_, __, ctx) => extractedSourceIps(ctx),
       },
@@ -227,6 +240,8 @@ export const LPI_MODULES: ExamModule[] = [
         id: 'obj-sort-uniq',
         title: 'Count attempts per IP',
         description: 'Sort the addresses and count the duplicates with uniq -c.',
+        nudge: 'uniq only merges duplicates that sit next to each other, so put the addresses in order first.',
+        shape: 'grep "Failed password" /var/log/auth.log | awk \'{print $(NF-3)}\' | ____ | uniq -_',
         hint: 'Run grep "Failed password" /var/log/auth.log | awk \'{print $(NF-3)}\' | sort | uniq -c. On a real log, add | sort -nr to put the busiest address first.',
         verifier: (_, __, ctx) => countedSourceIps(ctx),
       },
@@ -281,6 +296,8 @@ export const LPI_MODULES: ExamModule[] = [
         id: 'hw-lspci',
         title: 'List the PCI devices',
         description: 'Run lspci and find the Ethernet and VGA controllers.',
+        nudge: 'Many hardware listing tools are named "ls" plus the name of a bus. Network and video cards sit on the PCI bus.',
+        shape: 'ls___',
         hint: 'Run lspci. On a real system, lspci -k also shows which kernel driver handles each device.',
         verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && /^(sudo\s+)?lspci\b/.test(ctx.command.trim()) && ctx.stdout.includes('Ethernet'),
       },
@@ -288,6 +305,8 @@ export const LPI_MODULES: ExamModule[] = [
         id: 'hw-lsmod',
         title: 'List the loaded kernel modules',
         description: 'Check that the e1000e module is loaded.',
+        nudge: 'Drivers loaded into the kernel are called modules, and the tool that lists them follows the same "ls" naming. A pipe to grep narrows the list.',
+        shape: 'ls___ | grep e1000e',
         hint: 'Run lsmod, or lsmod | grep e1000e to show only that module.',
         verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && ctx.command.includes('lsmod') && (ctx.stdout.includes('e1000e') || ctx.stdout.includes('Module')),
       },
@@ -295,6 +314,8 @@ export const LPI_MODULES: ExamModule[] = [
         id: 'hw-dmesg',
         title: 'Read the kernel ring buffer',
         description: 'Look through the kernel\'s boot messages for the SATA controller.',
+        nudge: 'The kernel keeps its boot messages in a ring buffer that one short command prints. Filter that output, and remember the kernel may write the word in capitals.',
+        shape: 'd____ | grep -_ sata',
         hint: 'Run dmesg | grep -i sata. The -i matters: the kernel writes "SATA" in capitals.',
         verifier: (_, __, ctx) => sataInDmesg(ctx),
       },
@@ -349,6 +370,8 @@ export const LPI_MODULES: ExamModule[] = [
         id: 'usr-create',
         title: 'Create the account',
         description: 'Create the user sarah with a home directory, bash as the login shell, and developers as a supplementary group.',
+        nudge: 'useradd needs one option to make the home directory, one to set the login shell and one for supplementary groups. Upper and lower case options mean different things.',
+        shape: 'sudo useradd -_ -_ /bin/bash -_ developers sarah',
         hint: 'Run sudo useradd -m -s /bin/bash -G developers sarah. Without -m, many distributions do not create the home directory. Use capital -G: lowercase -g would make developers her primary group instead.',
         verifier: (fs) => sarahCreated(fs),
       },
@@ -356,6 +379,8 @@ export const LPI_MODULES: ExamModule[] = [
         id: 'usr-verify-home',
         title: 'Check the home directory',
         description: 'Confirm that /home/sarah exists and belongs to sarah.',
+        nudge: 'Ask ls for a long listing of the directory itself, not of what is inside it.',
+        shape: 'ls -__ /home/sarah',
         hint: 'Run ls -ld /home/sarah.',
         verifier: (fs) => sarahHomeOwned(fs),
       },
@@ -363,6 +388,8 @@ export const LPI_MODULES: ExamModule[] = [
         id: 'usr-verify-passwd',
         title: 'Check the /etc/passwd entry',
         description: 'Show sarah\'s line in /etc/passwd and check the home directory and shell.',
+        nudge: 'Every account is one line of /etc/passwd. Search that file for her name.',
+        shape: '____ sarah /etc/passwd',
         hint: 'Run grep sarah /etc/passwd (getent passwd sarah works too).',
         verifier: (_, __, ctx) => passwdEntryShown(ctx),
       },
@@ -417,6 +444,8 @@ export const LPI_MODULES: ExamModule[] = [
         id: 'disk-fdisk',
         title: 'List the partition table',
         description: 'Show the partition table type, the sector size and each partition with fdisk -l.',
+        nudge: 'The partitioning tool can list partition tables without changing anything. It reads the disk device directly, so it needs root.',
+        shape: 'sudo fdisk -_',
         hint: 'Run sudo fdisk -l. It needs root because it reads the disk device directly.',
         verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && ctx.command.includes('fdisk') && ctx.command.includes('-l') && ctx.stdout.includes('Disk /dev/sda'),
       },
@@ -424,6 +453,8 @@ export const LPI_MODULES: ExamModule[] = [
         id: 'disk-df',
         title: 'Check the mounted filesystems',
         description: 'Show the size, usage and mount point of each mounted filesystem in readable units.',
+        nudge: 'The tool that reports free disk space has an option for human-readable sizes such as M and G.',
+        shape: 'df -_',
         hint: 'Run df -h.',
         verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && /^(sudo\s+)?df\b/.test(ctx.command.trim()) && ctx.stdout.includes('/boot'),
       },
@@ -450,6 +481,151 @@ export const LPI_MODULES: ExamModule[] = [
       'MBR allows four primary partitions, or three primary plus one extended partition that holds logical ones, and addresses at most 2 TiB with 512-byte sectors. Logical partitions always start at number 5 (sda5).',
       'A UEFI system boots from an EFI System Partition (FAT, usually mounted at /boot/efi). Booting a GPT disk on legacy BIOS with GRUB needs a small BIOS boot partition instead.',
       '102.1 also covers what to put on separate filesystems (/boot, /home, /var, /tmp), sizing swap, and the basic LVM terms: physical volume, volume group and logical volume.',
+    ],
+  },
+  {
+    // The first lab for people who have never used a terminal. It sits in the first-steps path.
+    id: 'lpi-000-first-steps',
+    track: 'lpi',
+    examCode: 'Getting started',
+    topicNumber: 'Start',
+    title: 'Your first commands in bash',
+    summary: 'Find out where you are, look around, read a file, open a folder and ask for help.',
+    difficulty: 'Beginner',
+    estimatedMinutes: 5,
+    scenarioDescription: 'This is a practice Linux computer. Its terminal is the dark box beside these instructions (on a phone, tap Terminal at the top). A file called welcome.txt is waiting in your home folder. Each task below is one short command: type it, press Enter, and the task is ticked off. Typing something wrong is fine; the terminal tells you what went wrong and you can simply try again.',
+    systemContext: 'Computer: lpi-lab01 | You are: student | Starting folder: /home/student (your home folder, shown as ~)',
+    defaultShell: 'bash',
+    allowedShells: ['bash'],
+    simType: 'terminal-only',
+    objectives: [
+      {
+        id: 'fs-where',
+        title: 'See where you are',
+        description: 'The terminal is always working inside one folder. Ask which one: type pwd and press Enter.',
+        nudge: 'pwd is short for "print working directory". Directory is another word for folder, so it means "show me the folder I am in".',
+        shape: 'p_d   (three lower-case letters, no spaces)',
+        hint: 'Type pwd and press Enter. It prints /home/student: the student folder, inside the home folder, starting from the very top of the disk (the first /). That is your home folder.',
+        verifier: (_, __, ctx) => workingDirShown('linux', ctx),
+      },
+      {
+        id: 'fs-list',
+        title: 'List what is here',
+        description: 'See what is in this folder: type ls and press Enter.',
+        nudge: 'ls is short for "list". It is two lower-case letters: a small L, then an s.',
+        shape: 'l_',
+        hint: 'Type ls and press Enter. You should see notes and welcome.txt. ls -l (a minus sign, then a small L) shows more about each one, such as its size and date, and that counts too.',
+        verifier: (_, __, ctx) => folderListed('linux', ctx),
+      },
+      {
+        id: 'fs-read',
+        title: 'Read a file',
+        description: 'Show what is inside welcome.txt: type cat, a space, then the file name, and press Enter.',
+        nudge: 'cat prints a file onto the screen. It needs to know which file, so the file name goes after it, with a space in between.',
+        shape: 'cat _______.txt',
+        hint: 'Type cat welcome.txt and press Enter. Spelling matters, and so does the dot before txt. head welcome.txt and tail welcome.txt also count.',
+        verifier: (_, __, ctx) => welcomeRead(ctx),
+      },
+      {
+        id: 'fs-cd',
+        title: 'Go into a folder',
+        description: 'welcome.txt tells you which folder to go into, and the command that does it. Follow what it says.',
+        nudge: 'cd is short for "change directory". It moves you into the folder you name after it.',
+        shape: 'cd _____',
+        hint: 'Type cd notes and press Enter. The prompt changes to student@lpi-lab01:~/notes$ to show where you are now. cd .. (cd, a space and two dots) takes you back up one folder.',
+        verifier: (_, __, ctx) => notesEntered('linux', ctx),
+      },
+      {
+        id: 'fs-help',
+        title: 'Ask for help',
+        description: 'Linux has a built-in manual, with a page for almost every command. Open the page for ls.',
+        nudge: 'The command that opens the manual is man, short for manual. After it, put the name of the command you want to read about.',
+        shape: 'man __',
+        hint: 'Type man ls and press Enter. ls --help (two minus signs, no space between them) prints a shorter summary, and help cd explains commands that are built into the shell. Any of these counts.',
+        verifier: (_, __, ctx) => helpRead('linux', ctx),
+      },
+    ],
+    initialFs: (() => {
+      const fs = createDefaultLinuxFs();
+      const home = getNodeAtPath(fs, '/home/student', false);
+      const file = (name: string, content: string): FileNode => ({
+        name, type: 'file', permissions: 'rw-r--r--', octal: 644, owner: 'student', group: 'student', updatedAt: '2026-10-19T00:00:00Z', content,
+      });
+      if (home) {
+        // A tidy home folder with only what the five tasks need
+        home.children = {
+          'welcome.txt': file('welcome.txt', [
+            'Hello, and welcome.',
+            '',
+            WELCOME_MARKER,
+            'The command printed everything in welcome.txt onto your screen.',
+            '',
+            'Next, go into the notes folder. Type this and press Enter:',
+            '',
+            '    cd notes',
+            '',
+            'Then type ls to see what is inside it, and read next.txt',
+            'the same way you read this file.',
+          ].join('\n')),
+          notes: {
+            name: 'notes', type: 'directory', permissions: 'rwxr-xr-x', octal: 755, owner: 'student', group: 'student', updatedAt: '2026-10-19T00:00:00Z',
+            children: {
+              'next.txt': file('next.txt', [
+                'You are in the notes folder now. The prompt ends in ~/notes$ to show it.',
+                'To go back up to your home folder later, type cd .. (cd, a space and two dots).',
+                '',
+                'One task left: ask for help. Type this and press Enter:',
+                '',
+                '    man ls',
+              ].join('\n')),
+            },
+          },
+        };
+      }
+      return fs;
+    })(),
+    initialState: { ...baseLinuxState },
+    solutionWalkthrough: [
+      {
+        step: 1,
+        title: 'See where you are',
+        command: 'pwd',
+        explanation: 'pwd prints /home/student. Reading from the left: the first / is the top of the disk, home is a folder there, and student is a folder inside home.',
+        underlyingConcept: 'Every command runs "in" a folder, called the working directory. When you name a file without saying where it is, the terminal looks for it in that folder.',
+      },
+      {
+        step: 2,
+        title: 'List what is here',
+        command: 'ls',
+        explanation: 'ls lists the folder you are in: a folder called notes and a file called welcome.txt. Most terminals show folders in a different colour.',
+        underlyingConcept: 'Options change what a command does. They start with a minus sign: ls -l gives the long form, one line per item with its permissions, owner, size and date.',
+      },
+      {
+        step: 3,
+        title: 'Read the welcome file',
+        command: 'cat welcome.txt',
+        explanation: 'cat prints the whole file. welcome.txt is the argument: the thing you want the command to work on, after a space.',
+        underlyingConcept: 'Most commands follow the same pattern: the command name, then options, then arguments, each separated by a space. Names are case sensitive on Linux, so Welcome.txt would be a different file.',
+      },
+      {
+        step: 4,
+        title: 'Go into the notes folder',
+        command: 'cd notes',
+        explanation: 'cd notes moves you into the notes folder. cd prints nothing when it works; the prompt changes to ~/notes$ instead.',
+        underlyingConcept: 'notes is a relative path: it is looked for inside the folder you are in. /home/student/notes is the absolute path to the same folder, starting from the top. .. means the folder above this one.',
+      },
+      {
+        step: 5,
+        title: 'Ask for help',
+        command: 'man ls',
+        explanation: 'man ls opens the manual page for ls: what it does, the options it accepts and what each one means.',
+        underlyingConcept: 'You never have to remember every option. man, --help and help are always there to look things up, and experienced people use them every day.',
+      },
+    ],
+    examTips: [
+      'Linux is case sensitive: ls, Ls and LS are three different names, and only ls is a command. The same goes for file and folder names.',
+      'pwd, ls, cd and cat appear throughout both LPIC-1 exams. Later labs build on exactly these five ideas.',
+      'In a real terminal, man opens a page you can scroll. Press the space bar to go down a page and q to quit back to the prompt.',
     ],
   },
 ];

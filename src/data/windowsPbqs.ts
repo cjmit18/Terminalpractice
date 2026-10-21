@@ -1,10 +1,11 @@
 import { ExamModule } from '../types/modules';
-import { SystemState } from '../types/terminal';
-import { createDefaultWindowsFs } from '../terminal/filesystem';
+import { FileNode, SystemState } from '../types/terminal';
+import { createDefaultWindowsFs, getNodeAtPath } from '../terminal/filesystem';
 import {
   alexInDomainAdmins, alexInItAdmins, connectivityVerified, dismRan, ipconfigAllRun, jdoeUnlocked,
   maliciousConnectionFound, maliciousProcessKilled, maliciousProcessNamed, sfcRan, sfcRepairedAfterDism,
 } from './verifiers';
+import { WELCOME_MARKER, folderListed, helpRead, notesEntered, welcomeRead, workingDirShown } from './firstStepsVerifiers';
 
 const baseWindowsState: SystemState = {
   hostname: 'WIN-CLIENT01',
@@ -204,6 +205,8 @@ export const WINDOWS_PBQS: ExamModule[] = [
         id: 'net-ipconfig-all',
         title: 'Check the IP configuration',
         description: 'Run ipconfig /all and note the 169.254.x.x address and the empty default gateway.',
+        nudge: 'The tool that shows IP settings has a switch for the full details, including the gateway and the DHCP server.',
+        shape: 'ipconfig /___',
         hint: 'Run ipconfig /all.',
         verifier: (_, __, ctx) => ipconfigAllRun(ctx),
       },
@@ -211,6 +214,8 @@ export const WINDOWS_PBQS: ExamModule[] = [
         id: 'net-dhcp-renew',
         title: 'Get a new DHCP lease',
         description: 'Ask the DHCP server for a new address.',
+        nudge: 'ipconfig can also ask the DHCP server for a lease. Its /? list names the switch.',
+        shape: 'ipconfig /_____',
         hint: 'Run ipconfig /renew. You can run ipconfig /release first, but an APIPA address has no lease to release.',
         verifier: (_, state) => state.interfaces[0]?.ip.startsWith('192.168.1.') && state.gatewayWorking,
       },
@@ -218,6 +223,8 @@ export const WINDOWS_PBQS: ExamModule[] = [
         id: 'net-flush-dns',
         title: 'Flush the DNS cache',
         description: 'Clear the lookups the client cached while it was offline, including the failed ones.',
+        nudge: 'The DNS client cache keeps failed lookups too. ipconfig has a switch that empties it.',
+        shape: 'ipconfig /________',
         hint: 'Run ipconfig /flushdns. In PowerShell, Clear-DnsClientCache does the same.',
         verifier: (_, state) => state.dnsWorking,
       },
@@ -225,6 +232,8 @@ export const WINDOWS_PBQS: ExamModule[] = [
         id: 'net-verify-ping',
         title: 'Test connectivity',
         description: 'Once the adapter has a real lease, ping the default gateway and an internet address, or use Test-NetConnection in PowerShell. Loopback (127.0.0.1) and your own address answer even with no network, so they do not prove anything here.',
+        nudge: 'Test the nearest hop first, the default gateway, then an address out on the internet.',
+        shape: 'ping 192.168.1._',
         hint: 'Run ping 192.168.1.1, then ping 8.8.8.8.',
         verifier: (_, state, ctx) => connectivityVerified(state, ctx),
       },
@@ -302,6 +311,8 @@ export const WINDOWS_PBQS: ExamModule[] = [
         id: 'ad-unlock-jdoe',
         title: 'Unlock jdoe',
         description: 'Unlock the jdoe account. There is no need to reset his password; he knows it.',
+        nudge: 'Active Directory cmdlets are named Verb-ADNoun. You want the verb that undoes a lockout.',
+        shape: '______-ADAccount -Identity jdoe',
         hint: 'Run Unlock-ADAccount -Identity jdoe, or select John Doe in the ADUC panel and choose Unlock.',
         verifier: (_, state) => jdoeUnlocked(state),
       },
@@ -309,6 +320,8 @@ export const WINDOWS_PBQS: ExamModule[] = [
         id: 'ad-create-alex',
         title: 'Create the user alex',
         description: 'Create the user alex in OU=IT_Admins,DC=corp,DC=local.',
+        nudge: 'A new account needs the verb that creates things, a sign-in name, and a Path naming the OU it goes in.',
+        shape: 'New-ADUser -SamAccountName alex -Name "Alex Chen" -Path "OU=_________,DC=corp,DC=local"',
         hint: 'Run New-ADUser -SamAccountName alex -Name "Alex Chen" -Path "OU=IT_Admins,DC=corp,DC=local".',
         verifier: (_, state) => alexInItAdmins(state),
       },
@@ -316,6 +329,8 @@ export const WINDOWS_PBQS: ExamModule[] = [
         id: 'ad-add-group',
         title: 'Add alex to Domain Admins',
         description: 'Make alex a member of the Domain Admins security group.',
+        nudge: 'This time the object you change is the group, not the user. A group name with a space needs quotes.',
+        shape: 'Add-ADGroupMember -Identity "______ ______" -Members alex',
         hint: 'Run Add-ADGroupMember -Identity "Domain Admins" -Members alex. The group name has a space, so quote it.',
         verifier: (_, state) => alexInDomainAdmins(state),
       },
@@ -370,6 +385,8 @@ export const WINDOWS_PBQS: ExamModule[] = [
         id: 'gpo-gpupdate-force',
         title: 'Force a policy refresh',
         description: 'Reapply all computer and user policy now instead of waiting for the background refresh.',
+        nudge: 'The policy update tool normally applies only settings that changed. One switch makes it reapply all of them.',
+        shape: 'gpupdate /_____',
         hint: 'Run gpupdate /force (in PowerShell, Invoke-GPUpdate -Force also works).',
         verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && /\b(gpupdate|Invoke-GPUpdate)\b/i.test(ctx.command) && /(\/|-)force\b/i.test(ctx.command),
       },
@@ -377,6 +394,8 @@ export const WINDOWS_PBQS: ExamModule[] = [
         id: 'gpo-gpresult-r',
         title: 'Check which GPOs applied',
         description: 'Show the Resultant Set of Policy summary and find Workstation Security Baseline GPO in the list of applied GPOs.',
+        nudge: 'gpresult shows the Resultant Set of Policy. A one-letter switch prints the summary instead of the full report.',
+        shape: 'gpresult /_',
         hint: 'Run gpresult /r. On a real machine, run it from an elevated prompt or you only see the user settings.',
         verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && /gpresult/i.test(ctx.command) && /\/r\b/i.test(ctx.command),
       },
@@ -423,6 +442,8 @@ export const WINDOWS_PBQS: ExamModule[] = [
         id: 'dp-launch',
         title: 'Start diskpart',
         description: 'Open diskpart from the command prompt.',
+        nudge: 'Windows has an interactive disk partitioning tool with its own prompt.',
+        shape: 'disk____',
         hint: 'Run diskpart. On a real machine it needs an elevated prompt.',
         verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && ctx.command.trim().toLowerCase() === 'diskpart',
       },
@@ -430,6 +451,8 @@ export const WINDOWS_PBQS: ExamModule[] = [
         id: 'dp-select-disk',
         title: 'Select Disk 1',
         description: 'Put the focus on Disk 1, the new SSD. Run list disk first if you want to check which disk is which.',
+        nudge: 'diskpart acts on whatever has the focus. Pick the disk by its number.',
+        shape: 'select ____ _',
         hint: 'Run select disk 1.',
         verifier: (_, state) => state.diskpartSelectedDisk === 1,
       },
@@ -437,6 +460,8 @@ export const WINDOWS_PBQS: ExamModule[] = [
         id: 'dp-create-part',
         title: 'Create a primary partition',
         description: 'Create a primary partition on the selected disk. With no size given, it uses all the free space.',
+        nudge: 'diskpart commands read as verb, object, then type.',
+        shape: 'create _________ primary',
         hint: 'Run create partition primary.',
         verifier: (_, state) => {
           const d1 = state.disks.find(d => d.diskNumber === 1);
@@ -447,6 +472,8 @@ export const WINDOWS_PBQS: ExamModule[] = [
         id: 'dp-format-assign',
         title: 'Format as NTFS and assign E:',
         description: 'Quick-format the new partition as NTFS and assign it the letter E.',
+        nudge: 'Two commands: one writes a file system to the partition, quickly, and the other gives it a drive letter.',
+        shape: 'format fs=____ quick, then assign letter=_',
         hint: 'Run format fs=ntfs quick, then assign letter=E.',
         verifier: (_, state) => {
           const d1 = state.disks.find(d => d.diskNumber === 1);
@@ -511,6 +538,8 @@ export const WINDOWS_PBQS: ExamModule[] = [
         id: 'sec-netstat-ano',
         title: 'Find the connection and its PID',
         description: 'List all connections with their owning process ID and find the one to remote port 4444.',
+        nudge: 'netstat lists connections. You want all of them, with numeric addresses and the owning process ID: three one-letter options.',
+        shape: 'netstat -___',
         hint: 'Run netstat -ano. Add | findstr 4444 to show only that line. In PowerShell, Get-NetTCPConnection -RemotePort 4444 shows the OwningProcess.',
         verifier: (_, __, ctx) => maliciousConnectionFound(ctx),
       },
@@ -518,6 +547,8 @@ export const WINDOWS_PBQS: ExamModule[] = [
         id: 'sec-tasklist',
         title: 'Match the PID to a program',
         description: 'Find the image name of PID 3892.',
+        nudge: 'The CMD tool that lists running processes shows each image name next to its PID, and a filter can pick out one PID.',
+        shape: 'tasklist /fi "pid eq ____"',
         hint: 'Run tasklist, or tasklist /fi "pid eq 3892". In PowerShell, Get-Process -Id 3892.',
         verifier: (_, __, ctx) => maliciousProcessNamed(ctx),
       },
@@ -525,6 +556,8 @@ export const WINDOWS_PBQS: ExamModule[] = [
         id: 'sec-taskkill',
         title: 'Kill the process',
         description: 'Force PID 3892 to stop, with taskkill or with Stop-Process in PowerShell.',
+        nudge: 'The partner of tasklist ends processes. A process with no window ignores a polite request, so it has to be forced.',
+        shape: 'taskkill /_ /PID ____',
         hint: 'Run taskkill /F /PID 3892. Without /F, taskkill only asks the process to close, and a process with no window refuses. In PowerShell, Stop-Process -Id 3892 -Force does the same.',
         verifier: (_, state) => maliciousProcessKilled(state),
       },
@@ -578,6 +611,8 @@ export const WINDOWS_PBQS: ExamModule[] = [
         id: 'sfc-scan',
         title: 'Run System File Checker',
         description: 'Scan all protected system files and read the result.',
+        nudge: 'System File Checker is a three-letter command with a switch that scans right away.',
+        shape: 'sfc /________',
         hint: 'Run sfc /scannow from an elevated prompt.',
         verifier: (_, state) => sfcRan(state),
       },
@@ -585,6 +620,8 @@ export const WINDOWS_PBQS: ExamModule[] = [
         id: 'dism-restore',
         title: 'Repair the component store',
         description: 'Repair the Windows component store (WinSxS) with DISM.',
+        nudge: 'DISM works on the running system with /online, and its repair options live under /cleanup-image.',
+        shape: 'dism /online /cleanup-image /_____________',
         hint: 'Run dism /online /cleanup-image /restorehealth. In PowerShell, Repair-WindowsImage -Online -RestoreHealth does the same.',
         verifier: (_, state) => dismRan(state),
       },
@@ -592,6 +629,8 @@ export const WINDOWS_PBQS: ExamModule[] = [
         id: 'sfc-rescan',
         title: 'Run SFC again',
         description: 'With the component store repaired, run System File Checker again so it can replace the files it could not fix the first time.',
+        nudge: 'Now that its source of good copies is repaired, the first tool can finish the job.',
+        shape: 'sfc /________',
         hint: 'Run sfc /scannow again and check that it reports the corrupt files were successfully repaired.',
         verifier: (_, state) => sfcRepairedAfterDism(state),
       },
@@ -651,6 +690,8 @@ export const WINDOWS_PBQS: ExamModule[] = [
         id: 'ps-get-service',
         title: 'List the services',
         description: 'List the services and find W32Time in the Stopped state.',
+        nudge: 'PowerShell cmdlets are named Verb-Noun. The verb that reads things is Get, and the noun is what you want to list.',
+        shape: 'Get-_______',
         hint: 'Run Get-Service. Get-Service W32Time shows just that one.',
         verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && /get-service/i.test(ctx.command) && ctx.stdout.includes('W32Time'),
       },
@@ -658,6 +699,8 @@ export const WINDOWS_PBQS: ExamModule[] = [
         id: 'ps-start-service',
         title: 'Start W32Time',
         description: 'Start the Windows Time service.',
+        nudge: 'Keep the same noun, switch to the verb that starts something, and give it the service name.',
+        shape: 'Start-_______ W32Time',
         hint: 'Run Start-Service -Name W32Time (or just Start-Service W32Time).',
         verifier: (_, state) => {
           const srv = state.services.find(s => s.name.toLowerCase() === 'w32time');
@@ -686,6 +729,159 @@ export const WINDOWS_PBQS: ExamModule[] = [
     examTips: [
       'Cmdlets are named Verb-Noun: Get-Service, Start-Service, Stop-Process. If you know the noun, Get-Command -Noun Service lists every cmdlet for it.',
       'Starting a service does not change its startup type. Use Set-Service -StartupType Automatic, or services.msc, to make it start at boot.',
+    ],
+  },
+  {
+    // The first lab for people who have never used a terminal. It sits in the first-steps path.
+    id: 'win-000-first-steps',
+    track: 'comptia-windows',
+    examCode: 'Getting started',
+    topicNumber: 'Start',
+    title: 'Your first commands on Windows',
+    summary: 'Find out where you are, look around, read a file, open a folder and ask for help, in Command Prompt.',
+    difficulty: 'Beginner',
+    estimatedMinutes: 5,
+    scenarioDescription: 'This is a practice Windows computer, and the dark box beside these instructions is Command Prompt (on a phone, tap Terminal at the top). A file called welcome.txt is waiting in your folder. Each task below is one short command: type it, press Enter, and the task is ticked off. Typing something wrong is fine; Windows tells you what went wrong and you can simply try again. If you want to, switch to PowerShell above the terminal and do the tasks there instead.',
+    systemContext: 'Computer: WIN-CLIENT01 | You are: Student | Starting folder: C:\\Users\\Student',
+    defaultShell: 'cmd',
+    allowedShells: ['cmd', 'powershell'],
+    simType: 'terminal-only',
+    objectives: [
+      {
+        id: 'fs-where',
+        title: 'See where you are',
+        description: 'Command Prompt is always working inside one folder. Ask which one: type cd on its own and press Enter.',
+        nudge: 'cd is short for "change directory", and directory is another word for folder. With nothing after it, cd does not change anything: it only tells you where you are.',
+        shape: 'c_   (two letters, nothing after them)',
+        hint: 'Type cd and press Enter. It prints C:\\Users\\Student: the Student folder, inside the Users folder, on drive C. In PowerShell, use pwd or Get-Location instead, because cd on its own takes you somewhere else there.',
+        verifier: (_, __, ctx) => workingDirShown('windows', ctx),
+      },
+      {
+        id: 'fs-list',
+        title: 'List what is here',
+        description: 'See what is in this folder: type dir and press Enter.',
+        nudge: 'dir is short for "directory". It lists the files and folders in the folder you are in.',
+        shape: 'd_r',
+        hint: 'Type dir and press Enter. You should see notes and welcome.txt. In PowerShell, dir works too, and so do ls, gci and Get-ChildItem.',
+        verifier: (_, __, ctx) => folderListed('windows', ctx),
+      },
+      {
+        id: 'fs-read',
+        title: 'Read a file',
+        description: 'Show what is inside welcome.txt: type the word type, a space, then the file name, and press Enter.',
+        nudge: 'Here type is the name of a command: it prints a file onto the screen. It needs to know which file, so the file name goes after it, with a space in between.',
+        shape: 'type _______.txt',
+        hint: 'Type type welcome.txt and press Enter. Windows does not mind capital letters, but the dot before txt matters. In PowerShell, cat welcome.txt and Get-Content welcome.txt do the same.',
+        verifier: (_, __, ctx) => welcomeRead(ctx),
+      },
+      {
+        id: 'fs-cd',
+        title: 'Go into a folder',
+        description: 'welcome.txt tells you which folder to go into, and the command that does it. Follow what it says.',
+        nudge: 'cd moves you into the folder you name after it, with a space in between.',
+        shape: 'cd _____',
+        hint: 'Type cd notes and press Enter. The prompt changes to C:\\Users\\Student\\notes> to show where you are now. cd .. (cd, a space and two dots) takes you back up one folder.',
+        verifier: (_, __, ctx) => notesEntered('windows', ctx),
+      },
+      {
+        id: 'fs-help',
+        title: 'Ask for help',
+        description: 'Windows can explain its own commands. Ask it to explain dir.',
+        nudge: 'In Command Prompt, the command help followed by the name of another command explains that command.',
+        shape: 'help ___',
+        hint: 'Type help dir and press Enter. dir /? (a forward slash and a question mark) shows the same page. In PowerShell, use Get-Help dir or help dir. Any of these counts.',
+        verifier: (_, __, ctx) => helpRead('windows', ctx),
+      },
+    ],
+    initialFs: (() => {
+      const fs = createDefaultWindowsFs();
+      const home = getNodeAtPath(fs, 'C:\\Users\\Student', true);
+      const file = (name: string, content: string): FileNode => ({
+        name, type: 'file', permissions: 'rw-r--r--', octal: 644, owner: 'Student', group: 'Users', updatedAt: '2026-10-19T09:30:00Z', content,
+      });
+      if (home) {
+        // A tidy user folder with only what the five tasks need
+        home.children = {
+          'welcome.txt': file('welcome.txt', [
+            'Hello, and welcome.',
+            '',
+            WELCOME_MARKER,
+            'The command printed everything in welcome.txt onto your screen.',
+            '',
+            'Next, go into the notes folder. Type this and press Enter:',
+            '',
+            '    cd notes',
+            '',
+            'Then type dir to see what is inside it, and read next.txt',
+            'the same way you read this file.',
+          ].join('\n')),
+          notes: {
+            name: 'notes', type: 'directory', permissions: 'rwxr-xr-x', octal: 755, owner: 'Student', group: 'Users', updatedAt: '2026-10-19T09:30:00Z',
+            children: {
+              'next.txt': file('next.txt', [
+                'You are in the notes folder now. The prompt ends in \\notes> to show it.',
+                'To go back up to your own folder later, type cd .. (cd, a space and two dots).',
+                '',
+                'One task left: ask for help. Type this and press Enter:',
+                '',
+                '    help dir',
+              ].join('\n')),
+            },
+          },
+        };
+      }
+      return fs;
+    })(),
+    initialState: {
+      ...baseWindowsState,
+      // An ordinary user on a healthy PC: nothing here needs fixing
+      currentUser: 'Student',
+      currentGroup: 'Users',
+      isRootOrAdmin: false,
+      processes: baseWindowsState.processes.filter(p => !p.isMalicious),
+      envVars: { ...baseWindowsState.envVars, USERNAME: 'Student' },
+    },
+    solutionWalkthrough: [
+      {
+        step: 1,
+        title: 'See where you are',
+        command: 'cd',
+        explanation: 'cd on its own prints C:\\Users\\Student. Reading from the left: C: is the drive, Users is a folder on it, and Student is a folder inside Users. Each backslash (\\) separates one folder from the next.',
+        underlyingConcept: 'Every command runs "in" a folder, called the current directory. When you name a file without saying where it is, Windows looks for it in that folder.',
+      },
+      {
+        step: 2,
+        title: 'List what is here',
+        command: 'dir',
+        explanation: 'dir lists the folder you are in. Folders are marked <DIR>; files show their size in bytes instead. The two lines with . and .. stand for this folder and the one above it.',
+        underlyingConcept: 'Options change what a command does. In Command Prompt they start with a forward slash: dir /b shows the names only.',
+      },
+      {
+        step: 3,
+        title: 'Read the welcome file',
+        command: 'type welcome.txt',
+        explanation: 'type prints the whole file. welcome.txt is the argument: the thing you want the command to work on, after a space.',
+        underlyingConcept: 'Most commands follow the same pattern: the command name, then what it should work on and any options, each separated by a space. Windows ignores capital letters in command and file names, so TYPE WELCOME.TXT works too.',
+      },
+      {
+        step: 4,
+        title: 'Go into the notes folder',
+        command: 'cd notes',
+        explanation: 'cd notes moves you into the notes folder. cd prints nothing when it works; the prompt changes to C:\\Users\\Student\\notes> instead.',
+        underlyingConcept: 'notes is a relative path: it is looked for inside the folder you are in. C:\\Users\\Student\\notes is the full path to the same folder, starting from the drive. .. means the folder above this one.',
+      },
+      {
+        step: 5,
+        title: 'Ask for help',
+        command: 'help dir',
+        explanation: 'help dir explains what dir does and lists its options. dir /? shows the same page.',
+        underlyingConcept: 'You never have to remember every option. help and /? in Command Prompt, and Get-Help in PowerShell, are always there to look things up, and experienced people use them every day.',
+      },
+    ],
+    examTips: [
+      'cd, dir and type, plus the /? switch for help, come up in the CompTIA A+ command-line objectives. Later labs build on exactly these ideas.',
+      'PowerShell understands many Command Prompt and Linux names, such as dir, cd, ls and cat, because they are aliases (other names) for its own commands like Get-ChildItem.',
+      'Windows paths use a backslash (\\) between folders, and Linux paths use a forward slash (/). On Windows, options usually start with /, and on Linux with -.',
     ],
   },
 ];

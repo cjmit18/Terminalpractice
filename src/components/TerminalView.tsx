@@ -24,6 +24,8 @@ interface TerminalViewProps {
   readOnly?: boolean;
   /** Change it when the session is reset (a fresh machine): the login banner shows again. */
   resetKey?: number;
+  /** Learning facts noticed at the prompt: 'tab' (Tab completed a name), 'history' (an earlier command recalled) */
+  onActivity?: (facts: string[]) => void;
 }
 
 const SHELL_NAMES: Record<TerminalShell, string> = {
@@ -77,6 +79,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
   hostname = 'lpi-lab01',
   readOnly = false,
   resetKey = 0,
+  onActivity,
 }) => {
   const [input, setInput] = useState('');
   const [copied, setCopied] = useState(false);
@@ -152,6 +155,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
     const newIndex = historyIndex === null ? recall.length - 1 : Math.max(0, historyIndex - 1);
     setHistoryIndex(newIndex);
     setInput(recall[newIndex]);
+    onActivity?.(['history']);
   };
 
   const historyNext = () => {
@@ -174,13 +178,17 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
     const matches = pool.filter(c => c.toLowerCase().startsWith(word.toLowerCase()));
     if (matches.length === 1) {
       setInput(matches[0] + ' ');
+      onActivity?.(['tab']);
     } else if (matches.length > 1) {
       // Extend to the longest shared prefix, like bash does on the first Tab
       let prefix = matches[0];
       for (const m of matches) {
         while (!m.toLowerCase().startsWith(prefix.toLowerCase())) prefix = prefix.slice(0, -1);
       }
-      if (prefix.length > word.length) setInput(prefix);
+      if (prefix.length > word.length) {
+        setInput(prefix);
+        onActivity?.(['tab']);
+      }
     }
   };
 

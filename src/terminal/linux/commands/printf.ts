@@ -67,7 +67,9 @@ function printf(ctx: LinuxContext): LinuxResult {
       }
       if (conv === '%') { out += '%'; continue; }
       const width = w === '*' ? toNumber(args[used++]) : w ? Number(w) : 0;
-      const prec = p === '*' ? toNumber(args[used++]) : p !== undefined ? Number(p) : undefined;
+      // A negative precision from * counts as omitted, as in bash
+      const rawPrec = p === '*' ? toNumber(args[used++]) : p !== undefined ? Number(p) : undefined;
+      const prec = rawPrec !== undefined && rawPrec < 0 ? undefined : rawPrec;
       const left = flags.includes('-');
       const zero = flags.includes('0') && !left;
       const arg = args[used++];
@@ -94,7 +96,8 @@ function printf(ctx: LinuxContext): LinuxResult {
         }
         default: {
           const n = toFloat(arg);
-          const digits = prec ?? 6;
+          // JS number formatting accepts at most 100 digits; clamp rather than throw
+          const digits = Math.min(prec ?? 6, 100);
           if (conv === 'f' || conv === 'F') s = n.toFixed(digits);
           else if (conv === 'e' || conv === 'E') {
             s = n.toExponential(digits).replace(/e([+-])(\d)$/, 'e$10$2');
