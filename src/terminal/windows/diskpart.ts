@@ -2,11 +2,12 @@ import { FileNode, SystemState } from '../../types/terminal';
 import { cloneFileSystem } from '../filesystem';
 import { cloneState } from '../state';
 import { WindowsResult } from './context';
+import { DISKPART_VERSION, diskpartCommandList, diskpartHelp } from './help';
 
 // DiskPart interactive sub-shell. Each entry matches one DISKPART> command.
 
 export const DISKPART_BANNER = [
-  'Microsoft DiskPart version 10.0.22621.1',
+  DISKPART_VERSION,
   'Copyright (C) 1999-2026 Microsoft Corporation.',
   'On computer: WIN-CLIENT01',
   '',
@@ -106,12 +107,12 @@ const DISKPART_COMMANDS: [RegExp, DiskpartHandler][] = [
   }],
 ];
 
-const DISKPART_HELP = 'Microsoft DiskPart command interpreter\nCommands available: active, assign, clean, convert, create, delete, exit, format, list, select';
-
 export function handleDiskpartCommand(line: string, cwd: string, fs: FileNode, state: SystemState): WindowsResult {
   const lower = line.toLowerCase().trim();
   const activeState = cloneState(state);
   const activeFs = cloneFileSystem(fs);
+  const help = diskpartHelp(line);
+  if (help !== null) return { stdout: help, stderr: '', exitCode: 0, newCwd: cwd, newFs: activeFs, newState: activeState, diskpartActive: true };
   for (const [pattern, handler] of DISKPART_COMMANDS) {
     const m = lower.match(pattern);
     if (!m) continue;
@@ -126,5 +127,5 @@ export function handleDiskpartCommand(line: string, cwd: string, fs: FileNode, s
       diskpartActive: out.active ?? true,
     };
   }
-  return { stdout: DISKPART_HELP, stderr: '', exitCode: 0, newCwd: cwd, newFs: activeFs, newState: activeState, diskpartActive: true };
+  return { stdout: diskpartCommandList(), stderr: '', exitCode: 0, newCwd: cwd, newFs: activeFs, newState: activeState, diskpartActive: true };
 }

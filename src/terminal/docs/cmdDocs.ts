@@ -1,4 +1,5 @@
 import { CmdDoc } from './types';
+import { wrap } from './linuxRender';
 
 /**
  * Usage text for every CMD command, shown by `<command> /?` and `help <command>`.
@@ -6,13 +7,23 @@ import { CmdDoc } from './types';
  * the wording is our own and kept short.
  */
 
-/** Builds a Windows-style usage block. */
+/** Builds a Windows-style usage block, wrapped to 79 columns. */
 export function winUsage(desc: string, syntax: string[], params: [string, string][] = [], notes: string[] = []): string {
-  const width = Math.max(12, ...params.map(([p]) => p.length + 2));
-  const lines = [desc, '', ...syntax, ''];
-  if (params.length) lines.push(...params.map(([p, d]) => `  ${p.padEnd(width)}${d}`), '');
-  if (notes.length) lines.push(...notes.flatMap(n => [n, '']));
-  while (lines[lines.length - 1] === '') lines.pop();
+  const width = Math.min(24, Math.max(12, ...params.map(([p]) => p.length + 2)));
+  const lines = [...wrap(desc, 79), '', ...syntax];
+  if (params.length) {
+    lines.push('');
+    for (const [p, d] of params) {
+      const text = wrap(d, 79, ' '.repeat(width + 2));
+      if (p.length + 2 > width) lines.push(`  ${p}`, ...text);
+      else lines.push(`  ${p.padEnd(width)}${text[0].trimStart()}`, ...text.slice(1));
+    }
+  }
+  // a note that starts with spaces continues the previous one (example lines)
+  for (const n of notes) {
+    if (/^\s/.test(n)) lines.push(n);
+    else lines.push('', ...n.split('\n').flatMap(l => (/^\s/.test(l) ? [l] : wrap(l, 79))));
+  }
   return lines.join('\n');
 }
 
