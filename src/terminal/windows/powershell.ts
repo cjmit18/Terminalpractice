@@ -1,4 +1,9 @@
+import { WindowsService } from '../../types/terminal';
+import { globToRegex } from '../textUtils';
 import { WindowsContext, WindowsResult, psCommands } from './context';
+import { bindParams, psError, badParameter } from './psUtil';
+import { resolveHost, hasConnectivity } from './cmd/network';
+import { allProcesses } from './cmd/system';
 
 // PowerShell cmdlets. Handlers see the whole line in ctx.raw because most cmdlets parse
 // named parameters (-Identity, -Port ...) straight from it.
@@ -67,42 +72,124 @@ const param = (line: string, name: string): string | undefined => {
 };
 
 function testNetConnection(ctx: WindowsContext): WindowsResult {
-  const portMatch = ctx.raw.match(/-Port\s+(\d+)/i);
-  const hostMatch = ctx.raw.match(/-ComputerName\s+([^\s]+)/i);
-  const host = hostMatch ? hostMatch[1] : 'dc01.corp.local';
-  const port = portMatch ? parseInt(portMatch[1], 10) : 80;
-  return ctx.ok([
+  const p = bindParams(ctx.args, { ComputerName: 'value', Port: 'value', InformationLevel: 'value', CommonTCPPort: 'value' }, { RemoteAddress: 'ComputerName', cn: 'ComputerName' });
+  if (typeof p === 'string') return ctx.fail(badParameter(ctx.raw, 'Test-NetConnection', p));
+  const host = (p.named.get('ComputerName') as string | undefined) ?? p.positional[0] ?? 'internetbeacon.msedge.net';
+  const common: Record<string, number> = { http: 80, rdp: 3389, smb: 445, winrm: 5985 };
+  const portArg = (p.named.get('Port') as string | undefined) ?? (p.named.has('CommonTCPPort') ? String(common[String(p.named.get('CommonTCPPort')).toLowerCase()] ?? '') : undefined);
+  const port = portArg !== undefined ? parseInt(portArg, 10) : undefined;
+  const iface = ctx.state.interfaces[0];
+  const source = iface?.ip ?? '192.168.1.145';
+  const alias = iface?.name ?? 'Ethernet0';
+  const ip = resolveHost(ctx, host);
+  const warnings: string[] = [];
+  if (!ip) {
+    warnings.push(`WARNING: Name resolution of ${host} failed`);
+    return ctx.result([`ComputerName   : ${host}`, 'RemoteAddress  :', `InterfaceAlias : ${alias}`, `SourceAddress  : ${source}`, 'PingSucceeded  : False'].join('\n'), warnings.join('\n'), 1);
+  }
+  const reachable = ip.startsWith('127.') || hasConnectivity(ctx);
+  const tcpOk = reachable && port !== undefined && !ctx.state.firewallBlockedPorts.includes(port);
+  if (port !== undefined && tcpOk) {
+    return ctx.ok([
+      `ComputerName     : ${host}`,
+      `RemoteAddress    : ${ip}`,
+      `RemotePort       : ${port}`,
+      `InterfaceAlias   : ${alias}`,
+      `SourceAddress    : ${source}`,
+      'TcpTestSucceeded : True',
+    ].join('\n'));
+  }
+  if (port !== undefined) warnings.push(`WARNING: TCP connect to (${ip} : ${port}) failed`);
+  if (!reachable) warnings.push(`WARNING: Ping to ${ip} failed with status: DestinationHostUnreachable`);
+  const lines = [
     `ComputerName           : ${host}`,
-    `RemoteAddress          : 192.168.1.10`,
-    `RemotePort             : ${port}`,
-    `InterfaceAlias         : Ethernet0`,
-    `SourceAddress          : 192.168.1.145`,
-    `PingSucceeded          : True`,
-    `PingReplyDetails (RTT) : 3 ms`,
-    `TcpTestSucceeded       : True`,
-  ].join('\n'));
+    `RemoteAddress          : ${ip}`,
+    ...(port !== undefined ? [`RemotePort             : ${port}`] : []),
+    `InterfaceAlias         : ${alias}`,
+    `SourceAddress          : ${source}`,
+    `PingSucceeded          : ${reachable ? 'True' : 'False'}`,
+    ...(reachable ? [`PingReplyDetails (RTT) : ${ip.startsWith('127.') ? 0 : 12} ms`] : []),
+    ...(port !== undefined ? ['TcpTestSucceeded       : False'] : []),
+  ];
+  return ctx.result(lines.join('\n'), warnings.join('\n'), reachable && port === undefined ? 0 : 1);
 }
 
-function setServiceStatus(status: 'Running' | 'Stopped', verb: string) {
+/** Services matching -Name / positional names (comma lists and wildcards), or an error block. */
+function matchServices(ctx: WindowsContext, cmdlet: string): { items: WindowsService[]; error?: string } | string {
+  const p = bindParams(ctx.args, { Name: 'value', DisplayName: 'value', Force: 'switch', PassThru: 'switch' }, { ServiceName: 'Name' });
+  if (typeof p === 'string') return badParameter(ctx.raw, cmdlet, p);
+  const wanted = [...((p.named.get('Name') as string | undefined)?.split(',') ?? []), ...p.positional.flatMap(x => x.split(','))]
+    .map(x => x.trim()).filter(Boolean);
+  const display = p.named.get('DisplayName') as string | undefined;
+  if (wanted.length === 0 && !display) return { items: ctx.state.services };
+  const items: WindowsService[] = [];
+  const errors: string[] = [];
+  for (const w of wanted) {
+    const re = globToRegex(w, true);
+    const found = ctx.state.services.filter(s => re.test(s.name));
+    if (found.length === 0 && !/[*?]/.test(w)) {
+      errors.push(psError(ctx.raw, cmdlet, `Cannot find any service with service name '${w}'.`, 'ObjectNotFound', w, 'ServiceCommandException', 'NoServiceFoundForGivenName'));
+    }
+    items.push(...found.filter(f => !items.includes(f)));
+  }
+  if (display) items.push(...ctx.state.services.filter(s => globToRegex(display, true).test(s.displayName) && !items.includes(s)));
+  return { items, error: errors.join('\n') || undefined };
+}
+
+function getService(ctx: WindowsContext): WindowsResult {
+  const m = matchServices(ctx, 'Get-Service');
+  if (typeof m === 'string') return ctx.fail(m);
+  const out = m.items.length ? `${SERVICE_HEADER}\n${serviceRows(m.items).join('\n')}` : '';
+  return ctx.result(out, m.error ?? '', m.error ? 1 : 0);
+}
+
+function setServiceStatus(status: 'Running' | 'Stopped', cmdlet: 'Start-Service' | 'Stop-Service' | 'Restart-Service') {
   return (ctx: WindowsContext): WindowsResult => {
-    const match = ctx.raw.match(new RegExp(`^${verb}\\s+(?:-Name\\s+)?([^\\s]+)`, 'i'));
-    if (match) {
-      const srv = ctx.state.services.find(s => s.name.toLowerCase() === match[1].toLowerCase());
-      if (srv) srv.status = status;
+    const m = matchServices(ctx, cmdlet);
+    if (typeof m === 'string') return ctx.fail(m);
+    if (m.error) return ctx.fail(m.error);
+    if (!ctx.isAdmin) {
+      const s = m.items[0];
+      const verb = cmdlet === 'Stop-Service' ? 'stopped' : 'started';
+      return ctx.fail(psError(ctx.raw, cmdlet, `Service '${s?.displayName} (${s?.name})' cannot be ${verb} due to the following error: Cannot open ${s?.name} service on computer '.'.`,
+        'OpenError', s?.name ?? '', 'ServiceCommandException', `CouldNotStartService`), 1,
+        `You are '${ctx.state.currentUser}', a standard user (not elevated). Starting or stopping services needs an elevated PowerShell (Run as administrator).`);
+    }
+    for (const s of m.items) {
+      if (status === 'Running' && s.startType === 'Disabled') {
+        return ctx.fail(psError(ctx.raw, cmdlet, `Service '${s.displayName} (${s.name})' cannot be started due to the following error: Cannot start service ${s.name} on computer '.'.`,
+          'OpenError', s.name, 'ServiceCommandException', 'CouldNotStartService'));
+      }
+      s.status = status;
     }
     return ctx.ok();
   };
 }
 
 function getProcess(ctx: WindowsContext): WindowsResult {
-  const rows = [
-    '      9     1.85       4.20       0.12     540   0 csrss',
-    '     14     5.10      14.30       1.45     704   0 lsass',
-    '     22    18.50      38.90       2.10     844   0 svchost',
-    '     45    64.20     120.40       8.90    2140   1 explorer',
-    ...processRows(ctx.state.processes),
-  ];
-  return ctx.ok(`${PROCESS_HEADER}\n${rows.join('\n')}`);
+  const p = bindParams(ctx.args, { Name: 'value', Id: 'value' }, { ProcessName: 'Name' });
+  if (typeof p === 'string') return ctx.fail(badParameter(ctx.raw, 'Get-Process', p));
+  // ProcessName is the image name without .exe
+  let procs = allProcesses(ctx).filter(x => x.pid !== 0).map(x => ({ ...x, command: x.command.replace(/\.exe$/i, '') }));
+  const name = (p.named.get('Name') as string | undefined) ?? p.positional[0];
+  const id = p.named.get('Id') as string | undefined;
+  if (name) {
+    const re = globToRegex(name, true);
+    procs = procs.filter(x => re.test(x.command));
+    if (procs.length === 0 && !/[*?]/.test(name)) {
+      return ctx.fail(psError(ctx.raw, 'Get-Process', `Cannot find a process with the name "${name}". Verify the process name and call the cmdlet again.`,
+        'ObjectNotFound', name, 'ProcessCommandException', 'NoProcessFoundForGivenName'));
+    }
+  }
+  if (id) {
+    procs = procs.filter(x => String(x.pid) === id);
+    if (procs.length === 0) {
+      return ctx.fail(psError(ctx.raw, 'Get-Process', `Cannot find a process with the process identifier ${id}.`,
+        'ObjectNotFound', id, 'ProcessCommandException', 'NoProcessFoundForGivenId'));
+    }
+  }
+  procs.sort((x, y) => x.command.toLowerCase().localeCompare(y.command.toLowerCase()));
+  return ctx.ok(`${PROCESS_HEADER}\n${processRows(procs).join('\n')}`);
 }
 
 function stopProcess(ctx: WindowsContext): WindowsResult | null {
@@ -176,9 +263,11 @@ function unlockADAccount(ctx: WindowsContext): WindowsResult {
 
 psCommands.register(['Test-NetConnection', 'tnc'], testNetConnection);
 psCommands.registerAll({
-  'Get-Service': ctx => ctx.ok(`${SERVICE_HEADER}\n${serviceRows(ctx.state.services).join('\n')}`),
+  'Get-Service': getService,
+  gsv: getService,
   'Start-Service': setServiceStatus('Running', 'Start-Service'),
   'Stop-Service': setServiceStatus('Stopped', 'Stop-Service'),
+  'Restart-Service': setServiceStatus('Running', 'Restart-Service'),
   'Get-Process': getProcess,
   'Stop-Process': stopProcess,
   'Get-ADUser': getADUser,

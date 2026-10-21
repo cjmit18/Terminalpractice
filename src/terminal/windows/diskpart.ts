@@ -13,9 +13,11 @@ export const DISKPART_BANNER = [
   'DISKPART> ',
 ].join('\n');
 
-type DiskpartHandler = (state: SystemState, match: RegExpMatchArray) => { stdout: string; exitCode?: number; active?: boolean };
+type DiskpartHandler = (state: SystemState, match: RegExpMatchArray, original: string) => { stdout: string; exitCode?: number; active?: boolean };
 
 const selectedDisk = (state: SystemState) => state.disks.find(d => d.diskNumber === state.diskpartSelectedDisk);
+const selectedPartition = (state: SystemState) =>
+  state.diskpartSelectedPartition === null ? undefined : selectedDisk(state)?.partitions.find(p => p.id === state.diskpartSelectedPartition);
 
 const DISKPART_COMMANDS: [RegExp, DiskpartHandler][] = [
   [/^exit$/, () => ({ stdout: 'Leaving DiskPart...', active: false })],
@@ -68,22 +70,38 @@ const DISKPART_COMMANDS: [RegExp, DiskpartHandler][] = [
     return { stdout: 'DiskPart succeeded in creating the specified partition.' };
   }],
 
-  [/^format/, state => {
-    if (state.diskpartSelectedDisk === null) return { stdout: 'There is no volume/partition selected.', exitCode: 1 };
-    const disk = selectedDisk(state);
-    if (disk && disk.partitions.length > 0) {
-      const p = disk.partitions[disk.partitions.length - 1];
-      p.fsType = 'NTFS';
-      p.label = 'DataDrive';
-    }
+  [/^select\s+partition\s+(\d+)$/, (state, m) => {
+    if (state.diskpartSelectedDisk === null) return { stdout: 'There is no disk selected.\nPlease select a disk and try again.', exitCode: 1 };
+    const id = parseInt(m[1], 10);
+    if (!selectedDisk(state)?.partitions.some(p => p.id === id)) return { stdout: 'The specified partition is not valid.\nPlease select a valid partition.', exitCode: 1 };
+    state.diskpartSelectedPartition = id;
+    return { stdout: `Partition ${id} is now the selected partition.` };
+  }],
+
+  [/^format\b/, (state, m, original) => {
+    const part = selectedPartition(state);
+    if (!part) return { stdout: 'There is no volume selected.\nPlease select a volume and try again.', exitCode: 1 };
+    const fsMatch = m.input!.match(/fs=(\w+)/);
+    const fs = (fsMatch?.[1] ?? 'ntfs').toUpperCase();
+    if (fs !== 'NTFS' && fs !== 'FAT32') return { stdout: `The file system "${fs}" is not supported here (use fs=ntfs or fs=fat32).`, exitCode: 1 };
+    part.fsType = fs as 'NTFS' | 'FAT32';
+    const lm = original.match(/label=(?:"([^"]+)"|(\S+))/i);
+    const label = lm ? lm[1] ?? lm[2] : undefined;
+    part.label = label ?? 'DataDrive';
     return { stdout: ['  100 percent completed', '', 'DiskPart successfully formatted the volume.'].join('\n') };
   }],
 
-  [/^assign/, (state, m) => {
+  [/^assign\b/, (state, m) => {
+    const part = selectedPartition(state);
+    if (!part) return { stdout: 'There is no volume selected.\nPlease select a volume and try again.', exitCode: 1 };
     const letterMatch = m.input!.match(/letter=([a-z])/);
-    const letter = letterMatch ? letterMatch[1].toUpperCase() : 'E';
-    const disk = selectedDisk(state);
-    if (disk && disk.partitions.length > 0) disk.partitions[disk.partitions.length - 1].driveLetter = `${letter}:`;
+    const used = new Set(state.disks.flatMap(d => d.partitions).map(p => (p.driveLetter ?? '').toUpperCase()).filter(Boolean));
+    let letter = letterMatch ? `${letterMatch[1].toUpperCase()}:` : '';
+    if (!letter) for (const c of 'DEFGHIJKLMNOPQRSTUVWXYZ') { if (!used.has(`${c}:`)) { letter = `${c}:`; break; } }
+    if (used.has(letter) && (part.driveLetter ?? '').toUpperCase() !== letter) {
+      return { stdout: 'Virtual Disk Service error:\nThe specified drive letter is not free to be assigned.', exitCode: 1 };
+    }
+    part.driveLetter = letter;
     return { stdout: 'DiskPart successfully assigned the drive letter or mount point.' };
   }],
 ];
@@ -97,7 +115,7 @@ export function handleDiskpartCommand(line: string, cwd: string, fs: FileNode, s
   for (const [pattern, handler] of DISKPART_COMMANDS) {
     const m = lower.match(pattern);
     if (!m) continue;
-    const out = handler(activeState, m);
+    const out = handler(activeState, m, line.trim());
     return {
       stdout: out.stdout,
       stderr: '',

@@ -35,6 +35,7 @@ function findstr(ctx: WindowsContext): WindowsResult {
 
 cmdCommands.registerAll({
   cls: ctx => ctx.ok('\x1b[2J\x1b[0;0H'),
-  echo: ctx => ctx.ok(ctx.args.join(' ')),
+  echo: ctx => ctx.ok(ctx.args.length ? ctx.args.join(' ') : 'ECHO is on.'),
+  'echo.': ctx => ctx.ok(ctx.args.join(' ')),
   findstr,
 });

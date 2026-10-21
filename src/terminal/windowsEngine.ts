@@ -6,6 +6,9 @@ import { cloneState } from './state';
 import { WindowsContext, WindowsResult, cmdCommands, psCommands } from './windows/context';
 import { DISKPART_BANNER, handleDiskpartCommand } from './windows/diskpart';
 import { runPowerShellPipeline } from './windows/powershell';
+import { expandCmdVariables, expandPowerShellEnv } from './windows/env';
+import { psNotRecognized } from './windows/psUtil';
+import './windows/psFiles';
 import './windows/cmd/files';
 import './windows/cmd/text';
 import './windows/cmd/system';
@@ -34,9 +37,11 @@ export function executeWindowsLine(
 
   if (shell === 'powershell') return executePowerShellCommand(line, cwd, fs, state);
 
-  const stages = splitChainedCommandLine(line, 'cmd');
+  // CMD expands %VAR% once for the whole line, before splitting on & and |
+  const expanded = expandCmdVariables(line, state, cwd);
+  const stages = splitChainedCommandLine(expanded, 'cmd');
   if (stages.length > 1) return runChain(stages, cwd, fs, state, executeCmdPipeline);
-  return executeCmdPipeline(line, cwd, fs, state);
+  return executeCmdPipeline(expanded, cwd, fs, state);
 }
 
 /** Runs one CMD command against the pipeline's working copies, then applies its 2> redirect. */
@@ -51,33 +56,46 @@ function executeSingleCmdCommand(
   const handler = cmdCommands.get(parsed.name);
   let res: WindowsResult = handler
     ? handler(ctx)
-    : ctx.fail(`'${parsed.name.toLowerCase()}' is not recognized as an internal or external command,\noperable program or batch file.`, 9009);
+    : ctx.fail(`'${parsed.name}' is not recognized as an internal or external command,\noperable program or batch file.`, 9009);
 
   const er = parsed.stderrRedirect;
   if (er) {
     if (er.type === 'merge') {
       res = { ...res, stdout: [res.stdout, res.stderr].filter(Boolean).join('\r\n'), stderr: '' };
-    } else if (er.target.toLowerCase() === 'nul') {
-      res = { ...res, stderr: '' };
     } else {
-      writeWindowsFile(res.newFs, normalizePath(er.target, res.newCwd, true), res.stderr, er.type === '>>');
-      res = { ...res, stderr: '' };
+      const write = writeWindowsFile(res.newFs, res.newState, normalizePath(er.target, res.newCwd, true), res.stderr, er.type === '>>');
+      res = write ? { ...res, stderr: write.error, exitCode: 1, explanation: write.explanation } : { ...res, stderr: '', explanation: undefined };
     }
   }
   return res;
 }
 
-function writeWindowsFile(fs: FileNode, targetPath: string, content: string, append: boolean) {
+/**
+ * Writes redirected output. Returns an error when a standard user targets a protected folder.
+ * NUL discards output.
+ */
+function writeWindowsFile(fs: FileNode, state: SystemState, targetPath: string, content: string, append: boolean): { error: string; explanation?: string } | null {
   const norm = targetPath.toLowerCase();
-  if (norm === 'nul' || norm.endsWith('\\nul') || norm.endsWith('/nul')) return;
+  if (norm === 'nul' || norm.endsWith('\\nul') || norm.endsWith('/nul')) return null;
+  const probe = new WindowsContext('', [], '', '', 'C:\\', fs, state);
+  const why = probe.protectedReason(targetPath, 'write');
+  if (why) return { error: 'Access is denied.', explanation: why };
   const existing = getNodeAtPath(fs, targetPath, true);
-  if (existing && existing.type === 'file') {
+  if (existing && existing.type === 'directory') return { error: 'Access is denied.' };
+  if (existing) {
     writeFileContent(existing, content, append, '\r\n');
+  } else if (!getNodeAtPath(fs, targetPath.slice(0, targetPath.lastIndexOf('\\')) || 'C:\\', true)) {
+    return { error: 'The system cannot find the path specified.' };
   } else {
-    createNode(fs, targetPath, 'file', content, true, 'Administrator', 'Administrators', 644);
+    createNode(fs, targetPath, 'file', content, true, state.currentUser, state.isRootOrAdmin ? 'Administrators' : 'Users', 644);
   }
+  return null;
 }
 
+/**
+ * Runs a CMD pipeline. Every stage runs (as in CMD), errors are collected, and the exit code
+ * is the last stage's.
+ */
 function executeCmdPipeline(
   pipelineStr: string,
   cwd: string,
@@ -85,39 +103,39 @@ function executeCmdPipeline(
   state: SystemState
 ): WindowsExecutionResult {
   const stages = parsePipelinedLine(pipelineStr, 'cmd');
-  let currentInput = '';
+  let input = '';
   let activeFs = cloneFileSystem(fs);
   let activeState = cloneState(state);
   let currentCwd = cwd;
   let exitCode = 0;
-  let stderr = '';
+  const errors: string[] = [];
+  const notes: string[] = [];
 
-  const result = (stdout: string, err: string, code: number): WindowsExecutionResult => ({
-    stdout, stderr: err, exitCode: code, newCwd: currentCwd, newFs: activeFs, newState: activeState,
-  });
-
-  for (let i = 0; i < stages.length; i++) {
-    const stage = stages[i];
-    const isLast = i === stages.length - 1;
-    const res = executeSingleCmdCommand(stage, currentCwd, activeFs, activeState, currentInput);
+  for (const stage of stages) {
+    const res = executeSingleCmdCommand(stage, currentCwd, activeFs, activeState, input);
     currentCwd = res.newCwd;
     activeFs = res.newFs;
     activeState = res.newState;
     exitCode = res.exitCode;
-    stderr = res.stderr;
-
-    if (exitCode !== 0 && res.stderr) return result('', res.stderr, exitCode);
-
-    currentInput = res.stdout;
-
-    if (isLast && stage.redirect && exitCode === 0) {
-      if (stage.redirect.target.toLowerCase() !== 'nul') {
-        writeWindowsFile(activeFs, normalizePath(stage.redirect.target, currentCwd, true), currentInput, stage.redirect.type === '>>');
+    let out = res.stdout;
+    if (res.stderr) errors.push(res.stderr);
+    if (res.explanation && !notes.includes(res.explanation)) notes.push(res.explanation);
+    if (stage.redirect) {
+      const write = writeWindowsFile(activeFs, activeState, normalizePath(stage.redirect.target, currentCwd, true), out, stage.redirect.type === '>>');
+      if (write) {
+        errors.push(write.error);
+        if (write.explanation) notes.push(write.explanation);
+        exitCode = 1;
       }
-      return result('', stderr, 0);
+      out = '';
     }
+    input = out;
   }
-  return result(currentInput, stderr, exitCode);
+  const result: WindowsExecutionResult = {
+    stdout: input, stderr: errors.join('\n'), exitCode, newCwd: currentCwd, newFs: activeFs, newState: activeState,
+  };
+  if (notes.length) result.explanation = notes.join('\n');
+  return result;
 }
 
 export function executeCmdCommand(
@@ -129,12 +147,19 @@ export function executeCmdCommand(
   return executeCmdPipeline(rawInput, cwd, fs, state);
 }
 
+/** Programs (not CMD built-ins) that PowerShell can run directly. */
+const NATIVE_TOOLS = new Set([
+  'ipconfig', 'ping', 'tracert', 'nslookup', 'netstat', 'route', 'tasklist', 'taskkill', 'sfc', 'dism', 'gpupdate',
+  'gpresult', 'net', 'whoami', 'hostname', 'systeminfo', 'chkdsk', 'findstr', 'more', 'bootrec',
+]);
+
 function executePowerShellCommand(
-  line: string,
+  rawLine: string,
   cwd: string,
   fs: FileNode,
   state: SystemState
 ): WindowsExecutionResult {
+  const line = expandPowerShellEnv(rawLine, state);
   const stages = parsePipelinedLine(line, 'powershell');
   const first = stages[0];
   const ctx = new WindowsContext(first?.name ?? '', first?.args ?? [], '', line, cwd, cloneFileSystem(fs), cloneState(state));
@@ -146,6 +171,9 @@ function executePowerShellCommand(
   const res = handler ? handler(ctx) : null;
   if (res) return res;
 
-  // Native tools (ipconfig, ping, ...) run the same inside PowerShell
-  return executeCmdCommand(line, cwd, fs, state);
+  // Native programs (ipconfig.exe, ping.exe, ...) run the same inside PowerShell
+  const exe = (first?.name ?? '').toLowerCase().replace(/\.exe$/, '');
+  if (NATIVE_TOOLS.has(exe)) return executeCmdCommand(line.replace(/^(\S+?)\.exe\b/i, '$1'), cwd, fs, state);
+
+  return ctx.fail(psNotRecognized(line, first?.name ?? ''), 1);
 }

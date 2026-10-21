@@ -150,6 +150,8 @@ export interface SystemState {
   diskpartSelectedDisk: number | null;
   diskpartSelectedPartition: number | null;
   envVars: { [key: string]: string };
+  /** Set by `ipconfig /flushdns`; `ipconfig /displaydns` then shows only hosts-file entries. */
+  dnsCacheFlushed?: boolean;
   /** Lines entered in this bash session, oldest first. Maintained by the Linux engine for `history`. */
   commandHistory?: string[];
 }

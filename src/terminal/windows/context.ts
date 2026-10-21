@@ -36,16 +36,37 @@ export class WindowsContext {
     return getNodeAtPath(this.fs, absPath, true);
   }
 
-  result(stdout: string, stderr: string, exitCode: number): WindowsResult {
-    return { stdout, stderr, exitCode, newCwd: this.cwd, newFs: this.fs, newState: this.state };
+  result(stdout: string, stderr: string, exitCode: number, explanation?: string): WindowsResult {
+    const res: WindowsResult = { stdout, stderr, exitCode, newCwd: this.cwd, newFs: this.fs, newState: this.state };
+    if (explanation) res.explanation = explanation;
+    return res;
   }
 
   ok(stdout = ''): WindowsResult {
     return this.result(stdout, '', 0);
   }
 
-  fail(stderr: string, exitCode = 1): WindowsResult {
-    return this.result('', stderr, exitCode);
+  fail(stderr: string, exitCode = 1, explanation?: string): WindowsResult {
+    return this.result('', stderr, exitCode, explanation);
+  }
+
+  /**
+   * Windows ACLs are not modelled per file; instead, like a default install, standard users
+   * may not modify C:\Windows or C:\Program Files, nor open another user's profile.
+   * Returns an explanation when `absPath` is off limits for this action, otherwise null.
+   */
+  protectedReason(absPath: string, action: 'read' | 'write'): string | null {
+    if (this.isAdmin) return null;
+    const p = absPath.toLowerCase();
+    const who = `You are '${this.state.currentUser}', a standard user (not elevated).`;
+    if (action === 'write' && (p === 'c:\\windows' || p.startsWith('c:\\windows\\') || p.startsWith('c:\\program files'))) {
+      return `${who} ${absPath.split('\\').slice(0, 2).join('\\')} is protected: only Administrators and SYSTEM may change files there, so run the prompt as administrator.`;
+    }
+    const profile = p.match(/^c:\\users\\([^\\]+)/);
+    if (profile && profile[1] !== this.state.currentUser.toLowerCase() && profile[1] !== 'public') {
+      return `${who} The profile folder C:\\Users\\${absPath.split('\\')[2]} belongs to another account, and its ACL grants access only to that user, SYSTEM and Administrators.`;
+    }
+    return null;
   }
 }
 

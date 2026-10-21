@@ -913,3 +913,4 @@ import './engineState.test.ts';
 import './explanations.test.ts';
 import './textTools.test.ts';
 import './linuxCommands.test.ts';
+import './windowsCommands.test.ts';
