@@ -16,7 +16,8 @@ export interface ShellSession {
 }
 
 export function createSession(fs: FileNode, state: SystemState, cwd: string): ShellSession {
-  return { fs, state, cwd, history: [], diskpartActive: false, lastResult: undefined };
+  // Own copies, so nothing a session does can leak into a lab's or the sandbox's starting point
+  return { fs: structuredClone(fs), state: structuredClone(state), cwd, history: [], diskpartActive: false, lastResult: undefined };
 }
 
 // `clear` and `cls` answer with the ANSI "erase display" sequence
@@ -33,15 +34,16 @@ export function runLine(session: ShellSession, line: string, shell: TerminalShel
   let stdout: string;
   let stderr: string;
   let exitCode: number;
+  let explanation: string | undefined;
   let next: Omit<ShellSession, 'history' | 'lastResult'>;
 
   if (shell === 'bash') {
     const res = executeLinuxLine(line, session.cwd, session.fs, session.state);
-    ({ stdout, stderr, exitCode } = res);
+    ({ stdout, stderr, exitCode, explanation } = res);
     next = { fs: res.newFs, state: res.newState, cwd: res.newCwd, diskpartActive: false };
   } else {
     const res = executeWindowsLine(line, session.cwd, session.fs, session.state, shell, session.diskpartActive);
-    ({ stdout, stderr, exitCode } = res);
+    ({ stdout, stderr, exitCode, explanation } = res);
     next = { fs: res.newFs, state: res.newState, cwd: res.newCwd, diskpartActive: !!res.diskpartActive };
     // The engine ends the DiskPart banner with its own prompt; the terminal draws the live one
     if (next.diskpartActive) stdout = stdout.replace(/\s*DISKPART>\s*$/, '');
@@ -49,8 +51,12 @@ export function runLine(session: ShellSession, line: string, shell: TerminalShel
 
   const lastResult: CommandContext = { command: line, exitCode, stdout };
 
+  // `clear` wipes the screen, but output after it in the same line (`clear; echo hi`) and errors still show
+  let previous = session.history;
   if (stdout.includes(CLEAR_SCREEN)) {
-    return { ...next, history: [], lastResult };
+    previous = [];
+    stdout = stdout.slice(stdout.lastIndexOf(CLEAR_SCREEN) + CLEAR_SCREEN.length).replace(/^\x1b\[[0-9;]*H/, '').replace(/^\r?\n/, '');
+    if (!stdout && !stderr) return { ...next, history: [], lastResult };
   }
 
   const entry: TerminalLine = {
@@ -59,6 +65,7 @@ export function runLine(session: ShellSession, line: string, shell: TerminalShel
     output: [stdout, stderr].filter(Boolean).join(shell === 'bash' ? '\n' : '\r\n'),
     errorOutput: stderr || undefined,
     isError: exitCode !== 0,
+    explanation,
     timestamp: new Date().toLocaleTimeString(),
     // The prompt the command was typed at, not the directory it left us in
     cwd: promptCwd,
@@ -67,7 +74,7 @@ export function runLine(session: ShellSession, line: string, shell: TerminalShel
     inDiskpart,
   };
 
-  return { ...next, history: [...session.history, entry], lastResult };
+  return { ...next, history: [...previous, entry], lastResult };
 }
 
 /**

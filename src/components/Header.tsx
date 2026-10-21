@@ -1,23 +1,32 @@
 import React from 'react';
-import { AppWindow, BookOpen, Layers, Monitor, Moon, SquareTerminal, Sun, Terminal } from 'lucide-react';
+import { BookOpen, GraduationCap, Layers, Monitor, Moon, SquareTerminal, Sun, Terminal } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Section } from '../lib/router';
 import { ThemeChoice } from '../lib/theme';
 
-interface NavItem {
-  section: Section;
-  label: string;
-  shortLabel: string;
-  icon: LucideIcon;
-}
-
-export const NAV_ITEMS: NavItem[] = [
-  { section: 'linux', label: 'Linux labs', shortLabel: 'Linux', icon: SquareTerminal },
-  { section: 'windows', label: 'Windows labs', shortLabel: 'Windows', icon: AppWindow },
-  { section: 'simulators', label: 'Simulators', shortLabel: 'Simulators', icon: Layers },
-  { section: 'sandbox', label: 'Sandbox', shortLabel: 'Sandbox', icon: Terminal },
-  { section: 'reference', label: 'Reference', shortLabel: 'Reference', icon: BookOpen },
+/** Desktop navigation, one row. */
+export const NAV_ITEMS: { section: Section; label: string }[] = [
+  { section: 'learn', label: 'Learn' },
+  { section: 'linux', label: 'Linux labs' },
+  { section: 'windows', label: 'Windows labs' },
+  { section: 'simulators', label: 'Simulators' },
+  { section: 'sandbox', label: 'Sandbox' },
+  { section: 'reference', label: 'Reference' },
 ];
+
+/**
+ * Phones have room for five items at 44px+, so the two lab catalogs share one "Labs" item
+ * (it opens the track you used last; the catalog has a Linux/Windows switch at the top).
+ */
+type PhoneNavKey = 'learn' | 'labs' | 'simulators' | 'sandbox' | 'reference';
+const PHONE_NAV_ITEMS: { key: PhoneNavKey; label: string; icon: LucideIcon }[] = [
+  { key: 'learn', label: 'Learn', icon: GraduationCap },
+  { key: 'labs', label: 'Labs', icon: SquareTerminal },
+  { key: 'simulators', label: 'Simulators', icon: Layers },
+  { key: 'sandbox', label: 'Sandbox', icon: Terminal },
+  { key: 'reference', label: 'Reference', icon: BookOpen },
+];
+const phoneKey = (section: Section): PhoneNavKey => (section === 'linux' || section === 'windows' ? 'labs' : section);
 
 const THEME_OPTIONS: { value: ThemeChoice; label: string; icon: LucideIcon }[] = [
   { value: 'system', label: 'Match system theme', icon: Monitor },
@@ -39,7 +48,7 @@ export const Header: React.FC<HeaderProps> = ({ current, hrefs, tasksDone, tasks
     <header className="shrink-0 bg-surface border-b border-line">
       <div className="flex items-center gap-4 lg:gap-8 h-14 px-4 lg:px-6">
         <a
-          href="#/linux"
+          href="#/learn"
           className="shrink-0 text-base font-semibold text-text whitespace-nowrap rounded-sm"
         >
           Terminus CertSim
@@ -66,9 +75,10 @@ export const Header: React.FC<HeaderProps> = ({ current, hrefs, tasksDone, tasks
         </nav>
 
         <div className="ml-auto flex items-center gap-3 lg:gap-4 shrink-0">
-          <p className="text-sm text-muted whitespace-nowrap tabular-nums">
+          {/* Hidden only at tablet widths, where the top nav needs the room; phones use the bottom nav */}
+          <p className="md:hidden lg:block text-sm text-muted whitespace-nowrap tabular-nums">
             {tasksDone} of {tasksTotal}
-            <span className="hidden lg:inline"> tasks</span> done
+            <span className="hidden xl:inline"> lab tasks</span> done
           </p>
           <ThemeSwitch theme={theme} onChange={onThemeChange} />
           <ThemeCycleButton theme={theme} onChange={onThemeChange} />
@@ -121,26 +131,30 @@ const ThemeCycleButton: React.FC<{ theme: ThemeChoice; onChange: (t: ThemeChoice
 };
 
 /** Phone-only navigation pinned to the bottom of the screen. */
-export const BottomNav: React.FC<{ current: Section; hrefs: Record<Section, string> }> = ({ current, hrefs }) => (
+export const BottomNav: React.FC<{ current: Section; hrefs: Record<Section, string>; labsHref: string }> = ({
+  current,
+  hrefs,
+  labsHref,
+}) => (
   <nav
     aria-label="Main"
     className="md:hidden shrink-0 bg-surface border-t border-line"
     style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
   >
     <ul className="grid grid-cols-5">
-      {NAV_ITEMS.map(({ section, shortLabel, icon: Icon }) => {
-        const active = section === current;
+      {PHONE_NAV_ITEMS.map(({ key, label, icon: Icon }) => {
+        const active = key === phoneKey(current);
         return (
-          <li key={section}>
+          <li key={key}>
             <a
-              href={hrefs[section]}
+              href={key === 'labs' ? labsHref : hrefs[key]}
               aria-current={active ? 'page' : undefined}
               className={`flex flex-col items-center justify-center gap-0.5 min-h-[52px] px-1 text-xs font-medium border-t-2 -mt-px transition-colors ${
                 active ? 'text-accent border-accent' : 'text-muted border-transparent hover:text-text'
               }`}
             >
               <Icon className="w-5 h-5" aria-hidden="true" />
-              <span>{shortLabel}</span>
+              <span>{label}</span>
             </a>
           </li>
         );

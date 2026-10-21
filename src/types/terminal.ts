@@ -15,6 +15,8 @@ export interface FileNode {
   group: string; // e.g. "root" or "student"
   updatedAt: string;
   children?: { [key: string]: FileNode };
+  /** Device node in /dev (shown as b or c by ls -l). */
+  device?: 'block' | 'char';
 }
 
 export type TerminalShell = 'bash' | 'cmd' | 'powershell';
@@ -34,6 +36,11 @@ export interface HistoryItem {
   output: string;
   errorOutput?: string;
   isError?: boolean;
+  /**
+   * Learning note from the engine result's `explanation` field: which permission check failed
+   * and why. Shown separately from the real terminal output.
+   */
+  explanation?: string;
   timestamp: string;
   cwd: string;
   shell: TerminalShell;
@@ -145,4 +152,12 @@ export interface SystemState {
   diskpartSelectedDisk: number | null;
   diskpartSelectedPartition: number | null;
   envVars: { [key: string]: string };
+  /** Set by `ipconfig /flushdns`; `ipconfig /displaydns` then shows only hosts-file entries. */
+  dnsCacheFlushed?: boolean;
+  /** Windows local accounts created with net user /add (the built-in ones are always present). */
+  localUsers?: string[];
+  /** Windows local group membership changed with net localgroup; unset means the defaults. */
+  localGroups?: { [group: string]: string[] };
+  /** Lines entered in this bash session, oldest first. Maintained by the Linux engine for `history`. */
+  commandHistory?: string[];
 }

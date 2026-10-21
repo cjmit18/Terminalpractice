@@ -1,7 +1,11 @@
-// Offline support: precache the app shell on install, then serve from cache and refresh in the background.
-// Bump CACHE when the caching strategy changes; hashed build assets never go stale.
-const CACHE = 'certsim-v1';
-const SHELL = ['./', './index.html', './manifest.webmanifest', './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png'];
+// Offline support: precache the app shell and build assets on install, then serve from cache and
+// refresh in the background. Each build gets its own cache; older ones are deleted on activate.
+// The build replaces these two placeholders (see precacheBuildAssets in vite.config.ts) with a
+// per-build cache name and the hashed JS, CSS and font files, so one visit is enough to work offline.
+const BUILD_ID = 'dev';
+const BUILD_ASSETS = [];
+const CACHE = `certsim-${BUILD_ID}`;
+const SHELL = ['./', './index.html', './manifest.webmanifest', './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png', ...BUILD_ASSETS];
 
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -20,7 +24,8 @@ self.addEventListener('fetch', event => {
   if (request.method !== 'GET' || new URL(request.url).origin !== self.location.origin) return;
 
   event.respondWith(
-    caches.match(request).then(cached => {
+    // ignoreVary: hosts send "Vary: Origin", and module scripts carry an Origin header the precache requests lacked
+    caches.match(request, { ignoreVary: true }).then(cached => {
       const network = fetch(request)
         .then(response => {
           if (response.ok) {

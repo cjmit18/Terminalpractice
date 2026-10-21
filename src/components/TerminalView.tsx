@@ -67,6 +67,16 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
   const [copied, setCopied] = useState(false);
   const [historyIndex, setHistoryIndex] = useState<number | null>(null);
   const [showBanner, setShowBanner] = useState(true);
+  // Commands for ArrowUp recall, kept apart from the screen so `clear` does not forget them
+  const [recall, setRecall] = useState<string[]>([]);
+  const seenIds = useRef(new Set<string>());
+
+  useEffect(() => {
+    const fresh = history.filter(h => !seenIds.current.has(h.id));
+    if (fresh.length === 0) return;
+    fresh.forEach(h => seenIds.current.add(h.id));
+    setRecall(prev => [...prev, ...fresh.map(h => h.command)]);
+  }, [history]);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -98,7 +108,8 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
       historyNext();
-    } else if (e.key === 'Tab') {
+    } else if (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && /^\S+$/.test(input.trimStart())) {
+      // Tab completes a partly typed command name; on an empty line or after it, Tab moves focus as usual
       e.preventDefault();
       completeCommand();
     } else if (e.ctrlKey && e.key.toLowerCase() === 'c') {
@@ -114,21 +125,21 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
   };
 
   const historyPrev = () => {
-    if (history.length === 0) return;
-    const newIndex = historyIndex === null ? history.length - 1 : Math.max(0, historyIndex - 1);
+    if (recall.length === 0) return;
+    const newIndex = historyIndex === null ? recall.length - 1 : Math.max(0, historyIndex - 1);
     setHistoryIndex(newIndex);
-    setInput(history[newIndex].command);
+    setInput(recall[newIndex]);
   };
 
   const historyNext = () => {
     if (historyIndex === null) return;
     const newIndex = historyIndex + 1;
-    if (newIndex >= history.length) {
+    if (newIndex >= recall.length) {
       setHistoryIndex(null);
       setInput('');
     } else {
       setHistoryIndex(newIndex);
-      setInput(history[newIndex].command);
+      setInput(recall[newIndex]);
     }
   };
 
@@ -220,7 +231,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
     'h-9 min-w-9 px-2.5 inline-flex items-center justify-center rounded-sm bg-term-bg border border-term-line text-term-text text-[13px] font-mono active:bg-term-line shrink-0';
 
   return (
-    <div className="flex flex-col h-full min-h-0 w-full rounded-md overflow-hidden bg-term-bg border border-term-line text-term-text focus-within:border-term-muted">
+    <div className="flex flex-col h-full min-h-0 w-full rounded-md overflow-hidden bg-term-bg border border-term-line text-term-text focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-accent">
       {/* Tab bar: which shell, on which machine */}
       <div className="flex items-center justify-between gap-3 h-11 sm:h-10 pl-3 pr-1 bg-term-bar border-b border-term-line shrink-0">
         <div className="flex items-baseline gap-2 min-w-0 text-sm">
@@ -269,6 +280,13 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
                 )}
                 {item.errorOutput && (
                   <pre className="whitespace-pre-wrap break-words font-mono text-term-error">{item.errorOutput}</pre>
+                )}
+                {/* A learning note, not shell output: set apart in the UI font so it never reads as part of the terminal */}
+                {item.explanation && (
+                  <p className="mt-1 mb-2 border-l-2 border-term-line pl-3 font-sans text-[13px] leading-relaxed text-term-muted whitespace-pre-line">
+                    <span className="font-medium text-term-text">Why: </span>
+                    {item.explanation}
+                  </p>
                 )}
               </div>
             );

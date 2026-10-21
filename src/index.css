@@ -49,7 +49,7 @@
   --surface: #ffffff;
   --surface-2: #efefeb;
   --line: #e0e0da;
-  --line-strong: #c9c9c1;
+  --line-strong: #8a8c83;
   --text: #1f2328;
   --muted: #59606a;
   --subtle: #80868f;
@@ -72,7 +72,7 @@
     --surface: #171a1f;
     --surface-2: #1d2127;
     --line: #2a2f36;
-    --line-strong: #3a4049;
+    --line-strong: #646c78;
     --text: #e4e6e9;
     --muted: #a0a7b1;
     --subtle: #747c87;
@@ -93,7 +93,7 @@
   --surface: #171a1f;
   --surface-2: #1d2127;
   --line: #2a2f36;
-  --line-strong: #3a4049;
+  --line-strong: #646c78;
   --text: #e4e6e9;
   --muted: #a0a7b1;
   --subtle: #747c87;
@@ -148,6 +148,11 @@
 .terminal-scrollbar::-webkit-scrollbar-thumb {
   background: #3a3f46;
   border-radius: 4px;
+}
+/* Firefox, and a visible thumb so clipped lines in lesson code blocks are discoverable */
+.terminal-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #6b7280 transparent;
 }
 
 @media (prefers-reduced-motion: reduce) {

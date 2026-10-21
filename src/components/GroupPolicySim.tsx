@@ -1,166 +1,155 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { SystemState } from '../types/terminal';
-import { Shield, RefreshCw, FileText, CheckCircle2, ChevronRight, Settings } from 'lucide-react';
+import { Ban, CheckCircle2, FileText, Folder, Network, RefreshCw, Trees } from 'lucide-react';
+import { Button, ConsoleTree, SimPanel, SimToolbar, StatusText, TreeNode, thClass } from './sims/ui';
 
 interface GroupPolicySimProps {
   systemState: SystemState;
   onRunGpUpdate?: () => void;
 }
 
+const DOMAIN = 'corp.local';
+
 export const GroupPolicySim: React.FC<GroupPolicySimProps> = ({
   systemState,
   onRunGpUpdate,
 }) => {
   const [selectedGpoId, setSelectedGpoId] = useState<string>(systemState.gpos[0]?.id || '');
-  const [lastUpdated, setLastUpdated] = useState<string>('10:28:44 AM');
+  const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [updating, setUpdating] = useState(false);
+  const timer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
 
   const selectedGpo = systemState.gpos.find(g => g.id === selectedGpoId) || systemState.gpos[0];
 
   const handleForceUpdate = () => {
     setUpdating(true);
-    setTimeout(() => {
+    timer.current = window.setTimeout(() => {
       setUpdating(false);
-      const now = new Date();
-      setLastUpdated(now.toLocaleTimeString());
+      setLastUpdated(new Date().toLocaleTimeString());
       onRunGpUpdate?.();
     }, 600);
   };
 
+  const tree: TreeNode[] = [
+    { id: 'forest', label: `Forest: ${DOMAIN}`, depth: 0, icon: Trees, selectable: false },
+    { id: 'domains', label: 'Domains', depth: 1, icon: Folder, selectable: false },
+    { id: 'domain', label: DOMAIN, depth: 2, icon: Network, selectable: false },
+    { id: 'gpos', label: 'Group Policy Objects', depth: 3, icon: Folder, selectable: false },
+    ...systemState.gpos.map(g => ({ id: g.id, label: g.name, depth: 4, icon: FileText })),
+  ];
+
   return (
-    <div className="flex flex-col h-full bg-slate-900/90 border border-slate-800 rounded-xl overflow-hidden shadow-xl text-xs font-sans">
-      {/* GPMC Title Bar */}
-      <div className="flex items-center justify-between px-4 py-2.5 bg-slate-950 border-b border-slate-800">
-        <div className="flex items-center gap-2">
-          <Settings className="w-4 h-4 text-cyan-400" />
-          <span className="font-semibold text-slate-200">Group Policy Management Console (GPMC) - [CORP.LOCAL]</span>
-        </div>
-        <button
-          onClick={handleForceUpdate}
-          disabled={updating}
-          className="flex items-center gap-1.5 px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 text-cyan-300 font-medium border border-slate-700 transition-colors text-xs"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${updating ? 'animate-spin text-cyan-400' : ''}`} />
-          <span>gpupdate /force</span>
-        </button>
-      </div>
+    <SimPanel label="Group Policy Management">
+      <SimToolbar title="Group Policy Management" context={`Domain ${DOMAIN}`}>
+        <Button variant="secondary" onClick={handleForceUpdate} disabled={updating}>
+          <RefreshCw className="h-4 w-4" aria-hidden />
+          {updating ? 'Updating…' : <>Run <span className="font-mono">gpupdate /force</span></>}
+        </Button>
+      </SimToolbar>
 
-      <div className="flex flex-1 overflow-hidden">
-        {/* Left GPO Tree */}
-        <div className="w-60 border-r border-slate-800 bg-slate-950/60 p-3 overflow-y-auto space-y-1">
-          <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2">
-            Group Policy Objects
-          </div>
-          {systemState.gpos.map((gpo) => (
-            <button
-              key={gpo.id}
-              onClick={() => setSelectedGpoId(gpo.id)}
-              className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-left transition-colors ${
-                selectedGpoId === gpo.id
-                  ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-medium'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
-              }`}
-            >
-              <div className="flex items-center gap-2 truncate">
-                <FileText className="w-3.5 h-3.5 shrink-0 text-cyan-400" />
-                <span className="truncate">{gpo.name}</span>
-              </div>
-              <ChevronRight className="w-3 h-3 text-slate-500 shrink-0" />
-            </button>
-          ))}
+      <div className="flex min-h-0 flex-1 flex-col @2xl:flex-row">
+        {systemState.gpos.length > 0 && (
+          <ConsoleTree
+            id="gpmc-gpo"
+            label="Group Policy Object"
+            nodes={tree}
+            selectedId={selectedGpo?.id ?? ''}
+            onSelect={setSelectedGpoId}
+          />
+        )}
 
-          <div className="pt-4 border-t border-slate-800 mt-4">
-            <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2">
-              LSDOU Inheritance
-            </div>
-            <div className="p-2.5 rounded bg-slate-900 border border-slate-800 space-y-1.5 text-[11px] text-slate-400">
-              <div className="flex items-center justify-between">
-                <span>1. Local GPO</span>
-                <span className="text-slate-400">Lowest</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span>2. Site Level</span>
-                <span className="text-slate-400">Normal</span>
-              </div>
-              <div className="flex items-center justify-between font-semibold text-cyan-400">
-                <span>3. Domain Level</span>
-                <span>Inherited</span>
-              </div>
-              <div className="flex items-center justify-between font-bold text-emerald-400">
-                <span>4. Org Unit (OU)</span>
-                <span>Highest</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Right Policy Settings Inspector */}
-        <div className="flex-1 flex flex-col overflow-hidden bg-slate-900/40 p-4">
-          {selectedGpo && (
-            <div className="space-y-4 overflow-y-auto">
+        <div className="min-h-0 min-w-0 flex-1 space-y-6 overflow-y-auto px-4 py-4">
+          {selectedGpo ? (
+            <>
               <div>
-                <div className="flex items-center justify-between mb-1">
-                  <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
-                    <Shield className="w-4 h-4 text-cyan-400" />
-                    <span>{selectedGpo.name}</span>
-                  </h3>
-                  <span className="px-2 py-0.5 rounded text-[11px] font-mono bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-                    Status: {selectedGpo.status}
-                  </span>
-                </div>
-                <p className="text-slate-400 text-[11px] font-mono">
-                  GPO GUID: {selectedGpo.id} | Linked OUs: {selectedGpo.linkedOUs.join(', ')}
-                </p>
+                <h3 className="text-base font-semibold">{selectedGpo.name}</h3>
+                <dl className="mt-2 grid grid-cols-1 gap-x-6 gap-y-1.5 text-sm @xl:grid-cols-[auto_1fr]">
+                  <dt className="text-muted">Status</dt>
+                  <dd>
+                    {selectedGpo.status === 'Enabled' ? (
+                      <StatusText tone="ok" icon={CheckCircle2}>Enabled</StatusText>
+                    ) : (
+                      <StatusText tone="muted" icon={Ban}>Disabled</StatusText>
+                    )}
+                  </dd>
+                  <dt className="text-muted">Linked to</dt>
+                  <dd className="font-mono">{selectedGpo.linkedOUs.join(', ') || 'Not linked'}</dd>
+                  <dt className="text-muted">Unique ID</dt>
+                  <dd className="break-all font-mono text-muted">{selectedGpo.id}</dd>
+                </dl>
               </div>
 
-              {/* Table of GPO Settings */}
-              <div className="rounded-lg border border-slate-800 overflow-hidden bg-slate-950/50">
-                <div className="px-3 py-2 bg-slate-900/80 border-b border-slate-800 font-semibold text-slate-300 text-xs">
-                  Computer Configuration Policies & Security Options
-                </div>
-                <table className="w-full text-left text-xs">
-                  <thead>
-                    <tr className="border-b border-slate-800 text-slate-400 text-[11px]">
-                      <th className="py-2 px-3">Policy Area</th>
-                      <th className="py-2 px-3">Setting Name</th>
-                      <th className="py-2 px-3">Enforced Value</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/40 text-slate-300">
-                    {selectedGpo.settings.map((item, idx) => (
-                      <tr key={idx} className="hover:bg-slate-900/40">
-                        <td className="py-2 px-3 text-slate-400 font-mono text-[11px]">{item.category}</td>
-                        <td className="py-2 px-3 font-medium text-slate-200">{item.setting}</td>
-                        <td className="py-2 px-3">
-                          <span className="px-2 py-0.5 rounded bg-blue-500/10 text-blue-300 border border-blue-500/20 font-mono text-[11px]">
-                            {item.value}
-                          </span>
-                        </td>
+              <div>
+                <h4 className="text-sm font-semibold">Settings</h4>
+                <div className="mt-2 overflow-x-auto rounded-md border border-line">
+                  <table className="w-full border-collapse text-sm">
+                    <caption className="sr-only">Settings in {selectedGpo.name}</caption>
+                    <thead>
+                      <tr className="border-b border-line bg-surface-2">
+                        <th scope="col" className={thClass}>Policy</th>
+                        <th scope="col" className={thClass}>Setting</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Resultant Set of Policy (RSoP) live state */}
-              <div className="p-3 rounded-lg bg-slate-950 border border-slate-800 space-y-2">
-                <div className="flex items-center justify-between text-xs font-semibold text-slate-200">
-                  <span className="flex items-center gap-1.5">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                    Resultant Set of Policy (RSoP) Status
-                  </span>
-                  <span className="text-[11px] font-mono text-slate-400">
-                    Last sync: {lastUpdated}
-                  </span>
+                    </thead>
+                    <tbody>
+                      {selectedGpo.settings.map((item, idx) => (
+                        <tr key={idx} className="border-b border-line last:border-b-0">
+                          <th scope="row" className="px-3 py-2 text-left font-normal">
+                            <div>{item.setting}</div>
+                            <div className="text-xs text-muted">{item.category.replace(/\//g, ' › ')}</div>
+                          </th>
+                          <td className="px-3 py-2 align-top font-medium">{item.value}</td>
+                        </tr>
+                      ))}
+                      {selectedGpo.settings.length === 0 && (
+                        <tr>
+                          <td colSpan={2} className="px-3 py-4 text-center text-muted">
+                            No settings are configured in this policy.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
                 </div>
-                <p className="text-[11px] text-slate-400 leading-relaxed">
-                  Both computer and user policies were applied with zero GPO conflicts. Client WIN-CLIENT01 complies with the active security baseline.
-                </p>
               </div>
-            </div>
+            </>
+          ) : (
+            <p className="text-muted">There are no Group Policy Objects in this domain.</p>
           )}
+
+          <div role="status" aria-live="polite" className="text-sm">
+            {lastUpdated ? (
+              <StatusText tone="ok" icon={CheckCircle2}>
+                Computer and user policy refreshed on {systemState.hostname} at {lastUpdated}.
+              </StatusText>
+            ) : (
+              <span className="text-muted">
+                Policy has not been refreshed in this session. Clients pick up changes every 90 minutes or so, or right
+                away with <code className="rounded-sm bg-surface-2 px-1">gpupdate /force</code>.
+              </span>
+            )}
+          </div>
+
+          <div className="border-t border-line pt-4 text-sm">
+            <div className="max-w-prose">
+            <h4 className="font-semibold">Processing order</h4>
+            <p className="mt-1 text-muted">
+              Policies apply in this order, and when two set the same thing, the later one wins:
+            </p>
+            <ol className="mt-2 list-decimal space-y-0.5 pl-5">
+              <li>Local policy on the computer</li>
+              <li>Site</li>
+              <li>Domain</li>
+              <li>Organizational unit, parent first, then child</li>
+            </ol>
+            <p className="mt-2 text-muted">
+              The exam calls this LSDOU. <span className="font-medium text-text">Enforced</span> on a link and{' '}
+              <span className="font-medium text-text">Block Inheritance</span> on an OU change it.
+            </p>
+            </div>
+          </div>
         </div>
       </div>
-    </div>
+    </SimPanel>
   );
 };

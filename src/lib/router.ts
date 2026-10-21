@@ -2,21 +2,23 @@ import { useEffect, useState } from 'react';
 
 /**
  * Hash routes:
+ *   #/learn, #/learn/<pathId>, #/learn/<pathId>/<stepId>,
  *   #/linux, #/linux/<moduleId>, #/windows, #/windows/<moduleId>,
  *   #/simulators, #/sandbox, #/reference
- * Anything else falls back to #/linux.
+ * Anything else falls back to #/learn.
  */
 
-export type Section = 'linux' | 'windows' | 'simulators' | 'sandbox' | 'reference';
+export type Section = 'learn' | 'linux' | 'windows' | 'simulators' | 'sandbox' | 'reference';
 export type TrackSection = 'linux' | 'windows';
 
 export type Route =
+  | { section: 'learn'; pathId: string | null; stepId: string | null }
   | { section: TrackSection; moduleId: string | null }
   | { section: 'simulators' | 'sandbox' | 'reference' };
 
-export const DEFAULT_ROUTE: Route = { section: 'linux', moduleId: null };
+export const DEFAULT_ROUTE: Route = { section: 'learn', pathId: null, stepId: null };
 
-const SECTIONS: Section[] = ['linux', 'windows', 'simulators', 'sandbox', 'reference'];
+const SECTIONS: Section[] = ['learn', 'linux', 'windows', 'simulators', 'sandbox', 'reference'];
 
 export function isTrackSection(section: Section): section is TrackSection {
   return section === 'linux' || section === 'windows';
@@ -34,6 +36,10 @@ export function parseHash(hash: string): Route | null {
   if (parts.length === 0) return null;
   const section = parts[0] as Section;
   if (!SECTIONS.includes(section)) return null;
+  if (section === 'learn') {
+    if (parts.length > 3) return null;
+    return { section, pathId: parts[1] ?? null, stepId: parts[2] ?? null };
+  }
   if (isTrackSection(section)) {
     if (parts.length > 2) return null;
     return { section, moduleId: parts[1] ?? null };
@@ -43,10 +49,23 @@ export function parseHash(hash: string): Route | null {
 }
 
 export function routeHref(route: Route): string {
+  if (route.section === 'learn') {
+    const segs = ['learn'];
+    if (route.pathId) {
+      segs.push(encodeURIComponent(route.pathId));
+      if (route.stepId) segs.push(encodeURIComponent(route.stepId));
+    }
+    return `#/${segs.join('/')}`;
+  }
   if ('moduleId' in route && route.moduleId) {
     return `#/${route.section}/${encodeURIComponent(route.moduleId)}`;
   }
   return `#/${route.section}`;
+}
+
+/** Shorthand for learning path links. */
+export function learnHref(pathId?: string | null, stepId?: string | null): string {
+  return routeHref({ section: 'learn', pathId: pathId ?? null, stepId: pathId ? stepId ?? null : null });
 }
 
 export function sameRoute(a: Route, b: Route): boolean {
