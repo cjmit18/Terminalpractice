@@ -149,6 +149,11 @@
   background: #3a3f46;
   border-radius: 4px;
 }
+/* Firefox, and a visible thumb so clipped lines in lesson code blocks are discoverable */
+.terminal-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #6b7280 transparent;
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

@@ -106,7 +106,7 @@ const LessonCode: React.FC<{ code: string; shell?: 'bash' | 'cmd' | 'powershell'
   return (
     <figure className="space-y-1.5">
       <div className="flex items-start gap-2 rounded-md bg-surface-2 py-1 pl-4 pr-1">
-        <pre className="min-w-0 flex-1 overflow-x-auto py-2 font-mono text-sm leading-relaxed">
+        <pre className="min-w-0 flex-1 overflow-x-auto terminal-scrollbar py-2 font-mono text-sm leading-relaxed">
           {shell ? (
             <code>
               <span className="select-none text-muted">{PROMPTS[shell]} </span>
