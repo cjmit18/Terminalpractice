@@ -90,8 +90,7 @@ test('a permission error explains why', async ({ page }) => {
 });
 
 test('keyboard users can Tab out of the terminal prompt', async ({ page, isMobile }) => {
-  // App bug: TerminalView's onKeyDown calls preventDefault on every Tab (and Shift+Tab) for command
-  // completion, and the prompt has autoFocus, so keyboard focus is trapped in it on every lab page.
+  // Tab completes a partly typed command name; Shift+Tab (and Tab on an empty line) must leave the prompt
   test.skip(isMobile, 'keyboard navigation');
   await page.goto(PERMISSIONS_LAB);
   await expect(commandInput(page)).toBeFocused();
@@ -100,8 +99,7 @@ test('keyboard users can Tab out of the terminal prompt', async ({ page, isMobil
 });
 
 test('walkthrough steps run in the shell they are written for', async ({ page, isMobile }) => {
-  // App bug: ModuleRunner runs walkthrough steps in the shell picked in the header, so after
-  // switching the AD lab to Command Prompt, Run sends PowerShell cmdlets to cmd and they fail.
+  // Walkthrough steps are written for the lab's default shell, even if the header picked the other one
   test.skip(isMobile, 'same code path on both projects');
   await page.goto('#/windows/win-pbq-active-directory-mgmt');
   await page.getByRole('group', { name: 'Shell' }).filter({ visible: true }).getByRole('button', { name: 'Command Prompt' }).click();
@@ -110,4 +108,14 @@ test('walkthrough steps run in the shell they are written for', async ({ page, i
   await expect(terminalLog(page)).not.toContainText('is not recognized');
   await page.getByRole('tab', { name: 'Tasks' }).click();
   await expect(page.getByText('1 of 3 done')).toBeVisible();
+});
+
+test('clear in a command chain keeps the output that comes after it', async ({ page }) => {
+  await page.goto(PERMISSIONS_LAB);
+  await showTerminal(page);
+  await runCommand(page, 'echo before');
+  await runCommand(page, 'clear; echo hello; cat missing-file');
+  await expect(terminalLog(page)).not.toContainText('before');
+  await expect(terminalLog(page)).toContainText('hello');
+  await expect(terminalLog(page)).toContainText('missing-file: No such file or directory');
 });

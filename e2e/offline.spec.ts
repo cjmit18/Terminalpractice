@@ -54,4 +54,9 @@ test('after the first visit the app loads offline', async ({ page, context }) =>
   await context.setOffline(true);
   await page.reload();
   await expectAppOffline(page);
+  // Lazily loaded pages that were never opened online still open (their chunks are precached)
+  for (const [route, heading] of [['#/sandbox', /sandbox/i], ['#/reference', 'Command reference'], ['#/simulators', 'Simulators']] as const) {
+    await page.goto(route);
+    await expect(page.getByRole('heading', { level: 1, name: heading })).toBeVisible();
+  }
 });

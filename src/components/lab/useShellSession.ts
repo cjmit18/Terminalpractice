@@ -16,7 +16,8 @@ export interface ShellSession {
 }
 
 export function createSession(fs: FileNode, state: SystemState, cwd: string): ShellSession {
-  return { fs, state, cwd, history: [], diskpartActive: false, lastResult: undefined };
+  // Own copies, so nothing a session does can leak into a lab's or the sandbox's starting point
+  return { fs: structuredClone(fs), state: structuredClone(state), cwd, history: [], diskpartActive: false, lastResult: undefined };
 }
 
 // `clear` and `cls` answer with the ANSI "erase display" sequence
@@ -50,8 +51,12 @@ export function runLine(session: ShellSession, line: string, shell: TerminalShel
 
   const lastResult: CommandContext = { command: line, exitCode, stdout };
 
+  // `clear` wipes the screen, but output after it in the same line (`clear; echo hi`) and errors still show
+  let previous = session.history;
   if (stdout.includes(CLEAR_SCREEN)) {
-    return { ...next, history: [], lastResult };
+    previous = [];
+    stdout = stdout.slice(stdout.lastIndexOf(CLEAR_SCREEN) + CLEAR_SCREEN.length).replace(/^\x1b\[[0-9;]*H/, '').replace(/^\r?\n/, '');
+    if (!stdout && !stderr) return { ...next, history: [], lastResult };
   }
 
   const entry: TerminalLine = {
@@ -69,7 +74,7 @@ export function runLine(session: ShellSession, line: string, shell: TerminalShel
     inDiskpart,
   };
 
-  return { ...next, history: [...session.history, entry], lastResult };
+  return { ...next, history: [...previous, entry], lastResult };
 }
 
 /**
