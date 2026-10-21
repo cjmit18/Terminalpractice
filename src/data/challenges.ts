@@ -50,7 +50,8 @@ function dataRows(stdout: string, header: RegExp): string[] {
 }
 
 const PS_SERVICE_HEADER = /^\s*Status\s+Name\s+DisplayName\s*$/;
-const PS_PROCESS_HEADER = /^\s*NPM\(K\)\s/;
+// Windows PowerShell 5.1's Get-Process view starts with Handles; older output started with NPM(K)
+const PS_PROCESS_HEADER = /^\s*(Handles\s+)?NPM\(K\)\s/;
 const TASKLIST_HEADER = /^\s*Image Name\s+PID\b/;
 
 export const CHALLENGES: Challenge[] = [

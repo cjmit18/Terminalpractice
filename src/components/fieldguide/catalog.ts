@@ -59,7 +59,7 @@ const CMD_AREAS: [string, string[]][] = [
 ];
 
 const PS_AREAS: [string, string[]][] = [
-  ['Files and folders', ['get-childitem', 'get-content', 'get-location', 'set-location', 'new-item', 'copy-item', 'remove-item', 'mkdir']],
+  ['Files and folders', ['get-childitem', 'get-content', 'get-location', 'set-location', 'cd..', 'cd\\', 'new-item', 'copy-item', 'remove-item', 'mkdir']],
   [
     'Filtering and output',
     ['write-output', 'sort-object', 'where-object', 'select-object', 'select-string', 'measure-object', 'format-table', 'format-list', 'out-null', 'clear-host'],
