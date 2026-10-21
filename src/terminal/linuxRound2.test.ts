@@ -266,3 +266,30 @@ test('A9: the lab clock: date, new files and new home directories are on Mon 19 
   assert.equal(LAB_DAY * MS_PER_DAY, Date.UTC(2026, 9, 19));
   assert.ok(labNow().getTime() >= LAB_DATE);
 });
+
+test('A9: $(( )) is 64-bit, takes any base and has bash\'s full operator set', () => {
+  const run = linuxSession();
+  assert.equal(run('echo $((0x10)) $((010)) $((2#101)) $((16#ff)) $((36#z)) $((64#@)) $((0X1f))').stdout, '16 8 5 255 35 62 31');
+  assert.equal(run('echo $((2**63)) $((2**64)) $((9223372036854775807 + 1)) $((-9223372036854775807 - 2))').stdout,
+    '-9223372036854775808 0 -9223372036854775808 9223372036854775807');
+  assert.equal(run('echo $((1 << 4)) $((256 >> 2)) $((6 & 3)) $((6 | 3)) $((6 ^ 3)) $((~5)) $((!0))').stdout, '16 64 2 7 5 -6 1');
+  assert.equal(run('echo $((1 + 2 * 3 ** 2)) $((-7 / 2)) $((-7 % 3)) $((2 ** 3 ** 2))').stdout, '19 -3 -1 512');
+  assert.equal(run('echo $((5 > 3 ? 10 : 20)) $((1 ? 2 ? 3 : 4 : 5)) $(( 1 & 2 | 4 ^ 5 )) $((1,2))').stdout, '10 3 1 2');
+  assert.equal(run('x=0x10; echo $((x + 1))').stdout, '17');
+  assert.equal(run('i=3; echo $((i++)) $i $((++i)) $((i+=10)) $((i<<=1))').stdout, '3 4 5 15 30');
+  assert.equal(run('e="2+3"; echo $((e*2))').stdout, '10');
+  assert.equal(run('echo $((0 && 1/0)) $((1 || 1/0)) $((1 ? 2 : 1/0))').stdout, '0 1 2');
+  const errors: [string, string][] = [
+    ['echo $((08))', 'bash: 08: value too great for base (error token is "08")'],
+    ['echo $((1 2))', 'bash: 1 2: syntax error in expression (error token is "2")'],
+    ['echo $((1 +))', 'bash: 1 +: syntax error: operand expected (error token is "+")'],
+    ['echo $((5/0))', 'bash: 5/0: division by 0 (error token is "0")'],
+    ['echo $((2**-1))', 'bash: 2**-1: exponent less than 0 (error token is "1")'],
+    ['echo $((65#1))', 'bash: 65#1: invalid arithmetic base (error token is "65#1")'],
+  ];
+  for (const [line, err] of errors) {
+    const res = run(line);
+    assert.equal(res.stderr, err, line);
+    assert.equal(res.exitCode, 1, line);
+  }
+});

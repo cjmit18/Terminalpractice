@@ -771,7 +771,7 @@ function paramValue(p: Extract<WordPart, { k: 'param' }>, ex: Expander): string 
 function partValue(part: Exclude<WordPart, { k: 'lit' } | { k: 'tilde' }>, ex: Expander): string {
   if (part.k === 'param') return paramValue(part, ex);
   if (part.k === 'cmd') return ex.substitute(part.src).replace(/\n+$/, '');
-  return String(evalArithmetic(part.src, ex));
+  return String(evalArithmeticBig(part.src, ex));
 }
 
 /**
@@ -829,90 +829,236 @@ export function expandToString(word: Word, ex: Expander): string {
 
 // ---------- arithmetic ----------
 
-/** Evaluates $(( ... )) with integer math: + - * / % **, comparisons, && || !, parentheses, variables. */
-export function evalArithmetic(src: string, ex: Expander): number {
+const wrap = (n: bigint) => BigInt.asIntN(64, n);
+const DIGITS = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ@_';
+
+/**
+ * A bash integer constant: 0x1f (hex), 017 (octal), 2#101 (base 2 to 64) or decimal.
+ * Returns null when a digit is too large for the base.
+ */
+function parseIntegerConstant(t: string): bigint | null {
+  let base = 10;
+  let digits = t;
+  const based = t.match(/^(\d+)#(.*)$/);
+  if (based) {
+    base = Number(based[1]);
+    digits = based[2];
+    if (base < 2 || base > 64) return null;
+  } else if (/^0[xX]/.test(t)) {
+    base = 16;
+    digits = t.slice(2);
+  } else if (t.length > 1 && t[0] === '0') {
+    base = 8;
+    digits = t.slice(1);
+  }
+  let n = 0n;
+  for (const ch of digits) {
+    let d = DIGITS.indexOf(base <= 36 ? ch.toLowerCase() : ch);
+    if (base <= 36 && d >= 36) d = -1;
+    if (d < 0 || d >= base) return null;
+    n = wrap(n * BigInt(base) + BigInt(d));
+  }
+  return n;
+}
+
+const ARITH_TOKEN = /\d+#[0-9A-Za-z@_]*|0[xX][0-9A-Fa-f]*|\d[0-9A-Za-z_]*|[A-Za-z_]\w*|<<=|>>=|\*\*|<<|>>|<=|>=|==|!=|&&|\|\||\+\+|--|[-+*/%&^|]=|[-+*/%()<>!~^&|?:=,]|\S/g;
+
+/**
+ * Evaluates $(( ... )) the way bash does: 64-bit signed integers that wrap around, constants in
+ * any base, variables (whose values are themselves evaluated), assignment operators, ++/--,
+ * the comma, ternary, logical, bitwise, comparison, shift and arithmetic operators.
+ */
+export function evalArithmeticBig(src: string, ex: Expander, level = 0): bigint {
   // $VAR and ${VAR} inside are expanded first; bare names are read as variables
   const text = src.replace(/\$\{?([A-Za-z_]\w*|[0-9?$#])\}?/g, (_, n) => ex.lookup(n) ?? '0');
-  const toks = text.match(/\d+|[A-Za-z_]\w*|\*\*|<=|>=|==|!=|&&|\|\||<<|>>|[-+*/%()<>!~^&|]|\S/g) ?? [];
+  const toks = text.match(ARITH_TOKEN) ?? [];
+  const expr0 = src.trim();
   let pos = 0;
-  const fail = (): never => {
+  let noeval = 0;
+  const err = (what: string, token: string): never => {
+    throw new ExpansionError(`bash: ${expr0}: ${what} (error token is "${token}")`);
+  };
+  const operandExpected = (): never => {
     const rest = toks.slice(pos).join(' ').trim() || toks[toks.length - 1] || '';
-    throw new ExpansionError(`bash: ${src.trim()}: syntax error: operand expected (error token is "${rest}")`);
+    return err('syntax error: operand expected', rest);
   };
   const peek = () => toks[pos];
-  const value = (t: string): number => {
-    if (/^\d+$/.test(t)) return parseInt(t, 10);
-    const v = ex.lookup(t);
-    const n = parseInt(v ?? '0', 10);
-    return isNaN(n) ? 0 : n;
-  };
-  let level = 0;
   const nested = <T>(fn: () => T): T => {
-    if (++level > MAX_ARITH_DEPTH) {
-      const rest = toks.slice(pos).join('');
-      throw new ExpansionError(`bash: ${src.trim()}: expression recursion level exceeded (error token is "${rest}")`);
-    }
+    if (++level > MAX_ARITH_DEPTH) err('expression recursion level exceeded', toks.slice(pos).join(''));
     try { return fn(); } finally { level--; }
   };
-  const primary = (): number => {
-    const t = toks[pos++];
-    if (t === undefined) return fail();
-    if (t === '(') return nested(() => { const v = expr(); if (toks[pos++] !== ')') fail(); return v; });
-    if (t === '-') return nested(() => -unary());
-    if (t === '+') return nested(() => unary());
-    if (t === '!') return nested(() => (unary() ? 0 : 1));
-    if (t === '~') return nested(() => ~unary());
-    if (/^(\d+|[A-Za-z_]\w*)$/.test(t)) return value(t);
-    pos--;
-    return fail();
+  const isName = (t: string | undefined) => !!t && /^[A-Za-z_]\w*$/.test(t);
+  const readVar = (name: string): bigint => {
+    const v = (ex.lookup(name) ?? '').trim();
+    if (v === '') return 0n;
+    const n = parseIntegerConstant(v.replace(/^[-+]/, ''));
+    if (n !== null && /^[-+]?\w+(#\w*)?$/.test(v)) return v.startsWith('-') ? wrap(-n) : n;
+    // A variable may hold an expression of its own
+    return nested(() => evalArithmeticBig(v, ex, level));
   };
-  const unary = (): number => primary();
-  const power = (): number => {
+  const setVar = (name: string, v: bigint): bigint => {
+    if (!noeval) ex.assign(name, String(v));
+    return v;
+  };
+  const divide = (op: string, l: bigint, r: bigint): bigint => {
+    if (r === 0n) {
+      if (noeval) return 0n;
+      err('division by 0', toks[pos - 1] ?? '');
+    }
+    return wrap(op === '/' ? l / r : l % r);
+  };
+  const binary = (op: string, l: bigint, r: bigint): bigint => {
+    switch (op) {
+      case '*': return wrap(l * r);
+      case '/': case '%': return divide(op, l, r);
+      case '+': return wrap(l + r);
+      case '-': return wrap(l - r);
+      case '<<': return wrap(l << (r & 63n));
+      case '>>': return l >> (r & 63n);
+      case '&': return l & r;
+      case '^': return l ^ r;
+      case '|': return l | r;
+      case '**': {
+        if (r < 0n) err('exponent less than 0', toks[pos - 1] ?? '');
+        let out = 1n;
+        for (let i = 0n; i < r && i < 64n; i++) out = wrap(out * l);
+        // beyond 64 squarings only 0, 1 and -1 stay meaningful
+        if (r >= 64n) out = l === 1n ? 1n : l === -1n ? (r % 2n ? -1n : 1n) : 0n;
+        return out;
+      }
+    }
+    return 0n;
+  };
+
+  const primary = (): bigint => {
+    const t = toks[pos++];
+    if (t === undefined) return operandExpected();
+    if (t === '(') return nested(() => { const v = comma(); if (toks[pos++] !== ')') { pos--; operandExpected(); } return v; });
+    if (t === '-') return nested(() => wrap(-unary()));
+    if (t === '+') return nested(() => unary());
+    if (t === '!') return nested(() => (unary() ? 0n : 1n));
+    if (t === '~') return nested(() => ~unary());
+    if ((t === '++' || t === '--') && isName(peek())) {
+      const name = toks[pos++];
+      return setVar(name, wrap(readVar(name) + (t === '++' ? 1n : -1n)));
+    }
+    if (/^\d/.test(t)) {
+      const base = t.match(/^(\d+)#/);
+      if (base && (Number(base[1]) < 2 || Number(base[1]) > 64)) err('invalid arithmetic base', t);
+      const n = parseIntegerConstant(t);
+      return n === null ? err('value too great for base', t) : n;
+    }
+    if (isName(t)) {
+      // name++ / name-- give the old value
+      if (peek() === '++' || peek() === '--') {
+        const op = toks[pos++];
+        const old = readVar(t);
+        setVar(t, wrap(old + (op === '++' ? 1n : -1n)));
+        return old;
+      }
+      return readVar(t);
+    }
+    pos--;
+    return operandExpected();
+  };
+  const unary = (): bigint => primary();
+  const power = (): bigint => {
     const base = unary();
-    if (peek() === '**') { pos++; return nested(() => base ** power()); }
+    if (peek() === '**') { pos++; const e = nested(() => power()); return binary('**', base, e); }
     return base;
   };
-  const mul = (): number => {
-    let v = power();
-    while (['*', '/', '%'].includes(peek())) {
+  const leftAssoc = (next: () => bigint, ops: string[]) => (): bigint => {
+    let v = next();
+    while (ops.includes(peek())) {
       const op = toks[pos++];
-      const r = power();
-      if ((op === '/' || op === '%') && r === 0) throw new ExpansionError(`bash: ${src.trim()}: division by 0 (error token is "${toks[pos - 1]}")`);
-      v = op === '*' ? v * r : op === '/' ? Math.trunc(v / r) : v % r;
+      v = binary(op, v, next());
     }
     return v;
   };
-  const add = (): number => {
-    let v = mul();
-    while (peek() === '+' || peek() === '-') v = toks[pos++] === '+' ? v + mul() : v - mul();
-    return v;
-  };
-  const cmp = (): number => {
-    let v = add();
+  const mul = leftAssoc(power, ['*', '/', '%']);
+  const add = leftAssoc(mul, ['+', '-']);
+  const shift = leftAssoc(add, ['<<', '>>']);
+  const cmp = (): bigint => {
+    let v = shift();
     while (['<', '>', '<=', '>='].includes(peek())) {
       const op = toks[pos++];
-      const r = add();
-      v = Number(op === '<' ? v < r : op === '>' ? v > r : op === '<=' ? v <= r : v >= r);
+      const r = shift();
+      v = (op === '<' ? v < r : op === '>' ? v > r : op === '<=' ? v <= r : v >= r) ? 1n : 0n;
     }
     return v;
   };
-  const eq = (): number => {
+  const eq = (): bigint => {
     let v = cmp();
-    while (peek() === '==' || peek() === '!=') v = Number(toks[pos++] === '==' ? v === cmp() : v !== cmp());
+    while (peek() === '==' || peek() === '!=') {
+      const op = toks[pos++];
+      const r = cmp();
+      v = (op === '==' ? v === r : v !== r) ? 1n : 0n;
+    }
     return v;
   };
-  const and = (): number => {
-    let v = eq();
-    while (peek() === '&&') { pos++; const r = eq(); v = Number(!!v && !!r); }
+  const band = leftAssoc(eq, ['&']);
+  const bxor = leftAssoc(band, ['^']);
+  const bor = leftAssoc(bxor, ['|']);
+  const land = (): bigint => {
+    let v = bor();
+    while (peek() === '&&') {
+      pos++;
+      if (!v) noeval++;
+      const r = bor();
+      if (!v) noeval--;
+      v = v && r ? 1n : 0n;
+    }
     return v;
   };
-  const expr = (): number => {
-    let v = and();
-    while (peek() === '||') { pos++; const r = and(); v = Number(!!v || !!r); }
+  const lor = (): bigint => {
+    let v = land();
+    while (peek() === '||') {
+      pos++;
+      if (v) noeval++;
+      const r = land();
+      if (v) noeval--;
+      v = v || r ? 1n : 0n;
+    }
     return v;
   };
-  if (toks.length === 0) return 0;
-  const result = expr();
-  if (pos < toks.length) fail();
-  return Math.trunc(result);
+  const ternary = (): bigint => {
+    const c = lor();
+    if (peek() !== '?') return c;
+    pos++;
+    if (!c) noeval++;
+    const a = nested(() => assignment());
+    if (!c) noeval--;
+    if (toks[pos++] !== ':') { pos--; err('`:\' expected for conditional expression', toks.slice(pos).join(' ')); }
+    if (c) noeval++;
+    const b = nested(() => ternary());
+    if (c) noeval--;
+    return c ? a : b;
+  };
+  const ASSIGN_OPS = ['=', '+=', '-=', '*=', '/=', '%=', '<<=', '>>=', '&=', '^=', '|='];
+  const assignment = (): bigint => {
+    if (isName(peek()) && ASSIGN_OPS.includes(toks[pos + 1])) {
+      const name = toks[pos];
+      const op = toks[pos + 1];
+      pos += 2;
+      const r = nested(() => assignment());
+      const v = op === '=' ? r : binary(op.slice(0, -1), readVar(name), r);
+      return setVar(name, v);
+    }
+    return ternary();
+  };
+  const comma = (): bigint => {
+    let v = assignment();
+    while (peek() === ',') { pos++; v = assignment(); }
+    return v;
+  };
+
+  if (toks.length === 0) return 0n;
+  const result = comma();
+  if (pos < toks.length) err('syntax error in expression', toks.slice(pos).join(' '));
+  return result;
+}
+
+/** $(( ... )) as a JavaScript number (for offsets and lengths). */
+export function evalArithmetic(src: string, ex: Expander): number {
+  return Number(evalArithmeticBig(src, ex));
 }
