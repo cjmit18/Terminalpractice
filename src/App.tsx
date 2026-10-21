@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { Suspense, lazy, useEffect, useRef, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { BottomNav, Header } from './components/Header';
 import { ModuleSelector } from './components/ModuleSelector';
@@ -14,6 +14,26 @@ import { Route, Section, TrackSection, isTrackSection, replaceRoute, routeHref, 
 import { Progress, countDone, loadProgress, saveProgress } from './lib/progress';
 import { useTheme } from './lib/theme';
 import { ALL_MODULES, TRACK_MODULES, TRACK_NAMES, topicLabel } from './lib/modules';
+import {
+  CompletionSource,
+  Journey,
+  QuizScore,
+  findStep,
+  labCheck,
+  loadJourney,
+  markRead,
+  recordQuizScore,
+  resetPath,
+  saveJourney,
+  stepTitle,
+  visit,
+} from './lib/journey';
+import { LEARNING_PATHS } from './data/paths';
+import { PathsList } from './components/journey/PathsList';
+import { PathOverview } from './components/journey/PathOverview';
+import { StepPage } from './components/journey/StepPage';
+
+const MODULES_BY_ID = new Map(ALL_MODULES.map(m => [m.id, m]));
 
 // Pages that are not needed for the first screen load on demand.
 const SimulatorsHub = lazy(() => import('./components/SimulatorsHub').then(m => ({ default: m.SimulatorsHub })));
@@ -23,6 +43,7 @@ const CommandEncyclopedia = lazy(() =>
 );
 
 const PAGE_TITLES: Record<Section, string> = {
+  learn: 'Learn',
   linux: 'Linux labs',
   windows: 'Windows labs',
   simulators: 'Simulators',
@@ -37,6 +58,12 @@ export default function App() {
   const [progress, setProgress] = useState<Progress>(() => loadProgress(ALL_MODULES));
   // The lab last open in each track, so coming back to a track returns you to it
   const [lastLab, setLastLab] = useState<Record<TrackSection, string | null>>({ linux: null, windows: null });
+  // The lab track used last, for the single Labs item in the phone nav
+  const [lastTrack, setLastTrack] = useState<TrackSection>('linux');
+  // Lessons read, quiz scores and the last step opened in the learning paths, saved in localStorage
+  const [journey, setJourney] = useState<Journey>(() => loadJourney(LEARNING_PATHS));
+  // The last learning page open this session, so the Learn link brings you back to it
+  const [lastLearnHref, setLastLearnHref] = useState<string | null>(null);
   const mainRef = useRef<HTMLElement>(null);
 
   // Shared state for the simulators hub
@@ -167,6 +194,39 @@ export default function App() {
   const activeModule = moduleId ? trackModules.find(m => m.id === moduleId) ?? null : null;
   const routeKey = routeHref(route);
 
+  // Learning path routes
+  const learnRoute = route.section === 'learn' ? route : null;
+  const activePath = learnRoute?.pathId ? LEARNING_PATHS.find(p => p.id === learnRoute.pathId) ?? null : null;
+  const activeStep = activePath && learnRoute?.stepId ? findStep(activePath, learnRoute.stepId) : null;
+  const src: CompletionSource = useMemo(
+    () => ({ journey, labComplete: labCheck(progress, ALL_MODULES) }),
+    [journey, progress],
+  );
+
+  // Unknown path -> the paths list; unknown step -> that path's overview
+  useEffect(() => {
+    if (!learnRoute) return;
+    if (learnRoute.pathId && !activePath) replaceRoute({ section: 'learn', pathId: null, stepId: null });
+    else if (activePath && learnRoute.stepId && !activeStep)
+      replaceRoute({ section: 'learn', pathId: activePath.id, stepId: null });
+  }, [learnRoute, activePath, activeStep]);
+
+  // Remember the last step opened (for "Continue where you left off") and the last learning page
+  useEffect(() => {
+    if (!learnRoute) return;
+    if (activePath && activeStep) setJourney(j => visit(j, activePath.id, activeStep.step.id));
+    else if (activePath && !learnRoute.stepId) setJourney(j => (j.last?.pathId === activePath.id ? j : visit(j, activePath.id, null)));
+    if (!learnRoute.pathId || activePath) setLastLearnHref(routeKey);
+  }, [routeKey, learnRoute, activePath, activeStep]);
+
+  useEffect(() => {
+    saveJourney(journey);
+  }, [journey]);
+
+  useEffect(() => {
+    if (track) setLastTrack(track);
+  }, [track]);
+
   // A lab id that does not exist (old link, typo) falls back to the track's catalog
   useEffect(() => {
     if (track && moduleId && !activeModule) replaceRoute({ section: track, moduleId: null });
@@ -181,9 +241,15 @@ export default function App() {
   // New page: start at the top, and name it in the tab title
   useEffect(() => {
     mainRef.current?.scrollTo({ top: 0 });
-    const parts = [activeModule ? `${topicLabel(activeModule)} ${activeModule.title}` : null, PAGE_TITLES[route.section], 'Terminus CertSim'];
+    const parts = [
+      activeModule ? `${topicLabel(activeModule)} ${activeModule.title}` : null,
+      activeStep ? stepTitle(activeStep.step, MODULES_BY_ID) : null,
+      activePath?.title,
+      PAGE_TITLES[route.section],
+      'Terminus CertSim',
+    ];
     document.title = parts.filter(Boolean).join(' · ');
-  }, [routeKey, activeModule, route.section]);
+  }, [routeKey, activeModule, activePath, activeStep, route.section]);
 
   useEffect(() => {
     saveProgress(progress);
@@ -195,6 +261,10 @@ export default function App() {
       return done.includes(objectiveId) ? prev : { ...prev, [moduleId]: [...done, objectiveId] };
     });
   };
+
+  const handleMarkRead = (pathId: string, stepId: string) => setJourney(j => markRead(j, pathId, stepId));
+  const handleQuizScore = (pathId: string, stepId: string, score: QuizScore) =>
+    setJourney(j => recordQuizScore(j, pathId, stepId, score));
 
   const resetTrackProgress = (t: TrackSection) => {
     setProgress(prev => {
@@ -211,6 +281,7 @@ export default function App() {
   const trackHref = (t: TrackSection) =>
     routeHref({ section: t, moduleId: track === t ? null : lastLab[t] });
   const hrefs: Record<Section, string> = {
+    learn: learnRoute || !lastLearnHref ? routeHref({ section: 'learn', pathId: null, stepId: null }) : lastLearnHref,
     linux: trackHref('linux'),
     windows: trackHref('windows'),
     simulators: routeHref({ section: 'simulators' }),
@@ -243,6 +314,33 @@ export default function App() {
       />
 
       <main id="main" ref={mainRef} tabIndex={-1} className="flex-1 min-h-0 overflow-y-auto focus:outline-none">
+        {learnRoute && !learnRoute.pathId && <PathsList paths={LEARNING_PATHS} src={src} modulesById={MODULES_BY_ID} />}
+
+        {activePath && !learnRoute?.stepId && (
+          <PathOverview
+            key={activePath.id}
+            path={activePath}
+            src={src}
+            modulesById={MODULES_BY_ID}
+            progress={progress}
+            onReset={() => setJourney(j => resetPath(j, activePath.id))}
+          />
+        )}
+
+        {activePath && activeStep && (
+          <StepPage
+            key={`${activePath.id}/${activeStep.step.id}`}
+            path={activePath}
+            loc={activeStep}
+            src={src}
+            modulesById={MODULES_BY_ID}
+            progress={progress}
+            onObjectiveComplete={handleObjectiveComplete}
+            onMarkRead={handleMarkRead}
+            onQuizScore={handleQuizScore}
+          />
+        )}
+
         {track && activeModule && (
           <div className="flex flex-col h-full">
             <LabBar track={track} module={activeModule} modules={trackModules} />
@@ -283,7 +381,7 @@ export default function App() {
         )}
       </main>
 
-      <BottomNav current={route.section} hrefs={hrefs} />
+      <BottomNav current={route.section} hrefs={hrefs} labsHref={hrefs[lastTrack]} />
     </div>
   );
 }

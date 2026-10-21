@@ -1,9 +1,14 @@
 import React from 'react';
 import { ArrowRight, Check } from 'lucide-react';
 import { ExamModule } from '../types/modules';
-import { TrackSection, routeHref } from '../lib/router';
+import { TrackSection, learnHref, routeHref } from '../lib/router';
 import { Progress } from '../lib/progress';
 import { TRACK_NAMES, moduleSummary, topicLabel } from '../lib/modules';
+import { labPlacements } from '../lib/journey';
+import { LEARNING_PATHS } from '../data/paths';
+
+// Which learning path steps use each lab (scanned once)
+const PLACEMENTS = labPlacements(LEARNING_PATHS);
 
 interface ModuleSelectorProps {
   track: TrackSection;
@@ -43,6 +48,7 @@ export const ModuleSelector: React.FC<ModuleSelectorProps> = ({ track, modules, 
 
   return (
     <div className="max-w-3xl mx-auto w-full px-4 sm:px-6 py-8 sm:py-12">
+      <TrackSwitch current={track} />
       <header className="space-y-3">
         <h1 className="text-2xl font-semibold text-text">{TRACK_NAMES[track]}</h1>
         <p className="text-[15px] text-muted max-w-prose">{INTRO[track]}</p>
@@ -92,8 +98,9 @@ export const ModuleSelector: React.FC<ModuleSelectorProps> = ({ track, modules, 
           const done = doneCount(mod);
           const total = mod.objectives.length;
           const complete = total > 0 && done === total;
+          const placements = PLACEMENTS.get(mod.id) ?? [];
           return (
-            <li key={mod.id} className="border-b border-line">
+            <li key={mod.id} className={`border-b border-line ${placements.length ? 'pb-4' : ''}`}>
               <a
                 href={routeHref({ section: track, moduleId: mod.id })}
                 className="group grid grid-cols-[3.75rem_1fr] sm:grid-cols-[5rem_1fr_auto] gap-x-4 gap-y-1 px-2 -mx-2 py-4 rounded-md hover:bg-surface-2 transition-colors"
@@ -121,6 +128,17 @@ export const ModuleSelector: React.FC<ModuleSelectorProps> = ({ track, modules, 
                   )}
                 </span>
               </a>
+              {placements.map(p => (
+                <p
+                  key={`${p.path.id}/${p.stepId}`}
+                  className="pl-[calc(3.75rem+1rem)] sm:pl-[calc(5rem+1rem)] -mt-2 text-sm text-muted"
+                >
+                  In{' '}
+                  <a href={learnHref(p.path.id, p.stepId)} className="text-accent underline-offset-2 hover:underline rounded-sm">
+                    {p.path.title}, stage {p.stageIndex + 1}: {p.stage.title}
+                  </a>
+                </p>
+              ))}
             </li>
           );
         })}
@@ -128,3 +146,27 @@ export const ModuleSelector: React.FC<ModuleSelectorProps> = ({ track, modules, 
     </div>
   );
 };
+
+/** Phones: the bottom nav has one Labs item, so the catalog switches between the two tracks here. */
+const TrackSwitch: React.FC<{ current: TrackSection }> = ({ current }) => (
+  <nav aria-label="Lab track" className="md:hidden -mt-2 mb-6">
+    <ul className="flex p-0.5 rounded-md border border-line bg-surface">
+      {(['linux', 'windows'] as const).map(t => {
+        const selected = t === current;
+        return (
+          <li key={t} className="flex-1">
+            <a
+              href={routeHref({ section: t, moduleId: null })}
+              aria-current={selected ? 'page' : undefined}
+              className={`flex items-center justify-center min-h-11 rounded-sm text-sm transition-colors ${
+                selected ? 'bg-accent-soft text-accent font-medium' : 'text-muted hover:text-text'
+              }`}
+            >
+              {TRACK_NAMES[t]}
+            </a>
+          </li>
+        );
+      })}
+    </ul>
+  </nav>
+);
