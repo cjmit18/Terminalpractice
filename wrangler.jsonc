@@ -7,10 +7,28 @@
   "build": {
     "command": "npm run build"
   },
-  // Static site only: no Worker script. Cloudflare serves dist/ from its edge.
+  // Account API (sign-in, sessions). Only /api/* reaches it; see run_worker_first below.
+  "main": "./worker/index.ts",
   "assets": {
     "directory": "./dist",
+    "binding": "ASSETS",
     // The app routes with #/ hashes, so this only matters for typed or stale paths: they get the app, not a 404
-    "not_found_handling": "single-page-application"
+    "not_found_handling": "single-page-application",
+    // Everything except the API is served straight from the edge without running Worker code
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "terminalpractice",
+      "database_id": "741adee3-13fb-48e7-90c1-34024d069bfa",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "vars": {
+    // Client ID of the GitHub App used for "Sign in with GitHub" (public, not a secret).
+    // The client secret is set separately: npx wrangler secret put GITHUB_CLIENT_SECRET
+    // While either is missing, the app hides "Sign in" and the API answers 503 for sign-in.
+    "GITHUB_CLIENT_ID": ""
   }
 }
