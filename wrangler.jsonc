@@ -39,8 +39,8 @@
     "d1_databases": [
       {
         "binding": "DB",
-        "database_name": "terminalpractice-preview",
-        "database_id": "e671f478-ea60-41d5-a2ec-a3668c02c05a",
+        "database_name": "terminuscli-preview",
+        "database_id": "03f84a31-ace4-4c07-b144-df736596fd4d",
         "migrations_dir": "migrations"
       }
     ]
