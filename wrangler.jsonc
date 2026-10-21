@@ -49,6 +49,6 @@
     // Client ID of the GitHub App used for "Sign in with GitHub" (public, not a secret).
     // The client secret is set separately: npx wrangler secret put GITHUB_CLIENT_SECRET
     // While either is missing, the app hides "Sign in" and the API answers 503 for sign-in.
-    "GITHUB_CLIENT_ID": ""
+    "GITHUB_CLIENT_ID": "Iv23liq8G8SDh8dctkWx"
   }
 }
