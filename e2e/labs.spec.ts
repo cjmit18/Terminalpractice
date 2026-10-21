@@ -98,6 +98,26 @@ test('keyboard users can Tab out of the terminal prompt', async ({ page, isMobil
   await expect(commandInput(page)).not.toBeFocused();
 });
 
+test('Tab completes the commands the first-steps labs teach', async ({ page, isMobile }) => {
+  test.skip(isMobile, 'same code path on both projects');
+  const tab = async (typed: string, expected: string) => {
+    await commandInput(page).fill(typed);
+    await commandInput(page).press('Tab');
+    await expect(commandInput(page)).toHaveValue(expected);
+  };
+  await page.goto('#/windows/win-000-first-steps');
+  await showTerminal(page);
+  // dir, diskpart and dism all start with di: nothing to add yet
+  await tab('di', 'di');
+  await tab('ty', 'type ');
+  await tab('he', 'help ');
+  await tab('cl', 'cls ');
+  await page.goto('#/linux/lpi-000-first-steps');
+  await showTerminal(page);
+  await tab('ma', 'man ');
+  await tab('pw', 'pwd ');
+});
+
 test('walkthrough steps run in the shell they are written for', async ({ page, isMobile }) => {
   // Walkthrough steps are written for the lab's default shell, even if the header picked the other one
   test.skip(isMobile, 'same code path on both projects');

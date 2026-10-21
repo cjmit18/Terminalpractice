@@ -41,8 +41,8 @@ const BANNERS: Record<TerminalShell, string> = {
 };
 
 const COMPLETIONS: Record<'linux' | 'windows', string[]> = {
-  linux: ['cat', 'cd', 'chmod', 'chown', 'df', 'dmesg', 'echo', 'fdisk', 'grep', 'id', 'ip', 'journalctl', 'ls', 'lsmod', 'lspci', 'mkdir', 'ping', 'pwd', 'sort', 'sudo', 'systemctl', 'tar', 'umask', 'uniq', 'useradd', 'usermod', 'whoami'],
-  windows: ['chkdsk', 'diskpart', 'dism', 'gpresult', 'gpupdate', 'ipconfig', 'netstat', 'nslookup', 'ping', 'sfc', 'taskkill', 'tasklist', 'tracert', 'Add-ADGroupMember', 'Get-ADUser', 'Get-Process', 'Get-Service', 'New-ADUser', 'Start-Service', 'Stop-Process', 'Test-NetConnection', 'Unlock-ADAccount'],
+  linux: ['cat', 'cd', 'chmod', 'chown', 'df', 'dmesg', 'echo', 'fdisk', 'grep', 'id', 'ip', 'journalctl', 'ls', 'lsmod', 'lspci', 'man', 'mkdir', 'ping', 'pwd', 'sort', 'sudo', 'systemctl', 'tar', 'umask', 'uniq', 'useradd', 'usermod', 'whoami'],
+  windows: ['cd', 'chkdsk', 'cls', 'dir', 'diskpart', 'dism', 'gpresult', 'gpupdate', 'help', 'ipconfig', 'netstat', 'nslookup', 'ping', 'sfc', 'taskkill', 'tasklist', 'tracert', 'type', 'Add-ADGroupMember', 'Get-ADUser', 'Get-Process', 'Get-Service', 'New-ADUser', 'Start-Service', 'Stop-Process', 'Test-NetConnection', 'Unlock-ADAccount'],
 };
 
 const SYMBOL_KEYS = ['|', '>', '<', '&', '/', '~', '-', '_', '.', '$', '*', '"', "'", '\\', ':'];

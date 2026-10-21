@@ -3064,7 +3064,7 @@ const firstSteps: LearningPath = {
             p(`Read the message from the left: which command is talking (cat), what it was working on (welcom.txt), and what went wrong. Here the file name is missing an e.`),
             h(`Two keys that save typing`),
             table(`Key`, `What it does`, [
-              [`Tab`, `Finishes a command name for you. Type pw and press Tab, and the terminal fills in pwd.`],
+              [`Tab`, `Finishes a command name for you. In this practice terminal, type pw and press Tab and it fills in pwd. On a real computer, if several commands start the same way, press Tab twice to see them all.`],
               [`Up arrow`, `Brings back the command you ran before. Press it again to go further back. Change the line if you want, then press Enter to run it again.`],
               [`Down arrow`, `Goes forward again through the commands you brought back.`],
             ]),
