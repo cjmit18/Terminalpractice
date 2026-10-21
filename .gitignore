@@ -9,3 +9,9 @@ coverage/
 .aistudio/
 .playwright-cli/
 public/assets/aistudio/
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
