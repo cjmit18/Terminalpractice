@@ -87,7 +87,7 @@ function getService(ctx: WindowsContext): WindowsResult {
 }
 
 const notElevatedService = (ctx: WindowsContext) =>
-  `You are '${ctx.state.currentUser}', a standard user (not elevated). Changing services needs an elevated PowerShell (Run as administrator).`;
+  `You are '${ctx.state.currentUser}' in a prompt that is not elevated. Changing services needs an elevated PowerShell (Run as administrator).`;
 
 function setServiceStatus(status: 'Running' | 'Stopped', cmdlet: 'Start-Service' | 'Stop-Service' | 'Restart-Service') {
   return (ctx: WindowsContext): WindowsResult => {
@@ -285,7 +285,7 @@ function stopProcess(ctx: WindowsContext): WindowsResult {
         .replace(`(System.Diagnostics.Process (${name}):String)`, `(System.Diagnostics.Process (${name}):Process)`));
       note = critical
         ? `${p.command} is a critical system process; Windows refuses to end it even for administrators.`
-        : `You are '${ctx.state.currentUser}', a standard user (not elevated). Ending a process owned by ${p.user} needs an elevated PowerShell (Run as administrator).`;
+        : `You are '${ctx.state.currentUser}' in a prompt that is not elevated. Ending a process owned by ${p.user} needs an elevated PowerShell (Run as administrator).`;
       continue;
     }
     endProcess(ctx, p.pid);

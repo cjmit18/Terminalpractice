@@ -267,6 +267,43 @@ test('B8 (L2-19): Sort-Object and Where-Object keep the Get-ChildItem view', () 
   assert.equal(run('Get-ChildItem -Name | Sort-Object -Descending').stdout.split('\n')[0], 'Documents');
 });
 
+test('B9 (L2-23): dir lists by name, /O /W /A work, unsimulated switches say so, bad ones fail', () => {
+  const run = windowsSession('cmd');
+  run('echo hi> zed.txt');
+  run('echo a> Apple.txt');
+  const names = (out: string) => [...out.matchAll(/^10\/19\/2026 .* (\S+)$/gm)].map(m => m[1]);
+  assert.deepEqual(names(run('dir').stdout), ['.', '..', 'Apple.txt', 'Desktop', 'Documents', 'zed.txt']);
+  assert.deepEqual(run('dir /b /o:-n').stdout.split('\n'), ['zed.txt', 'Documents', 'Desktop', 'Apple.txt']);
+  assert.deepEqual(run('dir /b /o').stdout.split('\n'), ['Desktop', 'Documents', 'Apple.txt', 'zed.txt'], '/O alone: folders, then files');
+  assert.match(run('dir /w').stdout, /^\[\.\] +\[\.\.\] +Apple\.txt +\[Desktop\] +\[Documents\] +zed\.txt$/m);
+  assert.equal(run('dir /a /b').exitCode, 0);
+  const s = run('dir /s');
+  assert.deepEqual([s.exitCode, /not simulated/.test(s.explanation ?? '')], [0, true]);
+  assert.deepEqual([run('dir /z').stderr, run('dir /z').exitCode], ['Invalid switch - "z".', 1]);
+});
+
+test('B9 (L2-25, N-3, N-5): ping to an unknown address times out, SFC and elevation wording', () => {
+  const online = {
+    interfaces: [{ name: 'Ethernet0', ip: '192.168.1.145', netmask: '255.255.255.0', mac: '00-50-56-A1-2B-3C', gateway: '192.168.1.1', dns: ['192.168.1.10'], dhcpEnabled: true, status: 'UP' as const }],
+    gatewayWorking: true, dnsWorking: true,
+  };
+  const run = windowsSession('cmd', online);
+  const lost = run('ping 10.99.99.99');
+  assert.equal(lost.exitCode, 1);
+  assert.equal(lost.stdout.match(/^Request timed out\.$/gm)?.length, 4);
+  for (const ip of ['8.8.8.8', '1.1.1.1', '192.168.1.1', 'google.com']) assert.equal(run(`ping ${ip}`).exitCode, 0, ip);
+
+  const sfc = windowsSession('cmd', { systemIntegrityCorrupted: true, dismRepaired: true })('sfc /scannow').stdout;
+  assert.match(sfc, /successfully repaired them\.\nFor online repairs, details are included in the CBS log file located at\nwindir\\Logs\\CBS\\CBS\.log\. For example C:\\Windows\\Logs\\CBS\\CBS\.log\. For offline\nrepairs, details are included in the log file provided by the \/OFFLOGFILE flag\.$/);
+
+  // whoami /groups shows a filtered administrator token, so the notes say "not elevated", not "standard user"
+  const student = windowsSession('cmd', STUDENT);
+  assert.match(student('whoami /groups').stdout, /BUILTIN\\Administrators/);
+  const note = student('sfc /scannow').explanation ?? '';
+  assert.match(note, /not elevated/);
+  assert.doesNotMatch(note, /standard user/);
+});
+
 test('B8 (L2-19): $PWD and $HOME expand instead of echoing the name', () => {
   const run = windowsSession('powershell');
   assert.equal(run('echo $PWD').stdout, '\nPath\n----\nC:\\Users\\Student\n');

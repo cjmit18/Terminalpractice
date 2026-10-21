@@ -17,7 +17,7 @@ function bind(ctx: WindowsContext, cmdlet: string, spec: Record<string, PsParamS
 const isResult = (b: PsBound | WindowsResult): b is WindowsResult => 'exitCode' in b;
 
 const NOT_ELEVATED = (ctx: WindowsContext, what: string) =>
-  `You are '${ctx.state.currentUser}', a standard user (not elevated). ${what} needs an elevated PowerShell (Run as administrator).`;
+  `You are '${ctx.state.currentUser}' in a prompt that is not elevated. ${what} needs an elevated PowerShell (Run as administrator).`;
 
 /** The CIM "Access denied" block the NetTCPIP/DnsClient cmdlets print for a standard user. */
 const cimDenied = (ctx: WindowsContext, cmdlet: string, cls: string) =>

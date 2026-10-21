@@ -71,8 +71,17 @@ function changeDrive(ctx: WindowsContext): WindowsResult {
 
 const stamp = (n: FileNode) => (n.type === 'directory' ? '10/19/2026  09:30 AM    <DIR>         ' : '10/19/2026  09:45 AM');
 
+/** dir switches: /A /B /C /D /L /N /O /P /Q /R /S /T /W /X /4, some with :value forms. */
+const DIR_SWITCH = /^\/(a|o|t)(:?-?[a-z]*)$|^\/-?[bcdlnpqrswx4]$/i;
+/** The ones that change nothing here: no hidden or system files, no paging, one owner, no short names. */
+const DIR_NOT_SIMULATED = /^\/(s|q|r|x|t|d|c|l|n|4)/i;
+
 function dir(ctx: WindowsContext): WindowsResult {
-  const sw = switches(ctx.args);
+  const bad = ctx.args.find(a => a.startsWith('/') && !DIR_SWITCH.test(a));
+  if (bad) return ctx.fail(`Invalid switch - "${bad.slice(1)}".`);
+  const ignored = ctx.args.filter(a => a.startsWith('/') && DIR_NOT_SIMULATED.test(a)).map(a => a.toUpperCase());
+  const note = ignored.length ? `dir ${ignored.join(' ')}: ${ignored.length > 1 ? 'these switches are' : 'this switch is'} not simulated here, so the listing is the plain one.` : undefined;
+  const sw = new Set([...switches(ctx.args)].map(s => s.replace(/^\/([ao])\b.*/, '/$1')));
   const target = operands(ctx.args)[0] ?? '.';
   const { dir: base, matches } = expandWildcard(ctx, target);
   const abs = ctx.resolve(target);
@@ -87,8 +96,22 @@ function dir(ctx: WindowsContext): WindowsResult {
   if (node?.type === 'directory') entries = Object.entries(node.children ?? {});
   else if (node) entries = [[node.name, node]];
   else entries = matches.map(m => [leaf(m), ctx.node(m)!] as [string, FileNode]);
+  // NTFS lists names in order; /O picks another (N name, E extension, S size, G folders first, - reverses)
+  const order = (ctx.args.find(a => /^\/o/i.test(a)) ?? '/on').slice(2).replace(/^:/, '').toLowerCase() || 'gn';
+  const byName = (a: [string, FileNode], b: [string, FileNode]) => a[0].toLowerCase().localeCompare(b[0].toLowerCase());
+  const keys: Record<string, (a: [string, FileNode], b: [string, FileNode]) => number> = {
+    n: byName,
+    e: (a, b) => (a[0].includes('.') ? a[0].slice(a[0].lastIndexOf('.')) : '').localeCompare(b[0].includes('.') ? b[0].slice(b[0].lastIndexOf('.')) : ''),
+    s: (a, b) => (a[1].type === 'file' ? fileSize(a[1]) : 0) - (b[1].type === 'file' ? fileSize(b[1]) : 0),
+    g: (a, b) => Number(b[1].type === 'directory') - Number(a[1].type === 'directory'),
+  };
+  const rules = [...order.matchAll(/(-?)([nesgd])/g)].map(([, neg, k]) => ({ neg: !!neg, cmp: keys[k] ?? (() => 0) }));
+  entries.sort((a, b) => {
+    for (const r of rules) { const c = r.cmp(a, b); if (c) return r.neg ? -c : c; }
+    return byName(a, b);
+  });
 
-  if (sw.has('/b')) return ctx.ok(entries.map(([k]) => k).join('\n'));
+  if (sw.has('/b')) return ctx.result(entries.map(([k]) => k).join('\n'), '', 0, note);
 
   const lines = [
     ' Volume in drive C has no label.',
@@ -104,7 +127,15 @@ function dir(ctx: WindowsContext): WindowsResult {
     lines.push('10/19/2026  09:00 AM    <DIR>          .', '10/19/2026  09:00 AM    <DIR>          ..');
     dirCount = 2;
   }
+  const wide = sw.has('/w');
+  const cells = node?.type === 'directory' ? ['[.]', '[..]'] : [];
   for (const [key, child] of entries) {
+    cells.push(child.type === 'directory' ? `[${key}]` : key);
+    if (wide) {
+      if (child.type === 'directory') dirCount++;
+      else { fileCount++; totalBytes += fileSize(child); }
+      continue;
+    }
     if (child.type === 'directory') {
       dirCount++;
       lines.push(`${stamp(child)} ${key}`);
@@ -115,9 +146,16 @@ function dir(ctx: WindowsContext): WindowsResult {
       lines.push(`${stamp(child)}            ${sz.toLocaleString('en-US').padStart(8, ' ')} ${key}`);
     }
   }
+  if (wide) {
+    // /W: names across the screen in columns, folders in [brackets]
+    if (node?.type === 'directory') lines.splice(lines.length - 2, 2);
+    const width = Math.max(...cells.map(c => c.length)) + 1;
+    const perRow = Math.max(1, Math.floor(80 / width));
+    for (let i = 0; i < cells.length; i += perRow) lines.push(cells.slice(i, i + perRow).map(c => c.padEnd(width)).join('').trimEnd());
+  }
   lines.push(`               ${fileCount} File(s)     ${totalBytes.toLocaleString('en-US')} bytes`);
   lines.push(`               ${dirCount} Dir(s)  120,412,891,136 bytes free`);
-  return ctx.ok(lines.join('\n'));
+  return ctx.result(lines.join('\n'), '', 0, note);
 }
 
 function type(ctx: WindowsContext): WindowsResult {

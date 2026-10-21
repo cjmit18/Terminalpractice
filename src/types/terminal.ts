@@ -21,15 +21,6 @@ export interface FileNode {
 
 export type TerminalShell = 'bash' | 'cmd' | 'powershell';
 
-export type TerminalTheme = 'ubuntu' | 'crt-green' | 'crt-amber' | 'powershell' | 'cmd-classic' | 'matrix' | 'dracula';
-
-export interface CommandOutput {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-  systemStateDelta?: Partial<SystemState>;
-}
-
 export interface HistoryItem {
   id: string;
   command: string;

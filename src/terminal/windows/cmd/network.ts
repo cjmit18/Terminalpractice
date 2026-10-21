@@ -66,7 +66,7 @@ export function resolveHost(ctx: WindowsContext, host: string): string | null {
   return dnsAnswer(host);
 }
 
-function adapterLines(ctx: WindowsContext, iface: NetworkInterface, all: boolean): string[] {
+function adapterLines(iface: NetworkInterface, all: boolean): string[] {
   const apipa = isApipa(iface.ip);
   const addrLabel = apipa ? '   Autoconfiguration IPv4 Address. . : ' : '   IPv4 Address. . . . . . . . . . . : ';
   const lines = [`Ethernet adapter ${iface.name}:`, '', `   Connection-specific DNS Suffix  . : ${apipa ? '' : 'corp.local'}`];
@@ -137,7 +137,7 @@ function ipconfig(ctx: WindowsContext): WindowsResult {
   const needsAdmin = sw.has('/release') || sw.has('/renew') || sw.has('/flushdns') || sw.has('/registerdns');
   if (needsAdmin && !ctx.isAdmin && !sw.has('/flushdns')) {
     return ctx.fail('The requested operation requires elevation.', 1,
-      `You are '${state.currentUser}', a standard user (not elevated). Releasing or renewing a DHCP lease changes the network configuration, so run the prompt as administrator.`);
+      `You are '${state.currentUser}' in a prompt that is not elevated. Releasing or renewing a DHCP lease changes the network configuration, so run the prompt as administrator.`);
   }
   if (sw.has('/displaydns')) return displayDns(ctx);
   if (sw.has('/flushdns')) {
@@ -165,7 +165,7 @@ function ipconfig(ctx: WindowsContext): WindowsResult {
       '',
     );
   }
-  lines.push(...adapterLines(ctx, iface, sw.has('/all')));
+  lines.push(...adapterLines(iface, sw.has('/all')));
   return ctx.ok(lines.join('\n'));
 }
 
@@ -226,6 +226,9 @@ function ping(ctx: WindowsContext): WindowsResult {
     const noRoute = isApipa(iface.ip) || iface.ip === '0.0.0.0' || (!lan && !iface.gateway);
     return failed(noRoute ? 'PING: transmit failed. General failure.' : 'Request timed out.');
   }
+  // An address typed by hand that is not on the LAN and not a well-known public host has nothing behind it
+  const known = ['8.8.8.8', '8.8.4.4', '1.1.1.1', '1.0.0.1', ...Object.values(PUBLIC_DNS)];
+  if (!local && !lan && ip === target && !known.includes(ip)) return failed('Request timed out.');
   // Hosts on the LAN answer in under a millisecond; the router (TTL 64) and Windows hosts (TTL 128) differ
   const fast = local || lan;
   const times = Array.from({ length: shown }, (_, i) => (fast ? 0 : [12, 11, 14, 12][i % 4]));
@@ -348,7 +351,7 @@ function netstat(ctx: WindowsContext): WindowsResult {
   const exe = flags.includes('b');
   if (exe && !ctx.isAdmin) {
     return ctx.fail('The requested operation requires elevation.', 1,
-      `You are '${ctx.state.currentUser}', a standard user (not elevated). netstat -b looks up the program that owns each connection, which needs an elevated prompt.`);
+      `You are '${ctx.state.currentUser}' in a prompt that is not elevated. netstat -b looks up the program that owns each connection, which needs an elevated prompt.`);
   }
   const header = `  Proto  Local Address          Foreign Address        State${showPid ? '           PID' : ''}`;
   const procs = allProcesses(ctx);

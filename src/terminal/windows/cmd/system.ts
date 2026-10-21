@@ -9,7 +9,7 @@ import { BOOT_GP, applyGroupPolicy, gpresultTime, windowsNow } from '../clock';
 // bootrec, gpupdate, gpresult, net
 
 const NOT_ELEVATED = (ctx: WindowsContext, what: string) =>
-  `You are '${ctx.state.currentUser}', a standard user (not elevated). ${what} needs an elevated prompt: right-click Command Prompt and choose "Run as administrator".`;
+  `You are '${ctx.state.currentUser}' in a prompt that is not elevated. ${what} needs an elevated prompt: right-click Command Prompt and choose "Run as administrator".`;
 
 /** Core processes every Windows session has; the lab's own processes come from state. */
 const BASE_PROCESSES: ProcessItem[] = [
@@ -218,7 +218,8 @@ function sfc(ctx: WindowsContext): WindowsResult {
   }
   const head = ['Beginning system scan.  This process will take some time.', '', 'Beginning verification phase of system scan.', 'Verification 100% complete.', ''];
   const corrupted = ctx.state.systemIntegrityCorrupted;
-  const log = 'Details are included in the CBS.Log windir\\Logs\\CBS\\CBS.log. For example\nC:\\Windows\\Logs\\CBS\\CBS.log.';
+  // The Windows 10/11 wording
+  const log = 'For online repairs, details are included in the CBS log file located at\nwindir\\Logs\\CBS\\CBS.log. For example C:\\Windows\\Logs\\CBS\\CBS.log. For offline\nrepairs, details are included in the log file provided by the /OFFLOGFILE flag.';
   if (verify) {
     return ctx.ok([...head, corrupted
       ? `Windows Resource Protection found integrity violations.\n${log}`
@@ -232,12 +233,12 @@ function sfc(ctx: WindowsContext): WindowsResult {
   }
   if (!ctx.state.dismRepaired) {
     // SFC repairs files from the component store; while the store is damaged it cannot
-    return ctx.result([...head, `Windows Resource Protection found corrupt files but was unable to fix some\nof them. ${log}`].join('\n'), '', 0,
+    return ctx.result([...head, `Windows Resource Protection found corrupt files but was unable to fix some of them.\n${log}`].join('\n'), '', 0,
       'SFC takes its replacement files from the component store (WinSxS), which is damaged too. Repair the store with DISM /Online /Cleanup-Image /RestoreHealth, then run sfc /scannow again.');
   }
   ctx.state.sfcRepaired = true;
   ctx.state.systemIntegrityCorrupted = false;
-  return ctx.ok([...head, `Windows Resource Protection found corrupt files and successfully repaired\nthem. ${log}`].join('\n'));
+  return ctx.ok([...head, `Windows Resource Protection found corrupt files and successfully repaired them.\n${log}`].join('\n'));
 }
 
 function dism(ctx: WindowsContext): WindowsResult {

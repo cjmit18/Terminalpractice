@@ -308,7 +308,7 @@ const DISKPART_COMMANDS: [RegExp, DiskpartHandler][] = [
     };
   }],
 
-  [/^format(?:\s+(.*))?$/, (state, m, original) => {
+  [/^format(?:\s+(.*))?$/, (state, _, original) => {
     const opts = parseOptions(original.replace(/^\s*format\s*/i, ''), { fs: /^\w+$/, label: /^.*$/, unit: /^\S+$/, revision: /^[\d.]+$/ },
       ['quick', 'compress', 'override', 'duplicate', 'nowait', 'noerr', 'recommended']);
     if (!opts) return invalidArgs('FORMAT');
