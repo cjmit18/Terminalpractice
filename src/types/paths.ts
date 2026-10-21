@@ -33,6 +33,8 @@ export interface QuizQuestion {
   answer: number;
   /** Why the answer is right (and the tempting wrong one is wrong). Shown after answering. */
   explanation: string;
+  /** Exam objective ids this covers (keys of EXAM_OBJECTIVES in src/data/examObjectives.ts). Optional. */
+  objectives?: string[];
 }
 
 export type PathStep =
@@ -42,6 +44,8 @@ export type PathStep =
       title: string;
       minutes: number;
       blocks: LessonBlock[];
+      /** Exam objective ids this covers (keys of EXAM_OBJECTIVES in src/data/examObjectives.ts). Optional. */
+      objectives?: string[];
     }
   | {
       kind: 'lab';
@@ -50,6 +54,8 @@ export type PathStep =
       moduleId: string;
       /** One sentence on why this lab sits here in the path */
       note?: string;
+      /** Exam objective ids this covers (keys of EXAM_OBJECTIVES in src/data/examObjectives.ts). Optional. */
+      objectives?: string[];
     }
   | {
       kind: 'quiz';
