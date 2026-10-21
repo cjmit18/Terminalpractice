@@ -1,6 +1,10 @@
 # Terminus CertSim
 
-A browser-based terminal simulator for IT certification practice. It runs entirely on the client: no server, no accounts, no API keys. It installs as an app on phones and desktops and works offline after the first visit.
+A browser-based terminal simulator for IT certification practice. Everything runs in the browser: it installs as an app on phones and desktops and works offline after the first visit. Signing in (with GitHub) is optional.
+
+> **About this project.** Terminus CertSim was built with AI assistance: much of the code and lesson content was generated with AI tools (Google AI Studio, Anthropic's Claude, GitHub Copilot) working from my direction and review. I maintain and develop it myself ([@cjmit18](https://github.com/cjmit18)) as a personal project for my own learning and practice for the LPIC-1 and CompTIA exams. It is a study aid, not official exam material: check anything important against the official objectives.
+>
+> Not affiliated with or endorsed by the Linux Professional Institute (LPI) or CompTIA. LPIC-1, CompTIA, A+, Network+ and Security+ are trademarks of their respective owners.
 
 Covers hands-on objectives for:
 - **LPI Linux** (LPIC-1 101/102): permissions, text processing, system architecture, user administration, disk partitioning

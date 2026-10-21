@@ -47,3 +47,12 @@ test('main navigation marks the current page', async ({ page }) => {
   await expect(page.getByRole('heading', { level: 1, name: 'Sandbox' })).toBeVisible();
   await expect(nav.getByRole('link', { name: /Sandbox/ })).toHaveAttribute('aria-current', 'page');
 });
+
+test('the home page says the project was built with AI assistance and who maintains it', async ({ page }) => {
+  await page.goto('#/learn');
+  const about = page.getByRole('region', { name: 'About this project' });
+  await expect(about).toContainText('built with AI assistance');
+  await expect(about).toContainText('I maintain and develop it myself');
+  await expect(about).toContainText('Not affiliated with or endorsed by');
+  await expect(about.getByRole('link', { name: 'github.com/cjmit18/Terminalpractice' })).toHaveAttribute('href', 'https://github.com/cjmit18/Terminalpractice');
+});
