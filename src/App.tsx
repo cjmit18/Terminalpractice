@@ -40,6 +40,7 @@ import { PageErrorBoundary } from './components/PageErrorBoundary';
 import { lazyWithReload, reloadOnPreloadError } from './lib/chunkReload';
 import { ACTIVITY_KEY, activityCodec, addFacts, quizMissFact, resetFact } from './lib/activity';
 import { GameLayerProvider } from './components/celebrate/GameLayer';
+import { CHALLENGES_BY_ID } from './data/challenges';
 
 const MODULES_BY_ID = new Map(ALL_MODULES.map(m => [m.id, m]));
 // How lab progress and the journey are saved and shared with the app's other open tabs
@@ -54,6 +55,9 @@ const LAB_PLACEMENTS = labPlacements(LEARNING_PATHS);
 reloadOnPreloadError();
 const SimulatorsHub = lazyWithReload(() => import('./components/SimulatorsHub').then(m => ({ default: m.SimulatorsHub })));
 const SandboxMode = lazyWithReload(() => import('./components/SandboxMode').then(m => ({ default: m.SandboxMode })));
+const ChallengesPage = lazyWithReload(() =>
+  import('./components/challenges/ChallengesPage').then(m => ({ default: m.ChallengesPage })),
+);
 const CommandEncyclopedia = lazyWithReload(() =>
   import('./components/CommandEncyclopedia').then(m => ({ default: m.CommandEncyclopedia })),
 );
@@ -212,6 +216,9 @@ export default function App() {
   const trackModules = track ? TRACK_MODULES[track] : [];
   const activeModule = moduleId ? trackModules.find(m => m.id === moduleId) ?? null : null;
   const routeKey = routeHref(route);
+  // #/sandbox/challenge[/<id>]: the mini challenges
+  const challengeRoute = route.section === 'sandbox' && 'challengeId' in route ? route : null;
+  const challengeTitle = challengeRoute?.challengeId ? CHALLENGES_BY_ID.get(challengeRoute.challengeId)?.title : undefined;
 
   // Learning path routes
   const learnRoute = route.section === 'learn' ? route : null;
@@ -262,11 +269,13 @@ export default function App() {
       activeModule ? `${topicLabel(activeModule)} ${activeModule.title}` : null,
       activeStep ? stepTitle(activeStep.step, MODULES_BY_ID) : null,
       activePath?.title,
+      challengeTitle,
+      challengeRoute ? 'Challenges' : null,
       PAGE_TITLES[route.section],
       'Terminus CertSim',
     ];
     document.title = parts.filter(Boolean).join(' · ');
-  }, [routeKey, activeModule, activePath, activeStep, route.section]);
+  }, [routeKey, activeModule, activePath, activeStep, route.section, challengeTitle, challengeRoute]);
 
   const handleObjectiveComplete = (moduleId: string, objectiveId: string) =>
     setProgressRecord(prev => completeObjective(prev, moduleId, objectiveId));
@@ -409,9 +418,15 @@ export default function App() {
           </Suspense>
         )}
 
-        {route.section === 'sandbox' && (
+        {route.section === 'sandbox' && !challengeRoute && (
           <Suspense fallback={loading}>
             <SandboxMode />
+          </Suspense>
+        )}
+
+        {challengeRoute && (
+          <Suspense fallback={loading}>
+            <ChallengesPage challengeId={challengeRoute.challengeId} />
           </Suspense>
         )}
 

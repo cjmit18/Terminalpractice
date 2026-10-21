@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
  * Hash routes:
  *   #/learn, #/learn/<pathId>, #/learn/<pathId>/<stepId>,
  *   #/linux, #/linux/<moduleId>, #/windows, #/windows/<moduleId>,
- *   #/simulators, #/sandbox, #/reference
+ *   #/simulators, #/sandbox, #/sandbox/challenge, #/sandbox/challenge/<challengeId>, #/reference
  * Anything else falls back to #/learn.
  */
 
@@ -14,7 +14,9 @@ export type TrackSection = 'linux' | 'windows';
 export type Route =
   | { section: 'learn'; pathId: string | null; stepId: string | null }
   | { section: TrackSection; moduleId: string | null }
-  | { section: 'simulators' | 'sandbox' | 'reference' };
+  | { section: 'simulators' | 'sandbox' | 'reference' }
+  /** The mini challenges: the list (challengeId null) or one challenge */
+  | { section: 'sandbox'; challengeId: string | null };
 
 export const DEFAULT_ROUTE: Route = { section: 'learn', pathId: null, stepId: null };
 
@@ -44,6 +46,10 @@ export function parseHash(hash: string): Route | null {
     if (parts.length > 2) return null;
     return { section, moduleId: parts[1] ?? null };
   }
+  if (section === 'sandbox' && parts[1] === 'challenge') {
+    if (parts.length > 3) return null;
+    return { section, challengeId: parts[2] ?? null };
+  }
   if (parts.length > 1) return null;
   return { section } as Route;
 }
@@ -56,6 +62,9 @@ export function routeHref(route: Route): string {
       if (route.stepId) segs.push(encodeURIComponent(route.stepId));
     }
     return `#/${segs.join('/')}`;
+  }
+  if ('challengeId' in route) {
+    return route.challengeId ? `#/sandbox/challenge/${encodeURIComponent(route.challengeId)}` : '#/sandbox/challenge';
   }
   if ('moduleId' in route && route.moduleId) {
     return `#/${route.section}/${encodeURIComponent(route.moduleId)}`;
