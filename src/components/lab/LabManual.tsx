@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { ExamModule } from '../../types/modules';
+import React, { useEffect, useRef, useState } from 'react';
+import { ExamModule, ModuleObjective } from '../../types/modules';
 import { Check, CheckCircle2 } from 'lucide-react';
 
 /**
@@ -32,21 +32,38 @@ export function HintText({ text }: { text: string }) {
 interface TasksPanelProps {
   module: ExamModule;
   completed: Set<string>;
+  /** Called each time a hint rung is revealed. `rung` counts from 1 (the gentlest); the last rung is the full hint. */
+  onHint?: (objectiveId: string, rung: number) => void;
 }
 
-export const TasksPanel: React.FC<TasksPanelProps> = ({ module, completed }) => {
-  const [openHints, setOpenHints] = useState<Set<string>>(new Set());
+type HintRung = { kind: 'nudge' | 'shape' | 'answer'; text: string };
+
+/** The rungs of one task's hint ladder, gentlest first. A task with no nudge or shape has just its hint. */
+const hintRungs = (obj: ModuleObjective): HintRung[] => [
+  ...(obj.nudge ? [{ kind: 'nudge' as const, text: obj.nudge }] : []),
+  ...(obj.shape ? [{ kind: 'shape' as const, text: obj.shape }] : []),
+  { kind: 'answer' as const, text: obj.hint },
+];
+
+export const TasksPanel: React.FC<TasksPanelProps> = ({ module, completed, onHint }) => {
+  // How many rungs of each task's ladder are showing; a missing entry means none
+  const [shown, setShown] = useState<Map<string, number>>(new Map());
   const total = module.objectives.length;
   const done = module.objectives.filter(o => completed.has(o.id)).length;
   const allDone = total > 0 && done === total;
 
-  const toggleHint = (id: string) =>
-    setOpenHints(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+  const setRungs = (id: string, count: number) =>
+    setShown(prev => {
+      const next = new Map(prev);
+      if (count > 0) next.set(id, count);
+      else next.delete(id);
       return next;
     });
+
+  const reveal = (id: string, count: number) => {
+    setRungs(id, count);
+    onHint?.(id, count);
+  };
 
   return (
     <div className="space-y-8 max-w-prose">
@@ -73,7 +90,8 @@ export const TasksPanel: React.FC<TasksPanelProps> = ({ module, completed }) => 
         <ol className="divide-y divide-line border-y border-line">
           {module.objectives.map((obj, idx) => {
             const isDone = completed.has(obj.id);
-            const hintOpen = openHints.has(obj.id);
+            const rungs = hintRungs(obj);
+            const count = shown.get(obj.id) ?? 0;
             const hintId = `hint-${obj.id}`;
             return (
               <li key={obj.id} className="flex gap-3 py-4">
@@ -93,19 +111,33 @@ export const TasksPanel: React.FC<TasksPanelProps> = ({ module, completed }) => 
                   <p className="text-sm text-muted leading-relaxed">
                     <HintText text={obj.description} />
                   </p>
-                  <button
-                    type="button"
-                    onClick={() => toggleHint(obj.id)}
-                    aria-expanded={hintOpen}
-                    aria-controls={hintId}
-                    className="text-sm text-accent hover:underline underline-offset-2 py-1"
-                  >
-                    {hintOpen ? 'Hide hint' : 'Show hint'}
-                  </button>
-                  {hintOpen && (
-                    <p id={hintId} className="text-sm text-muted bg-surface-2 rounded-md px-3 py-2 break-words">
-                      <HintText text={obj.hint} />
-                    </p>
+                  {rungs.length > 1 ? (
+                    <HintLadder
+                      id={hintId}
+                      rungs={rungs}
+                      count={count}
+                      onReveal={next => reveal(obj.id, next)}
+                      onHide={() => setRungs(obj.id, 0)}
+                      note={idx === 0}
+                    />
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => (count ? setRungs(obj.id, 0) : reveal(obj.id, 1))}
+                        aria-expanded={count > 0}
+                        aria-controls={hintId}
+                        className="text-sm text-accent hover:underline underline-offset-2 py-1"
+                      >
+                        {count ? 'Hide hint' : 'Show hint'}
+                      </button>
+                      {idx === 0 && <HintCostNote />}
+                      {count > 0 && (
+                        <p id={hintId} className="text-sm text-muted bg-surface-2 rounded-md px-3 py-2 break-words">
+                          <HintText text={obj.hint} />
+                        </p>
+                      )}
+                    </>
                   )}
                 </div>
               </li>
@@ -125,6 +157,77 @@ export const TasksPanel: React.FC<TasksPanelProps> = ({ module, completed }) => 
         </section>
       )}
     </div>
+  );
+};
+
+interface HintLadderProps {
+  id: string;
+  rungs: HintRung[];
+  count: number;
+  onReveal: (count: number) => void;
+  onHide: () => void;
+  /** Show "Hints never cost anything." under the buttons (the first task only) */
+  note: boolean;
+}
+
+/** Said once, under the first task's hint button. Nothing counts hints, anywhere. */
+const HintCostNote = () => <p className="text-sm text-muted">Hints never cost anything.</p>;
+
+/**
+ * A nudge first, then the command's shape, then the full hint. Each rung stays on screen
+ * under the one before, so the help narrows down step by step.
+ */
+const HintLadder: React.FC<HintLadderProps> = ({ id, rungs, count, onReveal, onHide, note }) => {
+  const more = count < rungs.length;
+  // "Show more" goes away with the last rung; keep keyboard focus on the hint controls
+  const hideRef = useRef<HTMLButtonElement>(null);
+  const focusHide = useRef(false);
+  useEffect(() => {
+    if (focusHide.current) hideRef.current?.focus();
+    focusHide.current = false;
+  }, [count]);
+
+  return (
+    <>
+      <div className="flex flex-wrap gap-x-4">
+        {more && (
+          <button
+            type="button"
+            onClick={() => {
+              focusHide.current = count + 1 === rungs.length;
+              onReveal(count + 1);
+            }}
+            aria-expanded={count > 0}
+            aria-controls={id}
+            className="text-sm text-accent hover:underline underline-offset-2 py-1"
+          >
+            {count === 0 ? 'Show a nudge' : 'Show more'}
+          </button>
+        )}
+        {count > 0 && (
+          <button ref={hideRef} type="button" onClick={onHide} className="text-sm text-accent hover:underline underline-offset-2 py-1">
+            Hide hints
+          </button>
+        )}
+      </div>
+      {note && <HintCostNote />}
+      {count > 0 && (
+        <div id={id} aria-live="polite" className="space-y-2 text-sm text-muted bg-surface-2 rounded-md px-3 py-2 break-words">
+          {rungs.slice(0, count).map(rung =>
+            rung.kind === 'shape' ? (
+              <p key={rung.kind}>
+                Fill in the blanks: <code className="font-mono text-text">{rung.text}</code>
+              </p>
+            ) : (
+              <p key={rung.kind}>
+                <HintText text={rung.text} />
+              </p>
+            )
+          )}
+          {count === 1 && more && <p>Try it in the terminal first. Come back for more if you need it.</p>}
+        </div>
+      )}
+    </>
   );
 };
 

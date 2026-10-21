@@ -27,6 +27,7 @@ import { helpOptionOutput } from './linux/commands/help';
 import { syncKernelFiles } from './linux/virtualFs';
 import { expandArgs } from './linux/glob';
 import { isNotSimulatedLinux } from './notSimulated';
+import { suggestLinux } from './suggest';
 
 export interface LinuxExecutionResult extends StageResult {}
 
@@ -390,7 +391,7 @@ function runLinuxCommand(
     const handler = linuxCommands.get(name);
     if (!handler) {
       if (isNotSimulatedLinux(name)) return ctx.fail(`bash: ${name}: this command exists on real systems but is not simulated here`, 127);
-      return ctx.fail(`bash: ${name}: command not found`, 127);
+      return ctx.fail(`bash: ${name}: command not found`, 127, suggestLinux(name));
     }
     // --help is answered here, from the docs, so the command itself never runs
     const help = helpOptionOutput(name, args);
