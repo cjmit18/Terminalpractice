@@ -1,8 +1,11 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  // Must match the Worker connected to this repo in the Cloudflare dashboard (Workers Builds).
-  // terminuscli serves https://terminuscli.com (custom domain set in the dashboard).
-  "name": "terminuscli",
+  // Must match the Worker connected to this branch in the Cloudflare dashboard (Workers Builds).
+  // This branch (site/wayne-mitchell) deploys terminus-wm, which serves https://terminus.wayne-mitchell.com.
+  // main deploys terminuscli (https://terminuscli.com); keep the rest of this file in step with main.
+  "name": "terminus-wm",
+  // Deploying attaches the custom domain; wayne-mitchell.com must be a zone on the same Cloudflare account
+  "routes": [{ "pattern": "terminus.wayne-mitchell.com", "custom_domain": true }],
   "compatibility_date": "2026-10-13",
   // `wrangler deploy` builds first, so a deploy never ships a stale or missing dist/
   "build": {
