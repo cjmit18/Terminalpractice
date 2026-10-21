@@ -120,3 +120,54 @@ test('B4 (L2-10): CMD more shows a file, and < feeds a file to a command', () =>
   // A quoted < is text
   assert.equal(run('echo "<b>"').stdout, '"<b>"');
 });
+
+/** A session on one lab, with the objectives it has passed so far (as the lab runner checks them). */
+function labRun(id: string) {
+  const lab = WINDOWS_PBQS.find(m => m.id === id)!;
+  let fs = structuredClone(lab.initialFs);
+  let state = structuredClone(lab.initialState);
+  let cwd = 'C:\\Users\\Student';
+  let diskpart = false;
+  const done = new Set<string>();
+  const run = (line: string) => {
+    const res = executeWindowsLine(line, cwd, fs, state, lab.defaultShell, diskpart);
+    ({ newFs: fs, newState: state, newCwd: cwd } = res);
+    diskpart = !!res.diskpartActive;
+    for (const o of lab.objectives) if (o.verifier(fs, state, { command: line, exitCode: res.exitCode, stdout: res.stdout })) done.add(o.id);
+    return res;
+  };
+  return { run, done, lab, inDiskpart: () => diskpart, state: () => state };
+}
+
+test('B5 (L2-13, N-1, N-6): diskpart keywords by prefix, diskpart.exe, /s, elevation and banner', () => {
+  const dp = labRun('win-pbq-diskpart-partitioning');
+  const banner = dp.run('diskpart');
+  assert.match(banner.stdout, /^Microsoft DiskPart version [\d.]+\n\nCopyright \(C\) Microsoft Corporation\.\nOn computer: WIN-CLIENT01\n/);
+  for (const line of ['sel dis 1', 'create part primary', 'form fs=ntfs quick', 'assi letter=E']) {
+    const res = dp.run(line);
+    assert.equal(res.exitCode, 0, line);
+    assert.doesNotMatch(res.stdout, /ACTIVE {6}- Mark/, `${line} is not answered with the command list`);
+  }
+  assert.deepEqual([...dp.done].sort(), dp.lab.objectives.map(o => o.id).sort(), 'every objective passes with the short forms');
+  assert.match(dp.run('lis vol').stdout, /\* Volume 2 +E +NTFS/);
+  assert.match(dp.run('det dis').stdout, /Disk ID:/);
+  // Two letters is too short
+  assert.match(dp.run('li dis').stdout, /ACTIVE {6}- Mark/);
+  dp.run('exit');
+
+  const exe = labRun('win-pbq-diskpart-partitioning');
+  assert.equal(exe.run('diskpart.exe').exitCode, 0);
+  assert.ok(exe.inDiskpart());
+  const script = labRun('win-pbq-diskpart-partitioning').run('diskpart /s C:\\setup.txt');
+  assert.deepEqual([script.stderr, script.exitCode, !!script.diskpartActive], ['Script mode (/s) is not simulated here; type the commands at the DISKPART> prompt.', 1, false]);
+
+  // Student's prompt is not elevated: diskpart does not start
+  const student = labRun('win-000-first-steps');
+  for (const line of ['diskpart', 'diskpart.exe']) {
+    const res = student.run(line);
+    assert.equal(res.exitCode, 5, line);
+    assert.equal(student.inDiskpart(), false, line);
+    assert.match(res.explanation ?? '', /User Account Control/);
+  }
+  assert.equal(windowsSession('cmd', STUDENT)('diskpart').exitCode, 5);
+});

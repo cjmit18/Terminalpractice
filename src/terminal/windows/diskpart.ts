@@ -13,7 +13,8 @@ import { DISKPART_VERSION, diskpartCommandList, diskpartHelp } from './help';
 
 export const DISKPART_BANNER = [
   DISKPART_VERSION,
-  'Copyright (C) 1999-2026 Microsoft Corporation.',
+  '',
+  'Copyright (C) Microsoft Corporation.',
   'On computer: WIN-CLIENT01',
   '',
   'DISKPART> ',
@@ -176,6 +177,9 @@ const DISKPART_COMMANDS: [RegExp, DiskpartHandler][] = [
 
   [/^exit$/, () => ({ stdout: 'Leaving DiskPart...', active: false })],
 
+  // REM starts a comment (used in diskpart /s scripts)
+  [/^rem\b/, () => ({ stdout: '' })],
+
   [/^lis(?:t)?\s+dis(?:k)?$/, state => {
     const lines = [
       '  Disk ###  Status         Size     Free     Dyn  Gpt',
@@ -336,7 +340,42 @@ const DISKPART_COMMANDS: [RegExp, DiskpartHandler][] = [
   }],
 ];
 
-export function handleDiskpartCommand(line: string, cwd: string, fs: FileNode, state: SystemState): WindowsResult {
+// DiskPart accepts any keyword shortened to three or more letters (sel dis 1, create part pri,
+// form fs=ntfs quick). Where a prefix fits several verbs, the more common one comes first.
+const VERBS = ['list', 'select', 'create', 'delete', 'detail', 'format', 'assign', 'clean', 'convert', 'active', 'extend', 'exit', 'help',
+  'rem', 'offline', 'online', 'remove', 'rescan', 'shrink', 'attributes', 'automount', 'break', 'compact', 'expand', 'filesystems',
+  'gpt', 'import', 'inactive', 'merge', 'recover', 'repair', 'retain', 'san', 'setid', 'uniqueid', 'attach', 'detach', 'add'];
+const OBJECTS = ['disk', 'partition', 'volume', 'vdisk'];
+const PARTITION_TYPES = ['primary', 'extended', 'logical', 'efi', 'msr'];
+const STYLES = ['gpt', 'mbr', 'dynamic', 'basic'];
+
+function keyword(word: string, list: string[]): string {
+  const w = word.toLowerCase();
+  if (list.includes(w)) return w;
+  return (w.length >= 3 && list.find(k => k.startsWith(w))) || word;
+}
+
+/** The line with its keywords spelled out in full; values (label=..., size=...) keep their case. */
+export function expandDiskpartKeywords(line: string): string {
+  const words = line.trim().split(/\s+/);
+  if (!words[0]) return '';
+  words[0] = keyword(words[0], VERBS);
+  const verb = words[0].toLowerCase();
+  if (words[1] !== undefined) {
+    if (verb === 'help') words[1] = keyword(words[1], VERBS);
+    else if (verb === 'convert') words[1] = keyword(words[1], STYLES);
+    else if (['list', 'select', 'create', 'delete', 'detail', 'offline', 'online', 'attributes', 'attach', 'detach', 'compact', 'expand', 'merge', 'uniqueid', 'inactive'].includes(verb)) {
+      // select disk=1 is the same as select disk 1
+      const [obj, ...rest] = words[1].split('=');
+      words[1] = [keyword(obj, OBJECTS), ...rest].join('=');
+    }
+  }
+  if (verb === 'create' && words[1]?.toLowerCase() === 'partition' && words[2] !== undefined) words[2] = keyword(words[2], PARTITION_TYPES);
+  return words.join(' ');
+}
+
+export function handleDiskpartCommand(rawLine: string, cwd: string, fs: FileNode, state: SystemState): WindowsResult {
+  const line = expandDiskpartKeywords(rawLine);
   const lower = line.toLowerCase().trim().replace(/\s+/g, ' ');
   const activeState = cloneState(state);
   const activeFs = cloneFileSystem(fs);

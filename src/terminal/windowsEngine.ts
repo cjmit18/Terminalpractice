@@ -65,8 +65,20 @@ function runWindowsLine(
     return { stdout: diskpartUsage(), stderr: '', exitCode: 0, newCwd: cwd, newFs: fs, newState: state, diskpartActive: false };
   }
 
-  if (line.toLowerCase() === 'diskpart') {
-    return { stdout: DISKPART_BANNER, stderr: '', exitCode: 0, newCwd: cwd, newFs: fs, newState: state, diskpartActive: true };
+  const launch = line.match(/^diskpart(?:\.exe)?(?:\s+(\/s\b.*))?$/i);
+  if (launch) {
+    const unchanged = { newCwd: cwd, newFs: fs, newState: state, diskpartActive: false };
+    // diskpart.exe's manifest requires administrator rights: Windows asks through UAC and opens it in a new window
+    if (!state.isRootOrAdmin) {
+      return {
+        ...unchanged, stdout: '', stderr: 'The requested operation requires elevation.', exitCode: 5,
+        explanation: `You are '${state.currentUser}' in a prompt that is not elevated. diskpart needs administrator rights: on a real PC, Windows shows a User Account Control prompt and opens DiskPart in a new elevated window. Open the prompt with Run as administrator to use diskpart.`,
+      };
+    }
+    if (launch[1]) {
+      return { ...unchanged, stdout: '', stderr: 'Script mode (/s) is not simulated here; type the commands at the DISKPART> prompt.', exitCode: 1 };
+    }
+    return { ...unchanged, stdout: DISKPART_BANNER, stderr: '', exitCode: 0, diskpartActive: true };
   }
 
   if (shell === 'powershell') return executePowerShellCommand(line, cwd, fs, state);
