@@ -3,6 +3,7 @@ import { writeFileContent, modeBits, toOctalField, getNodeAtPath } from '../../f
 import { parseOptions } from '../../textUtils';
 import { LinuxContext, LinuxResult, linuxCommands, createInDir } from '../context';
 import { MAX_PATH_DEPTH, pathDepth, treeHeight } from '../../limits';
+import { labNowIso } from '../../labClock';
 
 // cp and mv
 
@@ -179,7 +180,7 @@ function mv(ctx: LinuxContext): LinuxResult {
     }
     delete from.children![baseName(m.srcAbs)];
     node.name = baseName(m.destAbs);
-    node.updatedAt = new Date().toISOString();
+    node.updatedAt = labNowIso();
     to.children = { ...(to.children ?? {}), [node.name]: node };
     if (opts.flags.has('v')) out.push(`renamed '${m.src}' -> '${m.dest}'`);
   }

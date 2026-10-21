@@ -5,6 +5,7 @@ import { LinuxContext, LinuxResult, linuxCommands } from '../context';
 import { readInputs } from '../input';
 import { runChildLine } from '../scripts';
 import { blockDevices, MODULES, KERNEL_RELEASE } from '../virtualFs';
+import { labNow } from '../../labClock';
 
 // Smaller utilities the lessons use: rmdir, du, who, uptime, pgrep/pkill, nice/renice, xargs, nl,
 // mount, swapon, blkid, lsusb, modinfo, timedatectl.
@@ -317,7 +318,7 @@ function modinfo(ctx: LinuxContext): LinuxResult {
 function timedatectl(ctx: LinuxContext): LinuxResult {
   const sub = ctx.args[0] ?? 'status';
   if (sub === 'status') {
-    const now = new Date();
+    const now = labNow();
     const stamp = now.toISOString().replace('T', ' ').slice(0, 19);
     const day = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][now.getUTCDay()];
     return ctx.ok([

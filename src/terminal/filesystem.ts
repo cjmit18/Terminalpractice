@@ -1,4 +1,5 @@
 import { FileNode } from '../types/terminal';
+import { labNowIso } from './labClock';
 
 /**
  * Converts octal permission number (e.g. 755) to symbolic string ("rwxr-xr-x")
@@ -255,20 +256,6 @@ function traversalDenied(root: FileNode, path: string, user: string, group: stri
 const parentOf = (path: string) => '/' + path.split('/').filter(Boolean).slice(0, -1).join('/');
 
 /**
- * Checks if a path can be traversed (x permission on all parent directories)
- */
-export function checkPathTraversal(
-  root: FileNode,
-  path: string,
-  user: string,
-  group: string | string[],
-  isWindows = false
-): boolean {
-  if (isWindows) return true;
-  return findTraversalDenial(root, path, user, group) === null;
-}
-
-/**
  * Checks one permission on a node the caller already found, with an explanation on denial.
  * `purpose` is passed to explainNodeDenial (see there).
  */
@@ -304,7 +291,7 @@ export function writeFileContent(node: FileNode, content: string, append = false
   const prev = node.content || '';
   node.content = append ? prev + (prev && content ? separator : '') + content : content;
   node.size = node.content.length;
-  node.updatedAt = new Date().toISOString();
+  node.updatedAt = labNowIso();
 }
 
 /**
@@ -482,7 +469,7 @@ export function createNode(
     octal,
     owner,
     group,
-    updatedAt: new Date().toISOString(),
+    updatedAt: labNowIso(),
     children: type === 'directory' ? {} : undefined,
   };
 

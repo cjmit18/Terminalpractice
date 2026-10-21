@@ -3,8 +3,7 @@ import { applyChmod, getSpecialBits, applySpecialBits, octalToSymbolic, toOctalF
 import { parseOptions, optionValue } from '../../textUtils';
 import { LinuxContext, LinuxResult, linuxCommands, createInDir } from '../context';
 
-/** The lab clock, 2026-10-19, in days since 1970-01-01 (the unit /etc/shadow uses; chage uses the same day). */
-const LAB_TODAY = Math.floor(Date.UTC(2026, 9, 19) / 86400000);
+import { LAB_DAY as LAB_TODAY, MS_PER_DAY } from '../../labClock';
 
 // Identity, ownership and permissions: su, exit, whoami, id, chmod, chown, chgrp, umask,
 // useradd, usermod, groupadd
@@ -376,7 +375,7 @@ function usermod(ctx: LinuxContext): LinuxResult {
     else {
       const t = Date.parse(`${expire}T00:00:00Z`);
       if (isNaN(t)) return ctx.fail(`usermod: invalid date '${expire}'`, 3);
-      expireDays = String(Math.floor(t / 86400000));
+      expireDays = String(Math.floor(t / MS_PER_DAY));
     }
   }
 

@@ -159,6 +159,5 @@ export class LinuxContext {
   }
 }
 
-export type LinuxHandler = (ctx: LinuxContext) => LinuxResult;
 
 export const linuxCommands = new CommandRegistry<LinuxContext, LinuxResult>();

@@ -1,5 +1,6 @@
-import { SystemState, WindowsService } from '../../../types/terminal';
+import { WindowsService } from '../../../types/terminal';
 import { describeIdentity } from '../../filesystem';
+import { labNow } from '../../labClock';
 import { parseOptions, optionValue, padNum } from '../../textUtils';
 import { LinuxContext, LinuxResult, linuxCommands, createInDir } from '../context';
 import { DEFAULT_LINUX_DISKS, partitionLayout, KERNEL_RELEASE, KERNEL_VERSION, MEMORY_KIB, MODULES } from '../virtualFs';
@@ -677,9 +678,9 @@ function date(ctx: LinuxContext): LinuxResult {
       return ctx.fail('date: cannot set date: Operation not permitted', 1,
         `${describeIdentity(ctx.user, ctx.groups)} Setting the system clock needs the CAP_SYS_TIME capability, which only root has; run it with sudo.`);
     }
-    return ctx.ok(formatDate(new Date(), '%a %b %e %H:%M:%S %Z %Y'));
+    return ctx.ok(formatDate(labNow(), '%a %b %e %H:%M:%S %Z %Y'));
   }
-  let when = new Date();
+  let when = labNow();
   const dArg = optionValue(opts, 'd');
   if (dArg) {
     const parsed = new Date(dArg);

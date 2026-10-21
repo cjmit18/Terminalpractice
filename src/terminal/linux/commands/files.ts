@@ -4,6 +4,7 @@ import { parseOptions } from '../../textUtils';
 import { LinuxContext, LinuxResult, linuxCommands, createInDir } from '../context';
 import { deviceNumbers, inode } from './lookup';
 import { MAX_PATH_DEPTH, pathDepth } from '../../limits';
+import { labNowIso } from '../../labClock';
 
 // Navigation and file management: pwd, cd, ls, mkdir, touch, rm, tee (cat lives with the text filters)
 
@@ -211,7 +212,7 @@ function touch(ctx: LinuxContext): LinuxResult {
     if (!check.ok) return ctx.fail(`touch: cannot touch '${f}': ${check.error || 'Permission denied'}`);
     const existing = ctx.node(targetPath);
     if (existing) {
-      existing.updatedAt = new Date().toISOString();
+      existing.updatedAt = labNowIso();
     } else {
       createInDir(ctx.fs, targetPath, 'file', '', ctx.user, ctx.group, ctx.fileMode());
     }

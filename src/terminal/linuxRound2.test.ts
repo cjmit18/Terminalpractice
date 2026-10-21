@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { linuxSession } from './testUtils.ts';
 import { linuxCommands } from './linux/context.ts';
 import { getNodeAtPath } from './filesystem.ts';
+import { LAB_DATE, LAB_DAY, MS_PER_DAY, labNow } from './labClock.ts';
 
 // Round-2 fact-check, package A: the Linux engine compared with real bash 5 / coreutils
 
@@ -251,4 +252,17 @@ test('A4: anything else is a bad substitution (status 1, the command does not ru
     assert.equal(res.stderr, `bash: ${body}: bad substitution`, body);
     assert.equal(res.exitCode, 1, body);
   }
+});
+
+// ---------- A9: smaller fixes ----------
+
+test('A9: the lab clock: date, new files and new home directories are on Mon 19 Oct 2026', () => {
+  const run = linuxSession();
+  assert.match(run('date').stdout, /^Mon Oct 19 10:2\d:\d\d UTC 2026$/);
+  assert.equal(run('date +%F').stdout, '2026-10-19');
+  run('touch a; mkdir b; sudo useradd -m kim');
+  assert.match(run('ls -ld a b /home/kim').stdout, /^drwxr-x--- .* Oct 19 10:2\d \/home\/kim\n-rw-r--r-- .* Oct 19 10:2\d a\ndrwxr-xr-x .* Oct 19 10:2\d b$/);
+  assert.match(run('timedatectl').stdout, /Local time: Mon 2026-10-19 10:2\d/);
+  assert.equal(LAB_DAY * MS_PER_DAY, Date.UTC(2026, 9, 19));
+  assert.ok(labNow().getTime() >= LAB_DATE);
 });

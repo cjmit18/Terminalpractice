@@ -7,8 +7,6 @@ import { runAwk, AwkError } from '../awk';
 
 // Text processing: echo, cat, head, tail, grep, awk, sed, sort, uniq, wc, cut, tr
 
-const joinOut = (parts: string[]) => parts.filter(p => p !== '').join('\n');
-
 /** Ends a command that read inputs: stdout plus any per-file errors, exit code `errCode` on error. */
 function finish(ctx: LinuxContext, stdout: string, errors: string[], errCode: number, okCode = 0): LinuxResult {
   return ctx.result(stdout, errors.join('\n'), errors.length ? errCode : okCode);
