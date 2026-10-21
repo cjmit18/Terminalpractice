@@ -175,6 +175,7 @@ export const CopyButton: React.FC<{ text: string; label?: string; className?: st
   };
 
   return (
+    <>
     <button
       type="button"
       onClick={copy}
@@ -188,6 +189,9 @@ export const CopyButton: React.FC<{ text: string; label?: string; className?: st
       {copied ? <Check className="h-3.5 w-3.5 text-ok" aria-hidden /> : <Copy className="h-3.5 w-3.5" aria-hidden />}
       <span aria-hidden>{copied ? 'Copied' : 'Copy'}</span>
     </button>
+    {/* A changed button label is not reliably announced; a live region is */}
+    <span className="sr-only" role="status" aria-live="polite">{copied ? 'Copied to clipboard' : ''}</span>
+    </>
   );
 };
 
