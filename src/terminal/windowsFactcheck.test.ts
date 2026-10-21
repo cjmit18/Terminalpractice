@@ -21,6 +21,25 @@ test('psTokenize: quotes removed, (...) and {...} kept whole, spaced comma lists
   assert.equal(psTokenize("'-x'")[0].quoted, true, 'a quoted dash word is a value');
 });
 
+test('PR #10 review: -Name:"value" is a parameter, and a quoted list element keeps its commas', () => {
+  assert.equal(psTokenize('-Name:"Spooler"')[0].quoted, false);
+  const run = windowsSession('powershell');
+  assert.match(run('Get-Service -Name:"Spooler"').stdout, /Spooler/);
+  assert.equal(run('Get-Service -Name:"Spooler"').stderr, '');
+  assert.deepEqual(psTokenize('"CN=A B,OU=X", bob,\'c,d\'')[0].items?.map(x => x.trim()), ['CN=A B,OU=X', 'bob', 'c,d']);
+  const dn = 'CN=John Doe,OU=Marketing,DC=corp,DC=local';
+  // Named, named with a colon, and positional lists
+  for (const line of [`Add-ADGroupMember "Helpdesk Tier 1" -Members "${dn}", mscott`, `Add-ADGroupMember "Helpdesk Tier 1" -Members:"${dn}",mscott`, `Add-ADGroupMember "Helpdesk Tier 1" "${dn}",mscott`]) {
+    const r = windowsSession('powershell');
+    const res = r(line);
+    assert.equal(res.stderr, '', line);
+    const group = r.state().adGroups.find(g => g.name === 'Helpdesk Tier 1')!;
+    assert.ok(group.members.includes('jdoe') && group.members.includes('mscott'), line);
+  }
+  // An unquoted comma list still splits
+  assert.equal(windowsSession('powershell')('Add-ADGroupMember "Helpdesk Tier 1" -Members jdoe,mscott').exitCode, 0);
+});
+
 test('E (W-2, E-9, N-7): New-ADUser binds positional and quoted values and creates disabled accounts', () => {
   const run = windowsSession('powershell');
   assert.equal(run('New-ADUser alex').exitCode, 0);
