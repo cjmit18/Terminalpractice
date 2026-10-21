@@ -139,6 +139,13 @@ test('H-2: Clear-DnsClientCache, Test-Connection, Repair-WindowsImage, Get-NetTC
   const offline = windowsSession('powershell')('Test-Connection 8.8.8.8');
   assert.equal(offline.exitCode, 1);
   assert.match(offline.stderr, /Testing connection to computer '8\.8\.8\.8' failed/);
+  // -Count is validated like PowerShell's Int32 ValidateRange(1, ...) and replies are capped
+  assert.match(run('Test-Connection 127.0.0.1 -Count Infinity').stderr, /Cannot convert value "Infinity" to type "System\.Int32"/);
+  assert.match(run('Test-Connection 127.0.0.1 -Count 0').stderr, /less than the minimum allowed range of 1/);
+  const huge = run('Test-Connection 127.0.0.1 -Count 2147483647');
+  assert.equal(huge.exitCode, 0);
+  assert.equal(huge.stdout.split('\n').filter(l => /^WIN-CLIENT01 +127\.0\.0\.1/.test(l)).length, 100);
+  assert.match(huge.explanation ?? '', /first 100 replies/);
 
   const sfcRun = windowsSession('powershell', { systemIntegrityCorrupted: true, dismRepaired: false });
   assert.match(sfcRun('Repair-WindowsImage -Online -ScanHealth').stdout, /ImageHealthState : Repairable/);
