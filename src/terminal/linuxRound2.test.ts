@@ -169,3 +169,24 @@ test('A5: cat -A / -E / -T / -s / -b show what is in the file', () => {
   assert.equal(run('printf "a\\tb\\n\\n\\nc\\n" | cat -sbT').stdout, '     1\ta^Ib\n\n     2\tc');
   assert.equal(run('printf "x\\ty\\n" | cat -E').stdout, 'x\ty$');
 });
+
+// ---------- A6: journalctl -k and dmesg -T ----------
+
+test('A6: journalctl -k shows the kernel ring buffer; dmesg -T prints wall-clock times', () => {
+  const run = linuxSession();
+  const sata = run('journalctl -k | grep -i sata');
+  assert.equal(sata.exitCode, 0);
+  assert.equal(sata.stdout, 'Oct 19 08:00:01 lpi-lab01 kernel: ahci 0000:00:1f.2: AHCI 0001.0000 32 slots 6 ports 1.5 Gbps 0x3f impl SATA mode');
+  // Same lines for --dmesg and -b -k, and every kernel line of dmesg appears in the journal
+  assert.equal(run('journalctl --dmesg').stdout, run('journalctl -k').stdout);
+  assert.equal(run('journalctl -b -k').stdout, run('journalctl -k').stdout);
+  const kernel = run('journalctl -k').stdout.split('\n').slice(1);
+  assert.equal(kernel.length, run('dmesg').stdout.split('\n').length);
+  assert.ok(kernel.every(l => / lpi-lab01 kernel: /.test(l)));
+  assert.match(run('journalctl').stdout, /^-- Journal begins at Mon 2026-10-19 08:00:00 UTC, ends at Mon 2026-10-19 10:25:00 UTC\. --\nOct 19 08:00:00 lpi-lab01 kernel: Linux version/);
+  assert.equal(run('dmesg -T | grep ahci').stdout, '[Mon Oct 19 08:00:01 2026] ahci 0000:00:1f.2: AHCI 0001.0000 32 slots 6 ports 1.5 Gbps 0x3f impl SATA mode');
+  assert.match(run('dmesg').stdout, /^\[ {4}0\.000000\] Linux version/);
+  // The journal is volatile in the lab, so there is no previous boot
+  assert.equal(run('journalctl -b -1').stderr, 'Specifying boot ID or boot offset has no effect, no persistent journal was found.');
+  assert.match(run('systemctl status ssh').stdout, /since Mon 2026-10-19/);
+});
