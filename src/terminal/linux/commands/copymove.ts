@@ -1,7 +1,7 @@
 import { FileNode } from '../../../types/terminal';
-import { createNode, writeFileContent, modeBits, toOctalField, getNodeAtPath } from '../../filesystem';
+import { writeFileContent, modeBits, toOctalField, getNodeAtPath } from '../../filesystem';
 import { parseOptions } from '../../textUtils';
-import { LinuxContext, LinuxResult, linuxCommands } from '../context';
+import { LinuxContext, LinuxResult, linuxCommands, createInDir } from '../context';
 
 // cp and mv
 
@@ -69,7 +69,7 @@ function cp(ctx: LinuxContext): LinuxResult {
       if (existing) {
         writeFileContent(existing, node.content || '');
       } else {
-        createNode(ctx.fs, destAbs, 'file', node.content || '', false, preserve && ctx.isRoot ? node.owner : ctx.user,
+        createInDir(ctx.fs, destAbs, 'file', node.content || '', preserve && ctx.isRoot ? node.owner : ctx.user,
           preserve && ctx.isRoot ? node.group : ctx.group, newMode(node));
       }
     } else {
@@ -91,7 +91,7 @@ function cp(ctx: LinuxContext): LinuxResult {
           errors.push(`cp: cannot create directory '${destLabel}': ${check.error}`);
           return;
         }
-        createNode(ctx.fs, destAbs, 'directory', '', false, ctx.user, ctx.group, newMode(node));
+        createInDir(ctx.fs, destAbs, 'directory', '', ctx.user, ctx.group, newMode(node));
       }
       for (const name of Object.keys(node.children ?? {}).sort()) {
         copy(node.children![name], joinLabel(srcAbs, name), joinLabel(srcLabel, name), joinLabel(destAbs, name), joinLabel(destLabel, name));

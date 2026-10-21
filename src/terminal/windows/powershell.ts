@@ -1,149 +1,292 @@
-import { ADUser, WindowsService } from '../../types/terminal';
+import { NetworkInterface, ProcessItem, WindowsService } from '../../types/terminal';
 import { globToRegex } from '../textUtils';
 import { WindowsContext, WindowsResult, psCommands } from './context';
-import { NetworkInterface } from '../../types/terminal';
-import { bindParams, psError, badParameter } from './psUtil';
+import { bindCmdlet, PsBound, PsParamSpec, psError } from './psUtil';
 import { resolveHost, hasConnectivity } from './cmd/network';
-import { allProcesses } from './cmd/system';
+import { allProcesses, CRITICAL_PROCESSES, endProcess } from './cmd/system';
+import './psAD';
 
-// PowerShell cmdlets. Handlers see the whole line in ctx.raw because most cmdlets parse
-// named parameters (-Identity, -Port ...) straight from it.
+// PowerShell service, process and network cmdlets. Pipelines are run by psPipeline.ts.
 
-type Row = Record<string, unknown>;
+export type Row = Record<string, unknown>;
 
-export function applyWhereObjectFilter<T extends Row>(items: T[], rawWhereCmd: string): { items: T[]; error?: string } {
-  const afterCmd = rawWhereCmd.trim().replace(/^(Where-Object|where|\?)\s*/i, '').trim();
-  // { $_.Prop -op 'Val' }  or  Prop -op Val
-  const blockMatch = afterCmd.match(/^\{\s*\$_\.([a-zA-Z0-9_]+)\s+(-eq|-ne|-like)\s+['"]?([^'"}]+)['"]?\s*\}$/i);
-  const simpleMatch = afterCmd.match(/^([a-zA-Z0-9_]+)\s+(-eq|-ne|-like)\s+['"]?([^'"]+)['"]?$/i);
-  const match = blockMatch || simpleMatch;
-  if (!match) return { items: [], error: 'Where-Object: filtering is not supported in this sim' };
+export const SERVICE_HEADER = 'Status   Name               DisplayName\n------   ----               -----------';
+export const PROCESS_HEADER = ' NPM(K)    PM(M)      WS(M)     CPU(s)      Id  SI ProcessName\n ------    -----      -----     ------      --  -- -----------';
 
-  const propName = match[1];
-  const op = match[2].toLowerCase();
-  const targetVal = match[3].trim().toLowerCase();
-  const filtered = items.filter(item => {
-    const key = Object.keys(item).find(k => k.toLowerCase() === propName.toLowerCase());
-    if (!key) return false;
-    const val = String(item[key]).toLowerCase();
-    if (op === '-eq') return val === targetVal;
-    if (op === '-ne') return val !== targetVal;
-    const regexStr = '^' + targetVal.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$';
-    return new RegExp(regexStr, 'i').test(val);
-  });
-  return { items: filtered };
+/** Service objects as the pipeline sees them (the ServiceController properties). */
+export const serviceObject = (s: WindowsService): Row => ({ Status: s.status, Name: s.name, DisplayName: s.displayName, StartType: s.startType, ServiceName: s.name });
+export const serviceTable = (items: Row[]) =>
+  `${SERVICE_HEADER}\n${items.map(s => `${String(s.Status).padEnd(8, ' ')} ${String(s.Name).padEnd(18, ' ')} ${s.DisplayName}`).join('\n')}`;
+
+/** Process objects as the pipeline sees them. */
+export const processObject = (p: ProcessItem): Row => {
+  const name = p.command.replace(/\.exe$/i, '');
+  return { ProcessName: name, Id: p.pid, CPU: p.cpu, WS: Math.round(p.mem * 2 * 1048576), PM: Math.round(p.mem * 1048576), SI: p.user === 'SYSTEM' ? 0 : 1, Name: name, UserName: p.user };
+};
+export const processTable = (items: Row[]) => `${PROCESS_HEADER}\n${items.map(p => {
+  const mem = Number(p.PM) / 1048576;
+  return `     10     ${mem.toFixed(2).padStart(5, ' ')}      ${(mem * 2).toFixed(2).padStart(5, ' ')}       ${Number(p.CPU).toFixed(2).padStart(5, ' ')}    ${String(p.Id).padStart(4, ' ')}   ${p.SI} ${p.ProcessName}`;
+}).join('\n')}`;
+
+function bind(ctx: WindowsContext, cmdlet: string, spec: Record<string, PsParamSpec>, aliases: Record<string, string> = {}): PsBound | WindowsResult {
+  const b = bindCmdlet(ctx.raw, cmdlet, ctx.tokens, spec, aliases);
+  return typeof b === 'string' ? ctx.fail(b) : b;
 }
+const isResult = (b: PsBound | WindowsResult): b is WindowsResult => 'exitCode' in b;
 
-const SERVICE_HEADER = 'Status   Name               DisplayName\n------   ----               -----------';
-const PROCESS_HEADER = ' NPM(K)    PM(M)      WS(M)     CPU(s)      Id  SI ProcessName\n ------    -----      -----     ------      --  -- -----------';
+// ---------------------------------------------------------------- services
 
-const serviceRows = (items: { status: string; name: string; displayName: string }[]) =>
-  items.map(s => `${s.status.padEnd(8, ' ')} ${s.name.padEnd(18, ' ')} ${s.displayName}`);
-const processRows = (items: { mem: number; cpu: number; pid: number; command: string }[]) =>
-  items.map(p => `     10     ${p.mem.toFixed(2).padStart(5, ' ')}      ${(p.mem * 2).toFixed(2).padStart(5, ' ')}       ${p.cpu.toFixed(2).padStart(5, ' ')}    ${p.pid.toString().padStart(4, ' ')}   1 ${p.command}`);
-
-/** Objects as the pipeline sees them: the real property names, plus the state fields. */
-const serviceObject = (s: WindowsService): Row => ({ ...s, Status: s.status, Name: s.name, DisplayName: s.displayName, StartType: s.startType, ServiceName: s.name });
-function processObjects(ctx: WindowsContext): Row[] {
-  return allProcesses(ctx).filter(p => p.pid !== 0).map(p => {
-    const name = p.command.replace(/\.exe$/i, '');
-    return { ...p, command: name, ProcessName: name, Name: name, Id: p.pid, CPU: p.cpu, WS: Math.round(p.mem * 2 * 1048576), PM: Math.round(p.mem * 1048576) };
-  });
-}
-
-const STATUS_RANK: Record<string, number> = { Stopped: 1, StartPending: 2, StopPending: 3, Running: 4 };
-
-/** Sort-Object [-Property] a[,b] [-Descending] [-Unique]. */
-function sortObjects(items: Row[], stage: { args: string[]; raw: string }, defaultKey: string): Row[] | string {
-  const p = bindParams(stage.args, { Property: 'value', Descending: 'switch', Unique: 'switch', CaseSensitive: 'switch' });
-  if (typeof p === 'string') return badParameter(stage.raw, 'Sort-Object', p);
-  const props = String(p.named.get('Property') ?? p.positional.join(',') ?? '').split(',').map(x => x.trim()).filter(Boolean);
-  const keys = props.length ? props : [defaultKey];
-  const value = (item: Row, key: string) => {
-    const k = Object.keys(item).find(x => x.toLowerCase() === key.toLowerCase());
-    return k ? item[k] : undefined;
-  };
-  const dir = p.named.has('Descending') ? -1 : 1;
-  const sorted = [...items].sort((a, b) => {
-    for (const k of keys) {
-      const x = value(a, k);
-      const y = value(b, k);
-      // Status is an enum (Stopped = 1 ... Running = 4), so it sorts by number, not by name
-      const rank = (v: unknown) => (k.toLowerCase() === 'status' && typeof v === 'string' && v in STATUS_RANK ? STATUS_RANK[v] : v);
-      const [rx, ry] = [rank(x), rank(y)];
-      const c = typeof rx === 'number' && typeof ry === 'number' ? rx - ry : String(rx ?? '').localeCompare(String(ry ?? ''), 'en', { sensitivity: 'base' });
-      if (c) return c * dir;
-    }
-    return 0;
-  });
-  if (!p.named.has('Unique')) return sorted;
-  return sorted.filter((it, i) => i === 0 || keys.some(k => String(value(it, k)).toLowerCase() !== String(value(sorted[i - 1], k)).toLowerCase()));
-}
-
-/** Select-Object -First/-Last N (other uses are not modelled). */
-function selectObjects(items: Row[], stage: { args: string[]; raw: string }): Row[] | string {
-  const p = bindParams(stage.args, { First: 'value', Last: 'value', Skip: 'value', Property: 'value' });
-  if (typeof p === 'string') return badParameter(stage.raw, 'Select-Object', p);
-  let out = items;
-  if (p.named.has('Skip')) out = out.slice(Number(p.named.get('Skip')) || 0);
-  if (p.named.has('First')) out = out.slice(0, Number(p.named.get('First')) || 0);
-  if (p.named.has('Last')) out = out.slice(-(Number(p.named.get('Last')) || 0));
-  return out;
-}
-
-/**
- * Runs Get-Service or Get-Process piped into Where-Object, Sort-Object and Select-Object.
- * Returns null when the line is not such a pipeline.
- */
-export function runPowerShellPipeline(ctx: WindowsContext, stages: { name: string; raw: string; args: string[] }[]): WindowsResult | null {
-  if (stages.length < 2) return null;
-  const s0 = stages[0].raw.trim();
-  const isService = /^(Get-Service|gsv)\b/i.test(s0);
-  const isProcess = /^(Get-Process|gps|ps)\b/i.test(s0);
-  if (!isService && !isProcess) return null;
-
-  let items: Row[];
-  if (isService) {
-    const sub = new WindowsContext(stages[0].name, stages[0].args, '', s0, ctx.cwd, ctx.fs, ctx.state);
-    const m = matchServices(sub, 'Get-Service');
-    if (typeof m === 'string') return ctx.fail(m);
-    items = m.items.map(serviceObject);
-  } else {
-    items = processObjects(ctx);
-  }
-  for (const stage of stages.slice(1)) {
-    const name = stage.name.toLowerCase();
-    let next: Row[] | string;
-    if (['where-object', 'where', '?'].includes(name)) {
-      const res = applyWhereObjectFilter(items, stage.raw.trim());
-      next = res.error ?? res.items;
-    } else if (name === 'sort-object' || name === 'sort') {
-      next = sortObjects(items, stage, isService ? 'Name' : 'ProcessName');
-    } else if (name === 'select-object' || name === 'select') {
-      next = selectObjects(items, stage);
-    } else {
-      return ctx.fail(`${stage.name}: pipeline filter not supported in this sim`);
-    }
-    if (typeof next === 'string') return ctx.fail(next);
-    items = next;
-  }
-  if (!items.length) return ctx.ok('');
-  return ctx.ok(isService
-    ? `${SERVICE_HEADER}\n${serviceRows(items as never).join('\n')}`
-    : `${PROCESS_HEADER}\n${processRows(items as never).join('\n')}`);
-}
-
-const param = (line: string, name: string): string | undefined => {
-  const m = line.match(new RegExp(`-${name}\\s+"([^"]+)"|-${name}\\s+([^\\s]+)`, 'i'));
-  return m ? (m[1] || m[2]) : undefined;
+const SERVICE_PARAMS: Record<string, PsParamSpec> = {
+  Name: { kind: 'list', position: 0 }, DisplayName: { kind: 'list' }, Force: { kind: 'switch' }, PassThru: { kind: 'switch' },
+  NoWait: { kind: 'switch' }, Include: { kind: 'list' }, Exclude: { kind: 'list' }, ComputerName: { kind: 'list' },
+  DependentServices: { kind: 'switch' }, RequiredServices: { kind: 'switch' }, WhatIf: { kind: 'switch' }, Confirm: { kind: 'switch' },
 };
 
+/** Services matching -Name / positional names (comma lists and wildcards), or an error result. */
+export function matchServices(ctx: WindowsContext, cmdlet: string, extra: Record<string, PsParamSpec> = {}): { items: WindowsService[]; error?: string; b: PsBound } | WindowsResult {
+  const b = bind(ctx, cmdlet, { ...SERVICE_PARAMS, ...extra }, { ServiceName: 'Name', SN: 'Name' });
+  if (isResult(b)) return b;
+  const wanted = b.list('Name') ?? [];
+  const display = b.list('DisplayName') ?? [];
+  if (wanted.length === 0 && !display.length) return { items: ctx.state.services, b };
+  const items: WindowsService[] = [];
+  const errors: string[] = [];
+  for (const w of wanted) {
+    const re = globToRegex(w, true);
+    const found = ctx.state.services.filter(s => re.test(s.name) || re.test(s.displayName) && !/[*?]/.test(w));
+    if (found.length === 0 && !/[*?]/.test(w)) {
+      errors.push(psError(ctx.raw, cmdlet, `Cannot find any service with service name '${w}'.`, 'ObjectNotFound', w, 'ServiceCommandException', 'NoServiceFoundForGivenName'));
+    }
+    items.push(...found.filter(f => !items.includes(f)));
+  }
+  for (const d of display) items.push(...ctx.state.services.filter(s => globToRegex(d, true).test(s.displayName) && !items.includes(s)));
+  return { items, error: errors.join('\n') || undefined, b };
+}
+
+function getService(ctx: WindowsContext): WindowsResult {
+  const m = matchServices(ctx, 'Get-Service');
+  if ('exitCode' in m) return m;
+  const items = [...m.items].sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }));
+  const out = items.length ? serviceTable(items.map(serviceObject)) : '';
+  return ctx.result(out, m.error ?? '', m.error ? 1 : 0);
+}
+
+const notElevatedService = (ctx: WindowsContext) =>
+  `You are '${ctx.state.currentUser}', a standard user (not elevated). Changing services needs an elevated PowerShell (Run as administrator).`;
+
+function setServiceStatus(status: 'Running' | 'Stopped', cmdlet: 'Start-Service' | 'Stop-Service' | 'Restart-Service') {
+  return (ctx: WindowsContext): WindowsResult => {
+    const m = matchServices(ctx, cmdlet);
+    if ('exitCode' in m) return m;
+    if (m.error) return ctx.fail(m.error);
+    if (!m.b.has('Name') && !m.b.has('DisplayName')) {
+      return ctx.fail(psError(ctx.raw, cmdlet, 'Cannot process command because of one or more missing mandatory parameters: Name.', 'InvalidArgument', '', 'ParameterBindingException', 'MissingMandatoryParameter'));
+    }
+    const verb = cmdlet === 'Stop-Service' ? 'stop' : cmdlet === 'Restart-Service' ? 'restart' : 'start';
+    if (m.b.has('WhatIf')) {
+      return ctx.ok(m.items.map(s => `What if: Performing the operation "${cmdlet}" on target "${s.displayName} (${s.name})".`).join('\n'));
+    }
+    if (!ctx.isAdmin) {
+      const s = m.items[0];
+      return ctx.fail(psError(ctx.raw, cmdlet, `Service '${s?.displayName} (${s?.name})' cannot be ${verb === 'stop' ? 'stopped' : 'started'} due to the following error: Cannot open ${s?.name} service on computer '.'.`,
+        'OpenError', s?.name ?? '', 'ServiceCommandException', `CouldNot${verb === 'stop' ? 'Stop' : 'Start'}Service`), 1, notElevatedService(ctx));
+    }
+    for (const s of m.items) {
+      if (status === 'Running' && s.startType === 'Disabled') {
+        return ctx.fail(psError(ctx.raw, cmdlet, `Service '${s.displayName} (${s.name})' cannot be started due to the following error: Cannot start service ${s.name} on computer '.'.`,
+          'OpenError', s.name, 'ServiceCommandException', 'CouldNotStartService'));
+      }
+      s.status = status;
+    }
+    return ctx.ok(m.b.has('PassThru') ? serviceTable(m.items.map(serviceObject)) : '');
+  };
+}
+
+const START_MODES = ['Boot', 'System', 'Automatic', 'Manual', 'Disabled'];
+
+function setService(ctx: WindowsContext): WindowsResult {
+  const cmdlet = 'Set-Service';
+  const m = matchServices(ctx, cmdlet, { StartupType: { kind: 'value' }, Status: { kind: 'value' }, Description: { kind: 'value' }, InputObject: { kind: 'value' } }, );
+  if ('exitCode' in m) return m;
+  if (m.error) return ctx.fail(m.error.replace(/Cannot find any service with service name '([^']+)'\./, "Service $1 was not found on computer '.'."));
+  const { b } = m;
+  const type = b.str('StartupType');
+  const mode = type === undefined ? undefined : START_MODES.find(x => x.toLowerCase() === type.toLowerCase());
+  if (type !== undefined && !mode) {
+    return ctx.fail(psError(ctx.raw, cmdlet, `Cannot bind parameter 'StartupType'. Cannot convert value "${type}" to type "System.ServiceProcess.ServiceStartMode". Error: "Unable to match the identifier name ${type} to a valid enumerator name. Specify one of the following enumerator names and try again:\n${START_MODES.join(', ')}"`,
+      'InvalidArgument', '', 'ParameterBindingException', 'CannotConvertArgumentNoMessage'));
+  }
+  const statusArg = b.str('Status');
+  const status = statusArg === undefined ? undefined : ['Running', 'Stopped', 'Paused'].find(x => x.toLowerCase() === statusArg.toLowerCase());
+  if (statusArg !== undefined && !status) {
+    return ctx.fail(psError(ctx.raw, cmdlet, `Cannot bind parameter 'Status'. Cannot convert value "${statusArg}" to type "System.ServiceProcess.ServiceControllerStatus".`, 'InvalidArgument', '', 'ParameterBindingException', 'CannotConvertArgumentNoMessage'));
+  }
+  if (!ctx.isAdmin) {
+    const s = m.items[0];
+    return ctx.fail(psError(ctx.raw, cmdlet, `Service '${s?.displayName} (${s?.name})' cannot be configured due to the following error: Access is denied`, 'PermissionDenied', s?.name ?? '', 'ServiceCommandException', 'CouldNotSetService'), 1, notElevatedService(ctx));
+  }
+  for (const s of m.items) {
+    if (mode === 'Automatic' || mode === 'Manual' || mode === 'Disabled') s.startType = mode;
+    if (status === 'Running') {
+      if (s.startType === 'Disabled') {
+        return ctx.fail(psError(ctx.raw, cmdlet, `Service '${s.displayName} (${s.name})' cannot be started due to the following error: Cannot start service ${s.name} on computer '.'.`, 'OpenError', s.name, 'ServiceCommandException', 'CouldNotStartService'));
+      }
+      s.status = 'Running';
+    } else if (status === 'Stopped') {
+      s.status = 'Stopped';
+    }
+  }
+  return ctx.ok(b.has('PassThru') ? serviceTable(m.items.map(serviceObject)) : '');
+}
+
+function suspendResume(cmdlet: 'Suspend-Service' | 'Resume-Service') {
+  return (ctx: WindowsContext): WindowsResult => {
+    const m = matchServices(ctx, cmdlet);
+    if ('exitCode' in m) return m;
+    if (m.error) return ctx.fail(m.error);
+    const s = m.items[0];
+    if (!s) return ctx.ok();
+    return ctx.fail(psError(ctx.raw, cmdlet, `Service '${s.displayName} (${s.name})' cannot be ${cmdlet === 'Suspend-Service' ? 'suspended' : 'resumed'} because the service does not support being suspended or resumed.`,
+      'CloseError', s.name, 'ServiceCommandException', `CouldNot${cmdlet === 'Suspend-Service' ? 'Suspend' : 'Resume'}ServiceNotSupported`));
+  };
+}
+
+function newService(ctx: WindowsContext): WindowsResult {
+  const cmdlet = 'New-Service';
+  const b = bind(ctx, cmdlet, {
+    Name: { kind: 'value', position: 0 }, BinaryPathName: { kind: 'value', position: 1 }, DisplayName: { kind: 'value' }, Description: { kind: 'value' },
+    StartupType: { kind: 'value' }, Credential: { kind: 'value' }, DependsOn: { kind: 'list' }, WhatIf: { kind: 'switch' }, Confirm: { kind: 'switch' },
+  }, { Path: 'BinaryPathName' });
+  if (isResult(b)) return b;
+  const name = b.str('Name');
+  const bin = b.str('BinaryPathName');
+  if (!name || !bin) return ctx.fail(psError(ctx.raw, cmdlet, `Cannot process command because of one or more missing mandatory parameters: ${!name ? 'Name ' : ''}${!bin ? 'BinaryPathName' : ''}`.trim() + '.', 'InvalidArgument', '', 'ParameterBindingException', 'MissingMandatoryParameter'));
+  if (!ctx.isAdmin) {
+    return ctx.fail(psError(ctx.raw, cmdlet, `Service '${name} (${name})' cannot be created due to the following error: Access is denied`, 'PermissionDenied', name, 'ServiceCommandException', 'CouldNotNewService'), 1, notElevatedService(ctx));
+  }
+  if (ctx.state.services.some(s => s.name.toLowerCase() === name.toLowerCase())) {
+    return ctx.fail(psError(ctx.raw, cmdlet, `Service '${name} (${name})' cannot be created due to the following error: The specified service already exists`, 'PermissionDenied', name, 'ServiceCommandException', 'CouldNotNewService'));
+  }
+  const type = b.str('StartupType');
+  const mode = (['Automatic', 'Manual', 'Disabled'] as const).find(x => x.toLowerCase() === (type ?? 'automatic').toLowerCase()) ?? 'Automatic';
+  const svc: WindowsService = { name, displayName: b.str('DisplayName') ?? name, status: 'Stopped', startType: mode };
+  ctx.state.services = [...ctx.state.services, svc];
+  return ctx.ok(serviceTable([serviceObject(svc)]));
+}
+
+// ---------------------------------------------------------------- processes
+
+/** Get-Process as objects, or an error result. */
+export function getProcessRows(ctx: WindowsContext): Row[] | WindowsResult {
+  const b = bind(ctx, 'Get-Process', {
+    Name: { kind: 'list', position: 0 }, Id: { kind: 'list' }, IncludeUserName: { kind: 'switch' }, Module: { kind: 'switch' },
+    FileVersionInfo: { kind: 'switch' }, ComputerName: { kind: 'list' }, InputObject: { kind: 'value' },
+  }, { ProcessName: 'Name', PID: 'Id' });
+  if (isResult(b)) return b;
+  let procs = allProcesses(ctx).filter(x => x.pid !== 0);
+  const names = b.list('Name');
+  const ids = b.list('Id');
+  const errors: string[] = [];
+  if (names) {
+    const picked: ProcessItem[] = [];
+    for (const n of names) {
+      const re = globToRegex(n, true);
+      const hits = procs.filter(x => re.test(x.command.replace(/\.exe$/i, '')));
+      if (!hits.length && !/[*?]/.test(n)) {
+        errors.push(psError(ctx.raw, 'Get-Process', `Cannot find a process with the name "${n}". Verify the process name and call the cmdlet again.`,
+          'ObjectNotFound', n, 'ProcessCommandException', 'NoProcessFoundForGivenName'));
+      }
+      picked.push(...hits.filter(h => !picked.includes(h)));
+    }
+    procs = picked;
+  }
+  if (ids) {
+    const picked: ProcessItem[] = [];
+    for (const id of ids) {
+      const hit = procs.find(x => String(x.pid) === id);
+      if (!hit) {
+        errors.push(psError(ctx.raw, 'Get-Process', `Cannot find a process with the process identifier ${id}.`, 'ObjectNotFound', id, 'ProcessCommandException', 'NoProcessFoundForGivenId').replace(`(${id}:String)`, `(${id}:Int32)`));
+      } else if (!picked.includes(hit)) picked.push(hit);
+    }
+    procs = picked;
+  }
+  if (errors.length && !procs.length) return ctx.fail(errors.join('\n'));
+  procs.sort((x, y) => x.command.toLowerCase().localeCompare(y.command.toLowerCase()));
+  const rows = procs.map(processObject);
+  if (errors.length) (rows as Row[] & { errors?: string }).errors = errors.join('\n');
+  return rows;
+}
+
+function getProcess(ctx: WindowsContext): WindowsResult {
+  const rows = getProcessRows(ctx);
+  if (!Array.isArray(rows)) return rows;
+  const errors = (rows as Row[] & { errors?: string }).errors ?? '';
+  return ctx.result(rows.length ? processTable(rows) : '', errors, errors ? 1 : 0);
+}
+
+function stopProcess(ctx: WindowsContext): WindowsResult {
+  const cmdlet = 'Stop-Process';
+  const b = bind(ctx, cmdlet, {
+    Id: { kind: 'list', position: 0 }, Name: { kind: 'list' }, InputObject: { kind: 'value' }, Force: { kind: 'switch' },
+    PassThru: { kind: 'switch' }, WhatIf: { kind: 'switch' }, Confirm: { kind: 'switch' },
+  }, { ProcessName: 'Name', PID: 'Id' });
+  if (isResult(b)) return b;
+  const ids = b.list('Id');
+  const names = b.list('Name');
+  if (!ids && !names) {
+    return ctx.fail(psError(ctx.raw, cmdlet, 'Cannot process command because of one or more missing mandatory parameters: Id.', 'InvalidArgument', '', 'ParameterBindingException', 'MissingMandatoryParameter'));
+  }
+  const procs = allProcesses(ctx).filter(p => p.pid !== 0);
+  const targets: ProcessItem[] = [];
+  const errors: string[] = [];
+  for (const id of ids ?? []) {
+    if (!/^\d+$/.test(id)) {
+      return ctx.fail(psError(ctx.raw, cmdlet, `Cannot bind parameter 'Id'. Cannot convert value "${id}" to type "System.Int32". Error: "Input string was not in a correct format."`, 'InvalidArgument', '', 'ParameterBindingException', 'CannotConvertArgumentNoMessage'));
+    }
+    const p = procs.find(x => String(x.pid) === id);
+    if (p) targets.push(p);
+    else errors.push(psError(ctx.raw, cmdlet, `Cannot find a process with the process identifier ${id}.`, 'ObjectNotFound', id, 'ProcessCommandException', 'NoProcessFoundForGivenId').replace(`(${id}:String)`, `(${id}:Int32)`));
+  }
+  for (const n of names ?? []) {
+    const re = globToRegex(n.replace(/\.exe$/i, ''), true);
+    const hits = procs.filter(x => re.test(x.command.replace(/\.exe$/i, '')));
+    if (!hits.length && !/[*?]/.test(n)) {
+      errors.push(psError(ctx.raw, cmdlet, `Cannot find a process with the name "${n}". Verify the process name and call the cmdlet again.`, 'ObjectNotFound', n, 'ProcessCommandException', 'NoProcessFoundForGivenName'));
+    }
+    targets.push(...hits.filter(h => !targets.includes(h)));
+  }
+  const out: string[] = [];
+  let note: string | undefined;
+  for (const p of targets) {
+    const name = p.command.replace(/\.exe$/i, '');
+    if (b.has('WhatIf')) { out.push(`What if: Performing the operation "Stop-Process" on target "${name} (${p.pid})".`); continue; }
+    const critical = CRITICAL_PROCESSES.has(p.command.toLowerCase());
+    const otherUser = !ctx.isAdmin && p.user.toLowerCase() !== ctx.state.currentUser.toLowerCase();
+    if (critical || otherUser) {
+      errors.push(psError(ctx.raw, cmdlet, `Cannot stop process "${name} (${p.pid})" because of the following error: Access is denied`, 'CloseError', `System.Diagnostics.Process (${name})`, 'ProcessCommandException', 'CouldNotStopProcess')
+        .replace(`(System.Diagnostics.Process (${name}):String)`, `(System.Diagnostics.Process (${name}):Process)`));
+      note = critical
+        ? `${p.command} is a critical system process; Windows refuses to end it even for administrators.`
+        : `You are '${ctx.state.currentUser}', a standard user (not elevated). Ending a process owned by ${p.user} needs an elevated PowerShell (Run as administrator).`;
+      continue;
+    }
+    endProcess(ctx, p.pid);
+    if (b.has('PassThru')) out.push(processTable([processObject(p)]));
+  }
+  return ctx.result(out.join('\n'), errors.join('\n'), errors.length ? 1 : 0, note);
+}
+
+// ---------------------------------------------------------------- network
+
 function testNetConnection(ctx: WindowsContext): WindowsResult {
-  const p = bindParams(ctx.args, { ComputerName: 'value', Port: 'value', InformationLevel: 'value', CommonTCPPort: 'value' }, { RemoteAddress: 'ComputerName', cn: 'ComputerName' });
-  if (typeof p === 'string') return ctx.fail(badParameter(ctx.raw, 'Test-NetConnection', p));
-  const host = (p.named.get('ComputerName') as string | undefined) ?? p.positional[0] ?? 'internetbeacon.msedge.net';
+  const b = bind(ctx, 'Test-NetConnection', {
+    ComputerName: { kind: 'value', position: 0 }, Port: { kind: 'value' }, InformationLevel: { kind: 'value' }, CommonTCPPort: { kind: 'value', position: 1 },
+    TraceRoute: { kind: 'switch' }, Hops: { kind: 'value' },
+  }, { RemoteAddress: 'ComputerName', cn: 'ComputerName', RemotePort: 'Port' });
+  if (isResult(b)) return b;
+  const host = b.str('ComputerName') ?? 'internetbeacon.msedge.net';
   const common: Record<string, number> = { http: 80, rdp: 3389, smb: 445, winrm: 5985 };
-  const portArg = (p.named.get('Port') as string | undefined) ?? (p.named.has('CommonTCPPort') ? String(common[String(p.named.get('CommonTCPPort')).toLowerCase()] ?? '') : undefined);
+  const portArg = b.str('Port') ?? (b.has('CommonTCPPort') ? String(common[String(b.str('CommonTCPPort')).toLowerCase()] ?? '') : undefined);
   const port = portArg !== undefined ? parseInt(portArg, 10) : undefined;
   const iface = ctx.state.interfaces[0];
   const source = iface?.ip ?? '192.168.1.145';
@@ -154,8 +297,10 @@ function testNetConnection(ctx: WindowsContext): WindowsResult {
     warnings.push(`WARNING: Name resolution of ${host} failed`);
     return ctx.result([`ComputerName   : ${host}`, 'RemoteAddress  :', `InterfaceAlias : ${alias}`, `SourceAddress  : ${source}`, 'PingSucceeded  : False'].join('\n'), warnings.join('\n'), 1);
   }
-  const reachable = ip.startsWith('127.') || hasConnectivity(ctx);
+  const self = ip.startsWith('127.') || ctx.state.interfaces.some(i => i.ip === ip);
+  const reachable = self || hasConnectivity(ctx);
   const tcpOk = reachable && port !== undefined && !ctx.state.firewallBlockedPorts.includes(port);
+  if (b.str('InformationLevel')?.toLowerCase() === 'quiet') return ctx.ok(port !== undefined ? (tcpOk ? 'True' : 'False') : reachable ? 'True' : 'False');
   if (port !== undefined && tcpOk) {
     return ctx.ok([
       `ComputerName     : ${host}`,
@@ -175,230 +320,24 @@ function testNetConnection(ctx: WindowsContext): WindowsResult {
     `InterfaceAlias         : ${alias}`,
     `SourceAddress          : ${source}`,
     `PingSucceeded          : ${reachable ? 'True' : 'False'}`,
-    ...(reachable ? [`PingReplyDetails (RTT) : ${ip.startsWith('127.') ? 0 : 12} ms`] : []),
+    ...(reachable ? [`PingReplyDetails (RTT) : ${self ? 0 : 12} ms`] : []),
     ...(port !== undefined ? ['TcpTestSucceeded       : False'] : []),
   ];
   return ctx.result(lines.join('\n'), warnings.join('\n'), reachable && port === undefined ? 0 : 1);
 }
 
-/** Services matching -Name / positional names (comma lists and wildcards), or an error block. */
-function matchServices(ctx: WindowsContext, cmdlet: string): { items: WindowsService[]; error?: string } | string {
-  const p = bindParams(ctx.args, { Name: 'value', DisplayName: 'value', Force: 'switch', PassThru: 'switch' }, { ServiceName: 'Name' });
-  if (typeof p === 'string') return badParameter(ctx.raw, cmdlet, p);
-  const wanted = [...((p.named.get('Name') as string | undefined)?.split(',') ?? []), ...p.positional.flatMap(x => x.split(','))]
-    .map(x => x.trim()).filter(Boolean);
-  const display = p.named.get('DisplayName') as string | undefined;
-  if (wanted.length === 0 && !display) return { items: ctx.state.services };
-  const items: WindowsService[] = [];
-  const errors: string[] = [];
-  for (const w of wanted) {
-    const re = globToRegex(w, true);
-    const found = ctx.state.services.filter(s => re.test(s.name));
-    if (found.length === 0 && !/[*?]/.test(w)) {
-      errors.push(psError(ctx.raw, cmdlet, `Cannot find any service with service name '${w}'.`, 'ObjectNotFound', w, 'ServiceCommandException', 'NoServiceFoundForGivenName'));
-    }
-    items.push(...found.filter(f => !items.includes(f)));
-  }
-  if (display) items.push(...ctx.state.services.filter(s => globToRegex(display, true).test(s.displayName) && !items.includes(s)));
-  return { items, error: errors.join('\n') || undefined };
-}
-
-function getService(ctx: WindowsContext): WindowsResult {
-  const m = matchServices(ctx, 'Get-Service');
-  if (typeof m === 'string') return ctx.fail(m);
-  const out = m.items.length ? `${SERVICE_HEADER}\n${serviceRows(m.items).join('\n')}` : '';
-  return ctx.result(out, m.error ?? '', m.error ? 1 : 0);
-}
-
-function setServiceStatus(status: 'Running' | 'Stopped', cmdlet: 'Start-Service' | 'Stop-Service' | 'Restart-Service') {
-  return (ctx: WindowsContext): WindowsResult => {
-    const m = matchServices(ctx, cmdlet);
-    if (typeof m === 'string') return ctx.fail(m);
-    if (m.error) return ctx.fail(m.error);
-    if (!ctx.isAdmin) {
-      const s = m.items[0];
-      const verb = cmdlet === 'Stop-Service' ? 'stopped' : 'started';
-      return ctx.fail(psError(ctx.raw, cmdlet, `Service '${s?.displayName} (${s?.name})' cannot be ${verb} due to the following error: Cannot open ${s?.name} service on computer '.'.`,
-        'OpenError', s?.name ?? '', 'ServiceCommandException', `CouldNotStartService`), 1,
-        `You are '${ctx.state.currentUser}', a standard user (not elevated). Starting or stopping services needs an elevated PowerShell (Run as administrator).`);
-    }
-    for (const s of m.items) {
-      if (status === 'Running' && s.startType === 'Disabled') {
-        return ctx.fail(psError(ctx.raw, cmdlet, `Service '${s.displayName} (${s.name})' cannot be started due to the following error: Cannot start service ${s.name} on computer '.'.`,
-          'OpenError', s.name, 'ServiceCommandException', 'CouldNotStartService'));
-      }
-      s.status = status;
-    }
-    return ctx.ok();
-  };
-}
-
-function getProcess(ctx: WindowsContext): WindowsResult {
-  const p = bindParams(ctx.args, { Name: 'value', Id: 'value' }, { ProcessName: 'Name' });
-  if (typeof p === 'string') return ctx.fail(badParameter(ctx.raw, 'Get-Process', p));
-  // ProcessName is the image name without .exe
-  let procs = allProcesses(ctx).filter(x => x.pid !== 0).map(x => ({ ...x, command: x.command.replace(/\.exe$/i, '') }));
-  const name = (p.named.get('Name') as string | undefined) ?? p.positional[0];
-  const id = p.named.get('Id') as string | undefined;
-  if (name) {
-    const re = globToRegex(name, true);
-    procs = procs.filter(x => re.test(x.command));
-    if (procs.length === 0 && !/[*?]/.test(name)) {
-      return ctx.fail(psError(ctx.raw, 'Get-Process', `Cannot find a process with the name "${name}". Verify the process name and call the cmdlet again.`,
-        'ObjectNotFound', name, 'ProcessCommandException', 'NoProcessFoundForGivenName'));
-    }
-  }
-  if (id) {
-    procs = procs.filter(x => String(x.pid) === id);
-    if (procs.length === 0) {
-      return ctx.fail(psError(ctx.raw, 'Get-Process', `Cannot find a process with the process identifier ${id}.`,
-        'ObjectNotFound', id, 'ProcessCommandException', 'NoProcessFoundForGivenId'));
-    }
-  }
-  procs.sort((x, y) => x.command.toLowerCase().localeCompare(y.command.toLowerCase()));
-  return ctx.ok(`${PROCESS_HEADER}\n${processRows(procs).join('\n')}`);
-}
-
-function stopProcess(ctx: WindowsContext): WindowsResult | null {
-  const idMatch = ctx.raw.match(/-Id\s+(\d+)/i) || ctx.raw.match(/Stop-Process\s+(\d+)/i);
-  if (!idMatch) return null;
-  const pid = parseInt(idMatch[1], 10);
-  ctx.state.processes = ctx.state.processes.filter(p => p.pid !== pid);
-  return ctx.ok();
-}
-
-/** Properties Get-ADUser returns for a user, by name (the default set plus extended ones). */
-function adUserProps(u: ADUser): Record<string, string> {
-  const dn = `CN=${u.displayName},${u.ou}`;
-  const rid = 1100 + [...u.sAMAccountName].reduce((n, c) => n + c.charCodeAt(0), 0);
-  return {
-    DistinguishedName: dn,
-    Enabled: u.enabled ? 'True' : 'False',
-    GivenName: u.givenName,
-    Name: u.displayName,
-    ObjectClass: 'user',
-    ObjectGUID: `${rid.toString(16).padStart(8, '0')}-3c1e-4b7a-9f02-5d6e7a8b9c0d`,
-    SamAccountName: u.sAMAccountName,
-    SID: `S-1-5-21-3623811015-3361044348-30300820-${rid}`,
-    Surname: u.surname,
-    UserPrincipalName: `${u.sAMAccountName}@corp.local`,
-    // extended properties, only shown when asked for with -Properties
-    Department: u.department,
-    DisplayName: u.displayName,
-    EmailAddress: u.email,
-    LockedOut: u.locked ? 'True' : 'False',
-    MemberOf: `{${u.memberOf.map(g => `CN=${g},CN=Users,DC=corp,DC=local`).join(', ')}}`,
-    PasswordNeverExpires: u.passwordNeverExpires ? 'True' : 'False',
-  };
-}
-
-const AD_DEFAULT = ['DistinguishedName', 'Enabled', 'GivenName', 'Name', 'ObjectClass', 'ObjectGUID', 'SamAccountName', 'SID', 'Surname', 'UserPrincipalName'];
-
-/** Matches -Filter text: *, or Prop -eq/-ne/-like 'value' joined by -and. */
-function adFilter(filter: string): ((props: Record<string, string>) => boolean) | null {
-  const f = filter.trim().replace(/^[{"']\s*|\s*[}"']$/g, '');
-  if (f === '*') return () => true;
-  const clauses = f.split(/\s+-and\s+/i).map(c => c.match(/^(\w+)\s+-(eq|ne|like)\s+['"]?(.*?)['"]?$/i));
-  if (clauses.some(c => !c)) return null;
-  return props => clauses.every(c => {
-    const key = Object.keys(props).find(k => k.toLowerCase() === c![1].toLowerCase());
-    const actual = (key ? props[key] : '').toLowerCase();
-    const want = c![3].replace(/^\$/, '').toLowerCase();
-    if (c![2].toLowerCase() === 'eq') return actual === want;
-    if (c![2].toLowerCase() === 'ne') return actual !== want;
-    return globToRegex(want, true).test(actual);
-  });
-}
-
-function getADUser(ctx: WindowsContext): WindowsResult {
-  const p = bindParams(ctx.args, { Identity: 'value', Filter: 'value', Properties: 'value', SearchBase: 'value', Server: 'value', LDAPFilter: 'value' });
-  if (typeof p === 'string') return ctx.fail(badParameter(ctx.raw, 'Get-ADUser', p));
-  const identity = (p.named.get('Identity') as string | undefined) ?? p.positional[0];
-  const filterText = p.named.get('Filter') as string | undefined;
-  const wanted = String(p.named.get('Properties') ?? '').split(',').map(x => x.trim()).filter(Boolean);
-  let users = ctx.state.adUsers;
-  if (identity) {
-    const id = identity.toLowerCase();
-    users = users.filter(u => {
-      const props = adUserProps(u);
-      return [u.sAMAccountName, props.DistinguishedName, props.SID, props.ObjectGUID, props.UserPrincipalName].some(v => v.toLowerCase() === id);
-    });
-    if (!users.length) {
-      return ctx.fail(psError(ctx.raw, 'Get-ADUser', `Cannot find an object with identity: '${identity}' under: 'DC=corp,DC=local'.`, 'ObjectNotFound', identity, 'ADIdentityNotFoundException',
-        'ActiveDirectoryCmdlet:Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException,Microsoft.ActiveDirectory.Management.Commands.GetADUser')
-        .replace(',Microsoft.PowerShell.Commands.GetADUserCommand', ''));
-    }
-  } else if (filterText !== undefined) {
-    const test = adFilter(filterText);
-    if (!test) return ctx.fail(psError(ctx.raw, 'Get-ADUser', `Error parsing query: '${filterText}'`, 'ParserError', filterText, 'ADFilterParsingException', 'ActiveDirectoryCmdlet:Microsoft.ActiveDirectory.Management.ADFilterParsingException,Microsoft.ActiveDirectory.Management.Commands.GetADUser')
-      .replace(',Microsoft.PowerShell.Commands.GetADUserCommand', ''));
-    users = users.filter(u => test(adUserProps(u)));
-  }
-  const blocks = users.map(u => {
-    const props = adUserProps(u);
-    const extra = wanted.includes('*') ? Object.keys(props) : wanted.map(w => Object.keys(props).find(k => k.toLowerCase() === w.toLowerCase())).filter((k): k is string => !!k);
-    const keys = [...new Set([...AD_DEFAULT, ...extra])].sort((a, b) => a.localeCompare(b));
-    const width = Math.max(...keys.map(k => k.length));
-    return keys.map(k => `${k.padEnd(width)} : ${props[k]}`).join('\n');
-  });
-  return ctx.ok(blocks.length ? `\n${blocks.join('\n\n')}\n` : '');
-}
-
-function newADUser(ctx: WindowsContext): WindowsResult {
-  const sam = ctx.raw.match(/-SamAccountName\s+([^\s]+)/i)?.[1] ?? 'newuser';
-  const name = param(ctx.raw, 'Name') ?? sam;
-  const ou = param(ctx.raw, 'Path') ?? 'OU=Users,DC=corp,DC=local';
-  if (!ctx.state.adUsers.find(u => u.sAMAccountName.toLowerCase() === sam.toLowerCase())) {
-    ctx.state.adUsers.push({
-      sAMAccountName: sam,
-      givenName: name.split(' ')[0] || sam,
-      surname: name.split(' ')[1] || 'User',
-      displayName: name,
-      email: `${sam}@corp.local`,
-      department: 'Engineering',
-      ou,
-      enabled: true,
-      locked: false,
-      passwordNeverExpires: false,
-      memberOf: ['Domain Users'],
-    });
-  }
-  return ctx.ok();
-}
-
-function addADGroupMember(ctx: WindowsContext): WindowsResult {
-  const groupName = param(ctx.raw, 'Identity') ?? '';
-  const memberName = param(ctx.raw, 'Members') ?? '';
-  if (groupName && memberName) {
-    const user = ctx.state.adUsers.find(u => u.sAMAccountName.toLowerCase() === memberName.toLowerCase());
-    if (user && !user.memberOf.includes(groupName)) user.memberOf.push(groupName);
-    const grp = ctx.state.adGroups.find(g => g.name.toLowerCase() === groupName.toLowerCase());
-    if (grp && !grp.members.includes(memberName)) grp.members.push(memberName);
-  }
-  return ctx.ok();
-}
-
-function unlockADAccount(ctx: WindowsContext): WindowsResult {
-  const idMatch = ctx.raw.match(/-Identity\s+([^\s]+)/i);
-  if (idMatch) {
-    const u = ctx.state.adUsers.find(user => user.sAMAccountName.toLowerCase() === idMatch[1].toLowerCase());
-    if (u) u.locked = false;
-  }
-  return ctx.ok();
-}
-
 /** Get-NetIPConfiguration [-InterfaceAlias name] [-Detailed]: the adapter summary PowerShell shows. */
 function getNetIPConfiguration(ctx: WindowsContext): WindowsResult {
-  const p = bindParams(ctx.args, { InterfaceAlias: 'value', InterfaceIndex: 'value', Detailed: 'switch', All: 'switch' });
-  if (typeof p === 'string') return ctx.fail(badParameter(ctx.raw, 'Get-NetIPConfiguration', p));
-  const alias = (p.named.get('InterfaceAlias') as string | undefined) ?? p.positional[0];
+  const b = bind(ctx, 'Get-NetIPConfiguration', { InterfaceAlias: { kind: 'value', position: 0 }, InterfaceIndex: { kind: 'value' }, Detailed: { kind: 'switch' }, All: { kind: 'switch' } });
+  if (isResult(b)) return b;
+  const alias = b.str('InterfaceAlias');
   const adapters: NetworkInterface[] = ctx.state.interfaces.filter(i => i.name !== 'lo' && !i.ip.startsWith('127.'));
   const chosen = alias ? adapters.filter(i => globToRegex(alias, true).test(i.name)) : adapters;
   if (alias && !chosen.length && !/[*?]/.test(alias)) {
     return ctx.fail(psError(ctx.raw, 'Get-NetIPConfiguration', `No MSFT_NetIPInterface objects found with property 'InterfaceAlias' equal to '${alias}'.  Verify the value of the property and retry.`,
       'ObjectNotFound', alias, 'CimJobException', 'CmdletizationQuery_NotFound_InterfaceAlias,Get-NetIPInterface'));
   }
-  const detailed = p.named.has('Detailed');
+  const detailed = b.has('Detailed');
   const blocks = chosen.map((i, n) => {
     const apipa = i.ip.startsWith('169.254.');
     const rows: [string, string][] = [
@@ -424,18 +363,15 @@ function getNetIPConfiguration(ctx: WindowsContext): WindowsResult {
 
 psCommands.register(['Test-NetConnection', 'tnc'], testNetConnection);
 psCommands.register(['Get-NetIPConfiguration', 'gip'], getNetIPConfiguration);
-// Pipeline cmdlets with nothing piped in output nothing, as in PowerShell
-psCommands.register(['Sort-Object', 'sort', 'Where-Object', 'where', '?', 'Select-Object', 'select'], ctx => ctx.ok(''));
 psCommands.registerAll({
   'Get-Service': getService,
-  gsv: getService,
   'Start-Service': setServiceStatus('Running', 'Start-Service'),
   'Stop-Service': setServiceStatus('Stopped', 'Stop-Service'),
   'Restart-Service': setServiceStatus('Running', 'Restart-Service'),
+  'Set-Service': setService,
+  'Suspend-Service': suspendResume('Suspend-Service'),
+  'Resume-Service': suspendResume('Resume-Service'),
+  'New-Service': newService,
   'Get-Process': getProcess,
   'Stop-Process': stopProcess,
-  'Get-ADUser': getADUser,
-  'New-ADUser': newADUser,
-  'Add-ADGroupMember': addADGroupMember,
-  'Unlock-ADAccount': unlockADAccount,
 });

@@ -57,7 +57,9 @@ test('Get-ADUser honours -Identity, -Filter and -Properties', () => {
   assert.equal(run('Get-ADUser -Identity jdoe').stdout, one.stdout);
   const props = run('Get-ADUser -Identity jdoe -Properties LockedOut,MemberOf').stdout;
   assert.match(props, /LockedOut +: (True|False)/);
-  assert.match(props, /MemberOf +: \{CN=/);
+  // memberOf leaves out the primary group (Domain Users), jdoe's only group
+  assert.match(props, /MemberOf +: \{\}/);
+  assert.match(run('Get-ADUser mscott -Properties MemberOf').stdout, /MemberOf +: \{CN=Sales Managers,/);
   assert.match(run('Get-ADUser jdoe -Properties *').stdout, /EmailAddress +: jdoe@corp\.local/);
   const missing = run('Get-ADUser nobody');
   assert.equal(missing.exitCode, 1);
@@ -188,7 +190,7 @@ test('passwd, userdel, chage and sudo -l', () => {
 
 test('/proc, /dev and SUID programs agree with the rest of the system', () => {
   const run = linuxSession();
-  assert.match(run('ls -l /usr/bin/passwd').stdout, /^-rwsr-xr-x 1 root root .* passwd$/);
+  assert.match(run('ls -l /usr/bin/passwd').stdout, /^-rwsr-xr-x 1 root root .* \/usr\/bin\/passwd$/);
   assert.match(run('find /usr/bin -perm -4000').stdout, /\/usr\/bin\/passwd/);
   const partitions = run('cat /proc/partitions').stdout;
   for (const dev of run('lsblk').stdout.match(/sd[a-z]\d*/g) ?? []) assert.match(partitions, new RegExp(` ${dev}$`, 'm'));

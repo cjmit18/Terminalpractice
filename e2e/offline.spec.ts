@@ -60,3 +60,26 @@ test('after the first visit the app loads offline', async ({ page, context }) =>
     await expect(page.getByRole('heading', { level: 1, name: heading })).toBeVisible();
   }
 });
+
+test('the service worker does not cache an HTML answer for a script (SPA fallback for a gone chunk)', async ({ page, context }) => {
+  await page.goto('#/linux');
+  await waitForServiceWorkerControl(page);
+  await context.route('**/assets/gone-chunk-*.js', route =>
+    route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><div id="root"></div>' }),
+  );
+  const cached = await page.evaluate(async () => {
+    const url = new URL(`./assets/gone-chunk-${Date.now()}.js`, document.baseURI).href;
+    // As a module script (destination "script") and as a plain fetch
+    await new Promise<void>(resolve => {
+      const s = document.createElement('script');
+      s.type = 'module';
+      s.src = url;
+      s.onload = s.onerror = () => resolve();
+      document.head.append(s);
+    });
+    await fetch(url);
+    await new Promise(r => setTimeout(r, 300));
+    return !!(await caches.match(url, { ignoreVary: true }));
+  });
+  expect(cached).toBe(false);
+});

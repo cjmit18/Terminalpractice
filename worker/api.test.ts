@@ -161,3 +161,29 @@ test('only in-app hash routes are accepted as a return address', () => {
   assert.equal(safeReturn('#/../../x'), '#/learn');
   assert.equal(safeReturn(null), '#/learn');
 });
+
+test('two first sign-ins of the same GitHub account at once both succeed and make one user', async () => {
+  const s = setup();
+  // Both browsers start sign-in, then both callbacks run concurrently
+  const begin = async () => {
+    const start = await s.call('GET', '/api/auth/github/start?return=%23%2Flearn');
+    const state = new URL(start.headers.get('Location')!).searchParams.get('state')!;
+    const stateCookie = cookieValue(start, '__Host-oauth')!;
+    return () => s.call('GET', `/api/auth/github/callback?code=good-code&state=${state}`, { Cookie: `__Host-oauth=${stateCookie}` });
+  };
+  const [a, b] = [await begin(), await begin()];
+  const results = await Promise.all([a(), b()]);
+  assert.deepEqual(results.map(r => r.status), [302, 302]);
+
+  const count = (sql: string) => (s.db.raw.prepare(sql).get() as { n: number }).n;
+  assert.equal(count('SELECT count(*) AS n FROM users'), 1);
+  assert.equal(count('SELECT count(*) AS n FROM identities'), 1);
+  // Both sessions belong to that one user
+  assert.equal(count('SELECT count(*) AS n FROM sessions'), 2);
+  assert.equal(count('SELECT count(DISTINCT user_id) AS n FROM sessions'), 1);
+  for (const r of results) {
+    const session = cookieValue(r, '__Host-session')!;
+    const me = (await (await s.call('GET', '/api/me', { Cookie: `__Host-session=${session}` })).json()) as { user: { login: string } };
+    assert.equal(me.user.login, 'octo-learner');
+  }
+});

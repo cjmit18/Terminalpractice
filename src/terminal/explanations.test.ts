@@ -10,7 +10,7 @@ test('Explanation: reading a file whose other bits deny read', () => {
   const res = run('cat /etc/shadow');
   assert.equal(res.stderr, 'cat: /etc/shadow: Permission denied', 'stderr stays the real message');
   assert.equal(res.explanation,
-    `${ME} /etc/shadow is owned by root:shadow with mode ---------- (000); you are not its owner and not in group 'shadow', so the 'other' bits (---) apply, and they do not include read (r).`);
+    `${ME} /etc/shadow is owned by root:shadow with mode -rw-r----- (640); you are not its owner and not in group 'shadow', so the 'other' bits (---) apply, and they do not include read (r).`);
 });
 
 test('Explanation: group bits apply when you are in the file group', () => {

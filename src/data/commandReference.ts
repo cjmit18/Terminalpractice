@@ -36,7 +36,7 @@ export const COMMAND_REFERENCE: CommandRefEntry[] = [
       { cmd: 'chmod +x scripts/backup.sh', description: 'Make a script executable' },
       { cmd: 'chmod -R o-rwx /home/student/finance', description: 'Remove all access for others from a directory and everything in it' },
     ],
-    examNotes: 'Expect to convert between octal and symbolic modes: read is 4, write 2, execute 1. A directory needs x before anyone can enter it, so with -R use a capital X (chmod -R u=rwX,go=rX dir) to give execute to directories but not to plain files.',
+    examNotes: 'Expect to convert between octal and symbolic modes: read is 4, write 2, execute 1. A directory needs x before anyone can enter it, so with -R use a capital X (chmod -R u=rwX,go=rX dir). X sets execute on directories, and on files only if someone already has execute on them, so ordinary data files stay non-executable.',
   },
   {
     name: 'chown',
@@ -328,7 +328,7 @@ export const COMMAND_REFERENCE: CommandRefEntry[] = [
     exam: 'CompTIA A+ 220-1202, Security+ SY0-701',
     category: 'Processes',
     summary: 'Ends processes by process ID or image name.',
-    syntax: 'taskkill [/s system] [/u username [/p password]]] { [/fi filter] [/pid processid | /im imagename] } [/f] [/t]',
+    syntax: 'taskkill [/s <computer> [/u [<domain>\\]<username> [/p [<password>]]]] {[/fi <filter>] [...] [/pid <processID> | /im <imagename>]} [/f] [/t]',
     switches: [
       { flag: '/F', description: 'Force the process to end instead of asking it to close' },
       { flag: '/PID <id>', description: 'Process ID of the process to end' },

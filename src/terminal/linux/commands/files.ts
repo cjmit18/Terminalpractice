@@ -1,6 +1,8 @@
 import { FileNode } from '../../../types/terminal';
-import { createNode, removeNode, fileSize, writeFileContent } from '../../filesystem';
-import { LinuxContext, LinuxResult, linuxCommands } from '../context';
+import { removeNode, fileSize, writeFileContent } from '../../filesystem';
+import { parseOptions } from '../../textUtils';
+import { LinuxContext, LinuxResult, linuxCommands, createInDir } from '../context';
+import { deviceNumbers, inode } from './lookup';
 
 // Navigation and file management: pwd, cd, ls, mkdir, touch, rm, tee (cat lives with the text filters)
 
@@ -9,7 +11,12 @@ function pwd(ctx: LinuxContext): LinuxResult {
 }
 
 function cd(ctx: LinuxContext): LinuxResult {
-  const target = ctx.args[0] || '~';
+  const args = ctx.args.filter(a => a !== '-L' && a !== '-P' && a !== '--');
+  if (args.length > 1) return ctx.fail('bash: cd: too many arguments');
+  const back = args[0] === '-';
+  const oldpwd = ctx.state.envVars?.OLDPWD;
+  if (back && !oldpwd) return ctx.fail('bash: cd: OLDPWD not set');
+  const target = back ? oldpwd! : args[0] || '~';
   const resolved = ctx.resolve(target);
   const node = ctx.node(resolved);
   if (!node) return ctx.fail(`bash: cd: ${target}: No such file or directory`);
@@ -17,63 +24,159 @@ function cd(ctx: LinuxContext): LinuxResult {
   if (!ctx.traverse(resolved).ok || !ctx.access(node, resolved, 'x', `To enter ${resolved} you need execute (x) on it, but it`).ok) {
     return ctx.fail(`bash: cd: ${target}: Permission denied`);
   }
+  ctx.state.envVars = { ...ctx.state.envVars, OLDPWD: ctx.cwd };
   ctx.cwd = resolved;
-  return ctx.ok();
+  // cd - prints the directory it switched to
+  return ctx.ok(back ? resolved : '');
 }
 
 /** First column of ls -l: d directory, b/c device, - regular file. */
 const typeChar = (n: FileNode) => (n.type === 'directory' ? 'd' : n.device === 'block' ? 'b' : n.device === 'char' ? 'c' : '-');
 
-function ls(ctx: LinuxContext): LinuxResult {
-  const { args } = ctx;
-  const showAll = args.some(a => a.startsWith('-') && a.includes('a'));
-  const showLong = args.some(a => a.startsWith('-') && a.includes('l'));
-  const showDirSelf = args.some(a => a.startsWith('-') && a.includes('d'));
-  const targetPath = args.find(a => !a.startsWith('-')) || ctx.cwd;
-  const resolved = ctx.resolve(targetPath);
-  const node = ctx.node(resolved);
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-  if (!ctx.traverse(resolved).ok) return ctx.fail(`ls: cannot access '${targetPath}': Permission denied`, 2);
-  if (!node) {
-    return ctx.fail(`ls: cannot access '${targetPath}': No such file or directory`, 2);
-  }
+/** "Oct 19 10:00" as ls -l prints a recent modification time (UTC, the lab machines' zone). */
+function lsDate(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return 'Oct 19 10:00';
+  const p2 = (n: number) => String(n).padStart(2, '0');
+  return `${MONTHS[d.getUTCMonth()]} ${String(d.getUTCDate()).padStart(2)} ${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}`;
+}
 
-  if (node.type === 'directory' && showDirSelf) {
-    const bits = node.permissions.length === 10 ? node.permissions.slice(1) : node.permissions;
-    return ctx.ok(showLong ? `d${bits} 2 ${node.owner} ${node.group} 4096 Oct 19 10:00 ${targetPath}` : targetPath);
-  }
+/** ls -h sizes: 512, 4.0K, 1.5M (rounded up, one decimal below 10). */
+function humanSize(n: number): string {
+  if (n < 1024) return String(n);
+  const units = ['K', 'M', 'G', 'T'];
+  let v = n / 1024;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return v < 10 ? `${(Math.ceil(v * 10) / 10).toFixed(1)}${units[i]}` : `${Math.ceil(v)}${units[i]}`;
+}
 
-  if (node.type === 'directory' && !ctx.access(node, resolved, 'r', `Listing ${resolved} needs read (r) on it, but it`).ok) {
-    return ctx.fail(`ls: cannot open directory '${targetPath}': Permission denied`, 2);
-  }
+/** Disk usage in 1K blocks, as the "total" line and -s count it. */
+const blocksOf = (n: FileNode) => (n.type === 'directory' ? 4 : n.device ? 0 : Math.ceil(fileSize(n) / 4096) * 4);
 
-  if (node.type === 'file') {
-    if (showLong) {
-      const perm = typeChar(node) + node.permissions.replace(/^[d-]/, '');
-      return ctx.ok(`${perm} 1 ${node.owner} ${node.group} ${fileSize(node)} Oct 19 10:00 ${node.name}`);
-    }
-    return ctx.ok(node.name);
-  }
+const linkCount = (n: FileNode) => (n.type === 'directory' ? 2 + Object.values(n.children ?? {}).filter(c => c.type === 'directory').length : 1);
 
-  const children = node.children || {};
-  let keys = Object.keys(children);
-  if (!showAll) {
-    keys = keys.filter(k => !k.startsWith('.'));
-  } else {
-    keys = ['.', '..', ...keys];
-  }
-  keys.sort();
+interface LsEntry { name: string; node: FileNode; path: string }
 
-  if (!showLong) return ctx.ok(keys.join('  '));
+interface LsOptions {
+  long: boolean; human: boolean; classify: boolean; inode: boolean; numeric: boolean; one: boolean;
+  sortTime: boolean; sortSize: boolean; reverse: boolean;
+}
 
-  const lines = keys.map(k => {
-    if (k === '.' || k === '..') return `drwxr-xr-x 2 root root 4096 Oct 19 10:00 ${k}`;
-    const child = children[k];
-    const perm = typeChar(child) + child.permissions.replace(/^[d-]/, '');
-    const size = fileSize(child).toString().padStart(6, ' ');
-    return `${perm} 1 ${child.owner.padEnd(8, ' ')} ${child.group.padEnd(8, ' ')} ${size} Oct 19 10:00 ${child.name}`;
+function lsSort(entries: LsEntry[], o: LsOptions): LsEntry[] {
+  const sorted = [...entries].sort((a, b) => {
+    if (o.sortTime) { const d = Date.parse(b.node.updatedAt) - Date.parse(a.node.updatedAt); if (d) return d; }
+    if (o.sortSize) { const d = fileSize(b.node) - fileSize(a.node); if (d) return d; }
+    return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
   });
-  return ctx.ok(lines.join('\n'));
+  return o.reverse ? sorted.reverse() : sorted;
+}
+
+/** Formats entries the way ls does: names only, or long lines with every column aligned. */
+function lsFormat(ctx: LinuxContext, entries: LsEntry[], o: LsOptions): string[] {
+  const suffix = (e: LsEntry) => {
+    if (!o.classify) return '';
+    if (e.node.type === 'directory') return '/';
+    return !e.node.device && /x/.test(e.node.permissions.slice(-9)) ? '*' : '';
+  };
+  const ino = (e: LsEntry) => (o.inode ? `${inode(e.path)} ` : '');
+  if (!o.long) {
+    const names = entries.map(e => `${ino(e)}${e.name}${suffix(e)}`);
+    return o.one ? names : names.length ? [names.join('  ')] : [];
+  }
+  const ids = (path: string, field: number) => new Map((ctx.node(path)?.content ?? '').split('\n').map(l => l.split(':')).map(r => [r[0], r[field]]));
+  const uids = o.numeric ? ids('/etc/passwd', 2) : null;
+  const gids = o.numeric ? ids('/etc/group', 2) : null;
+  const rows = entries.map(e => {
+    const dev = deviceNumbers(e.node);
+    return {
+      ino: o.inode ? String(inode(e.path)) : '',
+      mode: typeChar(e.node) + e.node.permissions.slice(-9),
+      links: String(linkCount(e.node)),
+      owner: uids?.get(e.node.owner) ?? e.node.owner,
+      group: gids?.get(e.node.group) ?? e.node.group,
+      major: dev ? `${dev[0]},` : '',
+      size: dev ? String(dev[1]) : o.human ? humanSize(fileSize(e.node)) : String(fileSize(e.node)),
+      date: lsDate(e.node.updatedAt),
+      name: e.name + suffix(e),
+    };
+  });
+  const w = (k: keyof (typeof rows)[number]) => Math.max(0, ...rows.map(r => r[k].length));
+  const wIno = w('ino'), wLinks = w('links'), wOwner = w('owner'), wGroup = w('group'), wMajor = w('major');
+  // With device files, the size column holds "major, minor"
+  const wSize = Math.max(w('size'), wMajor ? wMajor + 1 + Math.max(...rows.map(r => (r.major ? r.size.length : 0))) : 0);
+  return rows.map(r => {
+    const size = r.major ? `${r.major.padStart(wMajor)} ${r.size.padStart(wSize - wMajor - 1)}` : r.size.padStart(wSize);
+    return `${o.inode ? r.ino.padStart(wIno) + ' ' : ''}${r.mode} ${r.links.padStart(wLinks)} ${r.owner.padEnd(wOwner)} ${r.group.padEnd(wGroup)} ${size} ${r.date} ${r.name}`;
+  });
+}
+
+function ls(ctx: LinuxContext): LinuxResult {
+  const opts = parseOptions(ctx.args, '', {
+    all: 'a', 'almost-all': 'A', directory: 'd', 'human-readable': 'h', recursive: 'R', classify: 'F', inode: 'i',
+    'numeric-uid-gid': 'n', reverse: 'r',
+  });
+  const f = opts.flags;
+  const o: LsOptions = {
+    long: f.has('l') || f.has('n') || f.has('g'), human: f.has('h'), classify: f.has('F'), inode: f.has('i'), numeric: f.has('n'),
+    one: f.has('1'), sortTime: f.has('t'), sortSize: f.has('S'), reverse: f.has('r'),
+  };
+  const bad = [...f].find(c => c.length === 1 && !'aAdhRFinrlg1tSxCU'.includes(c));
+  if (bad) return ctx.fail(`ls: invalid option -- '${bad}'\nTry 'ls --help' for more information.`, 2);
+  const all = f.has('a');
+  const almostAll = f.has('A') && !all;
+  const dirSelf = f.has('d');
+  const recursive = f.has('R') && !dirSelf;
+  const operands = opts.operands.length ? opts.operands : ['.'];
+  const errors: string[] = [];
+  let code = 0;
+  const files: LsEntry[] = [];
+  const dirs: LsEntry[] = [];
+
+  for (const op of operands) {
+    const path = ctx.resolve(op);
+    if (!ctx.traverse(path).ok) { errors.push(`ls: cannot access '${op}': Permission denied`); code = 2; continue; }
+    const node = ctx.node(path);
+    if (!node) { errors.push(`ls: cannot access '${op}': No such file or directory`); code = 2; continue; }
+    (node.type === 'directory' && !dirSelf ? dirs : files).push({ name: op, node, path });
+  }
+
+  const blocks: string[] = [];
+  if (files.length) blocks.push(lsFormat(ctx, lsSort(files, o), o).join('\n'));
+  const showHeaders = operands.length > 1 || recursive;
+  const listDir = (e: LsEntry) => {
+    if (!ctx.access(e.node, e.path, 'r', `Listing ${e.path} needs read (r) on it, but it`).ok) {
+      errors.push(`ls: cannot open directory '${e.name}': Permission denied`);
+      code = 2;
+      return;
+    }
+    const children = e.node.children ?? {};
+    let entries: LsEntry[] = Object.entries(children)
+      .filter(([k]) => all || almostAll || !k.startsWith('.'))
+      .map(([k, n]) => ({ name: k, node: n, path: e.path === '/' ? `/${k}` : `${e.path}/${k}` }));
+    entries = lsSort(entries, o);
+    if (all) {
+      const parentPath = e.path === '/' ? '/' : e.path.slice(0, e.path.lastIndexOf('/')) || '/';
+      const dots: LsEntry[] = [{ name: '.', node: e.node, path: e.path }, { name: '..', node: ctx.node(parentPath) ?? e.node, path: parentPath }];
+      entries = o.reverse ? [...entries, ...dots.reverse()] : [...dots, ...entries];
+    }
+    const lines = lsFormat(ctx, entries, o);
+    if (o.long) {
+      const total = entries.reduce((sum, x) => sum + blocksOf(x.node), 0);
+      lines.unshift(`total ${o.human ? humanSize(total * 1024) : total}`);
+    }
+    blocks.push([...(showHeaders ? [`${e.name}:`] : []), ...lines].join('\n'));
+    if (recursive) {
+      for (const sub of entries) {
+        if (sub.name === '.' || sub.name === '..' || sub.node.type !== 'directory') continue;
+        listDir({ ...sub, name: e.name === '/' ? `/${sub.name}` : `${e.name}/${sub.name}` });
+      }
+    }
+  };
+  for (const d of lsSort(dirs, o)) listDir(d);
+  return ctx.result(blocks.join('\n\n'), errors.join('\n'), code);
 }
 
 function mkdir(ctx: LinuxContext): LinuxResult {
@@ -92,7 +195,7 @@ function mkdir(ctx: LinuxContext): LinuxResult {
       if (ctx.node(p)) continue;
       const check = ctx.canWrite(p);
       if (!check.ok) return ctx.fail(`mkdir: cannot create directory '${d}': ${check.error || 'Permission denied'}`);
-      createNode(ctx.fs, p, 'directory', '', false, ctx.user, ctx.group, ctx.dirMode());
+      createInDir(ctx.fs, p, 'directory', '', ctx.user, ctx.group, ctx.dirMode());
     }
   }
   return ctx.ok();
@@ -109,7 +212,7 @@ function touch(ctx: LinuxContext): LinuxResult {
     if (existing) {
       existing.updatedAt = new Date().toISOString();
     } else {
-      createNode(ctx.fs, targetPath, 'file', '', false, ctx.user, ctx.group, ctx.fileMode());
+      createInDir(ctx.fs, targetPath, 'file', '', ctx.user, ctx.group, ctx.fileMode());
     }
   }
   return ctx.ok();
@@ -154,7 +257,7 @@ function tee(ctx: LinuxContext): LinuxResult {
     if (existing && existing.type === 'file') {
       writeFileContent(existing, stdin, append);
     } else {
-      createNode(ctx.fs, targetPath, 'file', stdin, false, ctx.user, ctx.group, ctx.fileMode());
+      createInDir(ctx.fs, targetPath, 'file', stdin, ctx.user, ctx.group, ctx.fileMode());
     }
   }
   return ctx.ok(stdin);

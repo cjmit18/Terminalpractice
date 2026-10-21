@@ -2,6 +2,7 @@ import { ProcessItem } from '../../../types/terminal';
 import { createNode, writeFileContent } from '../../filesystem';
 import { WindowsContext, WindowsResult, cmdCommands } from '../context';
 import { cmdDoc } from '../../docs';
+import { hasConnectivity } from './network';
 
 // CMD system tools: whoami, hostname, ver, systeminfo, tasklist, taskkill, sfc, dism, chkdsk,
 // bootrec, gpupdate, gpresult, net
@@ -21,16 +22,45 @@ const BASE_PROCESSES: ProcessItem[] = [
   { pid: 844, user: 'SYSTEM', cpu: 0, mem: 21.9, command: 'svchost.exe' },
   { pid: 2140, user: 'Student', cpu: 0, mem: 47.8, command: 'explorer.exe' },
 ];
-const CRITICAL = new Set(['system idle process', 'system', 'smss.exe', 'csrss.exe', 'wininit.exe', 'winlogon.exe', 'services.exe', 'lsass.exe']);
+export const CRITICAL_PROCESSES = new Set(['system idle process', 'system', 'smss.exe', 'csrss.exe', 'wininit.exe', 'winlogon.exe', 'services.exe', 'lsass.exe']);
+const CRITICAL = CRITICAL_PROCESSES;
 
-/** State processes plus base processes whose PID the state does not already list. */
+/** Programs with a window: taskkill without /F asks them to close instead of refusing. */
+const WINDOWED = new Set(['explorer.exe', 'notepad.exe', 'mspaint.exe', 'calc.exe', 'msedge.exe', 'chrome.exe', 'winword.exe', 'excel.exe']);
+
+/** Services hosted by each process, for tasklist /svc. */
+const PROCESS_SERVICES: Record<string, string> = {
+  'lsass.exe': 'KeyIso, Netlogon, SamSs, VaultSvc',
+  'services.exe': 'N/A',
+  'svchost.exe': 'BrokerInfrastructure, DcomLaunch, PlugPlay, Power',
+  'spoolsv.exe': 'Spooler',
+};
+const SVCHOST_BY_PID: Record<number, string> = {
+  844: 'RpcEptMapper, RpcSs',
+  1120: 'Dhcp, Dnscache, EventLog, LanmanWorkstation, Netlogon',
+};
+
+/**
+ * State processes plus the base processes every session has. A base process is left out when
+ * the state lists its PID or another process with the same image name (so a lab can replace it).
+ */
 export function allProcesses(ctx: WindowsContext): ProcessItem[] {
+  // A state that lists the System Idle Process is a full process table (see endProcess)
+  if (ctx.state.processes.some(p => p.pid === 0)) return [...ctx.state.processes].sort((a, b) => a.pid - b.pid);
   const pids = new Set(ctx.state.processes.map(p => p.pid));
   const imageName = (p: ProcessItem) => p.command.toLowerCase();
   return [
-    ...BASE_PROCESSES.filter(p => !pids.has(p.pid) && !ctx.state.processes.some(s => imageName(s) === imageName(p) && imageName(p) !== 'svchost.exe')),
+    ...BASE_PROCESSES.filter(p => !pids.has(p.pid) && !ctx.state.processes.some(s => imageName(s) === imageName(p))),
     ...ctx.state.processes,
   ].sort((a, b) => a.pid - b.pid);
+}
+
+/**
+ * Ends a process. The process list is first copied into the state, so a base process that was
+ * ended does not come back on the next listing.
+ */
+export function endProcess(ctx: WindowsContext, pid: number): void {
+  ctx.state.processes = allProcesses(ctx).filter(p => p.pid !== pid);
 }
 
 type TaskFilter = (p: ProcessItem) => boolean;
@@ -62,8 +92,10 @@ function tasklist(ctx: WindowsContext): WindowsResult {
   const filters: TaskFilter[] = [];
   let format = 'TABLE';
   let noHeader = false;
+  let svc = false;
   for (let i = 0; i < ctx.args.length; i++) {
     const a = ctx.args[i].toLowerCase();
+    if (a === '/svc') { svc = true; continue; }
     if (a === '/fi') {
       const f = taskFilter(ctx.args[++i] ?? '');
       if (!f) return ctx.fail('ERROR: The search filter cannot be recognized.', 1);
@@ -77,6 +109,12 @@ function tasklist(ctx: WindowsContext): WindowsResult {
   }
   const procs = allProcesses(ctx).filter(p => filters.every(f => f(p)));
   if (!procs.length) return ctx.ok('INFO: No tasks are running which match the specified criteria.');
+  if (svc) {
+    const services = (p: ProcessItem) => (p.command.toLowerCase() === 'svchost.exe' ? SVCHOST_BY_PID[p.pid] ?? 'BFE, mpssvc' : PROCESS_SERVICES[p.command.toLowerCase()] ?? 'N/A');
+    const head = '\nImage Name                     PID Services\n========================= ======== ============================================';
+    const rows = procs.map(p => `${p.command.padEnd(25)} ${String(p.pid).padStart(8)} ${services(p)}`);
+    return ctx.ok(noHeader ? `\n${rows.join('\n')}` : `${head}\n${rows.join('\n')}`);
+  }
   const session = (p: ProcessItem) => (p.user === 'SYSTEM' ? ['Services', '0'] : ['Console', '1']);
   const mem = (p: ProcessItem) => `${Math.round(p.mem * 1024).toLocaleString('en-US')} K`;
   if (format === 'CSV') {
@@ -98,13 +136,26 @@ function tasklist(ctx: WindowsContext): WindowsResult {
 
 function taskkill(ctx: WindowsContext): WindowsResult {
   const args = ctx.args;
-  const pids: number[] = [];
+  const pids: string[] = [];
   const images: string[] = [];
+  let force = false;
+  let tree = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i].toUpperCase();
-    if (a === '/PID' && args[i + 1]) pids.push(parseInt(args[++i], 10));
-    else if (a === '/IM' && args[i + 1]) images.push(args[++i]);
+    if (a === '/PID' || a === '-PID') {
+      const v = args[++i];
+      if (v === undefined) return ctx.fail("ERROR: Invalid syntax. Value expected for '/PID'.\nType \"TASKKILL /?\" for usage.", 1);
+      pids.push(v);
+    } else if (a === '/IM' || a === '-IM') {
+      const v = args[++i];
+      if (v === undefined) return ctx.fail("ERROR: Invalid syntax. Value expected for '/IM'.\nType \"TASKKILL /?\" for usage.", 1);
+      images.push(v);
+    } else if (a === '/F' || a === '-F') force = true;
+    else if (a === '/T' || a === '-T') tree = true;
+    else if (a === '/FI' || a === '/S' || a === '/U' || a === '/P') i++;
+    else return ctx.fail(`ERROR: Invalid argument/option - '${args[i]}'.\nType "TASKKILL /?" for usage.`, 1);
   }
+  void tree;
   if (pids.length === 0 && images.length === 0) {
     return ctx.fail('ERROR: Invalid syntax. Neither /FI nor /PID nor /IM were specified.\nType "TASKKILL /?" for usage.', 1);
   }
@@ -113,24 +164,36 @@ function taskkill(ctx: WindowsContext): WindowsResult {
   const errors: string[] = [];
   let note: string | undefined;
   const kill = (p: ProcessItem, byImage: boolean) => {
+    const who = `The process ${byImage ? `"${p.command}" ` : ''}with PID ${p.pid}`;
     const protectedProc = CRITICAL.has(p.command.toLowerCase());
     const otherUser = !ctx.isAdmin && p.user.toLowerCase() !== ctx.state.currentUser.toLowerCase();
     if (protectedProc || otherUser) {
-      errors.push(`ERROR: The process ${byImage ? `"${p.command}" ` : ''}with PID ${p.pid} could not be terminated.\nReason: Access is denied.`);
+      errors.push(`ERROR: ${who} could not be terminated.\nReason: Access is denied.`);
       note = protectedProc
         ? `${p.command} is a critical system process; Windows refuses to end it even for administrators.`
         : NOT_ELEVATED(ctx, `Ending a process owned by ${p.user}`);
       return;
     }
-    ctx.state.processes = ctx.state.processes.filter(x => x.pid !== p.pid);
+    if (!force) {
+      // Without /F, taskkill asks the program to close; a process with no window cannot be asked
+      if (WINDOWED.has(p.command.toLowerCase())) {
+        endProcess(ctx, p.pid);
+        out.push(`SUCCESS: Sent termination signal to the ${byImage ? `process "${p.command}" with PID ${p.pid}` : `process with PID ${p.pid}`}.`);
+        return;
+      }
+      errors.push(`ERROR: ${who} could not be terminated.\nReason: This process can only be terminated forcefully (with /F option).`);
+      note = `${p.command} has no window to close, so taskkill can only end it with /F (force).`;
+      return;
+    }
+    endProcess(ctx, p.pid);
     out.push(byImage
       ? `SUCCESS: The process "${p.command}" with PID ${p.pid} has been terminated.`
       : `SUCCESS: The process with PID ${p.pid} has been terminated.`);
   };
-  for (const pid of pids) {
-    const p = procs.find(x => x.pid === pid);
+  for (const pidText of pids) {
+    const p = /^\d+$/.test(pidText) ? procs.find(x => x.pid === Number(pidText)) : undefined;
     if (p) kill(p, false);
-    else errors.push(`ERROR: The process "${pid}" not found.`);
+    else errors.push(`ERROR: The process "${pidText}" not found.`);
   }
   for (const image of images) {
     const re = new RegExp(`^${image.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`, 'i');
@@ -160,13 +223,18 @@ function sfc(ctx: WindowsContext): WindowsResult {
       ? `Windows Resource Protection found integrity violations.\n${log}`
       : 'Windows Resource Protection did not find any integrity violations.'].join('\n'));
   }
-  // The scan ran (the lab objective); whether it could repair depends on the component store
-  ctx.state.sfcRepaired = true;
-  if (!corrupted) return ctx.ok([...head, 'Windows Resource Protection did not find any integrity violations.'].join('\n'));
+  // The scan ran; whether it could repair depends on the component store
+  ctx.state.sfcScanned = true;
+  if (!corrupted) {
+    ctx.state.sfcRepaired = true;
+    return ctx.ok([...head, 'Windows Resource Protection did not find any integrity violations.'].join('\n'));
+  }
   if (!ctx.state.dismRepaired) {
     // SFC repairs files from the component store; while the store is damaged it cannot
-    return ctx.ok([...head, `Windows Resource Protection found corrupt files but was unable to fix some\nof them. ${log}`].join('\n'));
+    return ctx.result([...head, `Windows Resource Protection found corrupt files but was unable to fix some\nof them. ${log}`].join('\n'), '', 0,
+      'SFC takes its replacement files from the component store (WinSxS), which is damaged too. Repair the store with DISM /Online /Cleanup-Image /RestoreHealth, then run sfc /scannow again.');
   }
+  ctx.state.sfcRepaired = true;
   ctx.state.systemIntegrityCorrupted = false;
   return ctx.ok([...head, `Windows Resource Protection found corrupt files and successfully repaired\nthem. ${log}`].join('\n'));
 }
@@ -397,11 +465,196 @@ function threeColumns(names: string[]): string[] {
   return rows;
 }
 
+/** A table as whoami prints it: headers, a row of = under each column, then the rows. */
+function whoamiTable(title: string, headers: string[], rows: string[][]): string {
+  const widths = headers.map((h, i) => Math.max(h.length, ...rows.map(r => r[i].length)));
+  const line = (cells: string[]) => cells.map((c, i) => (i === cells.length - 1 ? c : c.padEnd(widths[i]))).join(' ').trimEnd();
+  return ['', title, '-'.repeat(title.length), '', line(headers), widths.map(w => '='.repeat(w)).join(' '), ...rows.map(line)].join('\n');
+}
+
+const PRIVILEGES: [string, string, boolean][] = [
+  ['SeIncreaseQuotaPrivilege', 'Adjust memory quotas for a process', true],
+  ['SeSecurityPrivilege', 'Manage auditing and security log', true],
+  ['SeTakeOwnershipPrivilege', 'Take ownership of files or other objects', true],
+  ['SeLoadDriverPrivilege', 'Load and unload device drivers', true],
+  ['SeSystemtimePrivilege', 'Change the system time', true],
+  ['SeBackupPrivilege', 'Back up files and directories', true],
+  ['SeRestorePrivilege', 'Restore files and directories', true],
+  ['SeShutdownPrivilege', 'Shut down the system', false],
+  ['SeDebugPrivilege', 'Debug programs', true],
+  ['SeChangeNotifyPrivilege', 'Bypass traverse checking', false],
+  ['SeUndockPrivilege', 'Remove computer from docking station', false],
+  ['SeManageVolumePrivilege', 'Perform volume maintenance tasks', true],
+  ['SeImpersonatePrivilege', 'Impersonate a client after authentication', true],
+  ['SeCreateGlobalPrivilege', 'Create global objects', true],
+  ['SeIncreaseWorkingSetPrivilege', 'Increase a process working set', false],
+  ['SeTimeZonePrivilege', 'Change the time zone', false],
+  ['SeCreateSymbolicLinkPrivilege', 'Create symbolic links', true],
+];
+const ENABLED_PRIVS = new Set(['SeChangeNotifyPrivilege', 'SeImpersonatePrivilege', 'SeCreateGlobalPrivilege']);
+
+function whoami(ctx: WindowsContext): WindowsResult {
+  const sw = ctx.args.map(a => a.toLowerCase().replace(/^-/, '/'));
+  const user = ctx.state.currentUser;
+  const account = `corp\\${user.toLowerCase()}`;
+  const ridOf = (n: string) => (n.toLowerCase() === 'administrator' ? 500 : 1100 + [...n.toLowerCase()].reduce((s, c) => s + c.charCodeAt(0), 0));
+  const domainSid = 'S-1-5-21-3623811015-3361044348-30300820';
+  const unknown = sw.find(s => !['/upn', '/fqdn', '/logonid', '/user', '/groups', '/priv', '/all', '/fo', 'table', 'list', 'csv', '/nh'].includes(s));
+  if (unknown) return ctx.fail(`ERROR: Invalid argument/option - '${unknown}'.\nType "WHOAMI /?" for usage.`, 1);
+  if (!sw.length) return ctx.ok(account);
+  if (sw.includes('/upn')) return ctx.ok(`${user.toLowerCase()}@corp.local`);
+  if (sw.includes('/fqdn')) return ctx.ok(`CN=${user},CN=Users,DC=corp,DC=local`);
+  if (sw.includes('/logonid')) return ctx.ok('S-1-5-5-0-318214');
+  const all = sw.includes('/all');
+  const elevated = ctx.isAdmin;
+  const localAdmin = elevated || (localGroups(ctx).Administrators ?? []).some(m => m.toLowerCase() === user.toLowerCase());
+  const ad = ctx.state.adUsers.find(u => u.sAMAccountName.toLowerCase() === user.toLowerCase());
+  const std = 'Mandatory group, Enabled by default, Enabled group';
+  const groups: string[][] = [
+    ['Everyone', 'Well-known group', 'S-1-1-0', std],
+    ...(localAdmin ? [['BUILTIN\\Administrators', 'Alias', 'S-1-5-32-544', elevated ? `${std}, Group owner` : 'Group used for deny only']] : []),
+    ['BUILTIN\\Users', 'Alias', 'S-1-5-32-545', std],
+    ['NT AUTHORITY\\INTERACTIVE', 'Well-known group', 'S-1-5-4', std],
+    ['CONSOLE LOGON', 'Well-known group', 'S-1-2-1', std],
+    ['NT AUTHORITY\\Authenticated Users', 'Well-known group', 'S-1-5-11', std],
+    ['NT AUTHORITY\\This Organization', 'Well-known group', 'S-1-5-15', std],
+    ['LOCAL', 'Well-known group', 'S-1-2-0', std],
+    ...(ad?.memberOf ?? []).filter(g => g !== 'Domain Users').map(g => [`CORP\\${g}`, 'Group', `${domainSid}-${g === 'Domain Admins' ? 512 : g === 'Enterprise Admins' ? 519 : g === 'Schema Admins' ? 518 : ridOf(g)}`, std]),
+    ['Authentication authority asserted identity', 'Well-known group', 'S-1-18-1', std],
+    elevated ? ['Mandatory Label\\High Mandatory Level', 'Label', 'S-1-16-12288', ''] : ['Mandatory Label\\Medium Mandatory Level', 'Label', 'S-1-16-8192', ''],
+  ];
+  const privs = (elevated ? PRIVILEGES : PRIVILEGES.filter(p => !p[2])).map(([n, d]) => [n, d, ENABLED_PRIVS.has(n) ? 'Enabled' : 'Disabled']);
+  const parts: string[] = [];
+  if (all || sw.includes('/user')) parts.push(whoamiTable('USER INFORMATION', ['User Name', 'SID'], [[account, `${domainSid}-${ridOf(user)}`]]));
+  if (all || sw.includes('/groups')) parts.push(whoamiTable('GROUP INFORMATION', ['Group Name', 'Type', 'SID', 'Attributes'], groups));
+  if (all || sw.includes('/priv')) parts.push(whoamiTable('PRIVILEGES INFORMATION', ['Privilege Name', 'Description', 'State'], privs));
+  if (all) parts.push(['', 'USER CLAIMS INFORMATION', '-----------------------', '', 'User claims unknown.', '', 'Kerberos support for Dynamic Access Control on this device has been disabled.'].join('\n'));
+  return ctx.ok(parts.join('\n\n'));
+}
+
+/** Mapped network drives, kept as hidden =NetUse:Z: entries in state.envVars. */
+const NET_USE_PREFIX = '=NetUse:';
+const mappedDrives = (ctx: WindowsContext): [string, string][] =>
+  Object.entries(ctx.state.envVars ?? {}).filter(([k]) => k.startsWith(NET_USE_PREFIX)).map(([k, v]) => [k.slice(NET_USE_PREFIX.length), v] as [string, string])
+    .sort(([a], [b]) => a.localeCompare(b));
+
+/** net use: list, map (net use Z: \\server\share or net use * ...) and /delete network drives. */
+function netUse(ctx: WindowsContext, rest: string[]): WindowsResult {
+  const switches = rest.filter(a => a.startsWith('/')).map(a => a.toLowerCase());
+  const operands = rest.filter(a => !a.startsWith('/'));
+  const vars = { ...(ctx.state.envVars ?? {}) };
+  const drives = mappedDrives(ctx);
+  if (!operands.length) {
+    if (!drives.length) return ctx.ok('New connections will be remembered.\n\nThere are no entries in the list.\n');
+    return ctx.ok(['New connections will be remembered.', '', '', 'Status       Local     Remote                    Network', '', RULE,
+      ...drives.map(([d, r]) => `OK           ${d.padEnd(10)}${r.padEnd(26)}Microsoft Windows Network`), DONE].join('\n'));
+  }
+  const local = operands[0].toUpperCase();
+  if (switches.includes('/delete') || switches.includes('/d')) {
+    const hit = local === '*' ? drives : drives.filter(([d, r]) => d === local || r.toLowerCase() === operands[0].toLowerCase());
+    if (!hit.length) return ctx.fail(`The network connection could not be found.${helpMsg(2250)}`, 2);
+    for (const [d] of hit) delete vars[`${NET_USE_PREFIX}${d}`];
+    ctx.state.envVars = vars;
+    return ctx.ok(hit.map(([d]) => `${d} was deleted successfully.`).join('\n\n'));
+  }
+  const remote = operands.find(o => o.startsWith('\\\\'));
+  if (!remote) return ctx.fail(`The syntax of this command is:\n\nNET USE\n[devicename | *] [\\\\computername\\sharename[\\volume] [password | *]]\n        [/USER:[domainname\\]username]\n        [[/DELETE] | [/PERSISTENT:{YES | NO}]]${helpMsg(3506)}`, 1);
+  if (!hasConnectivity(ctx)) return ctx.fail('System error 53 has occurred.\n\nThe network path was not found.', 2);
+  // net use \\server\share with no drive letter connects without mapping a drive
+  if (local !== '*' && !/^[A-Z]:$/.test(local)) return ctx.ok(DONE);
+  const used = new Set([...drives.map(([d]) => d), ...ctx.state.disks.flatMap(d => d.partitions).map(p => (p.driveLetter ?? '').toUpperCase()).filter(Boolean), 'C:']);
+  const letter = local === '*' ? [...'ZYXWVUTSRQPONMLKJIHGFED'].map(c => `${c}:`).find(c => !used.has(c)) ?? '' : local;
+  if (used.has(letter)) return ctx.fail('System error 85 has occurred.\n\nThe local device name is already in use.', 2);
+  vars[`${NET_USE_PREFIX}${letter}`] = remote;
+  ctx.state.envVars = vars;
+  return ctx.ok(local === '*' ? `Drive ${letter} is now connected to ${remote}.\n\n${DONE}` : DONE);
+}
+
+const PASSWORD_POLICY = `The password does not meet the password policy requirements. Check the minimum password length, password complexity and password history requirements.${helpMsg(2245)}`;
+
+/** net user NAME [password] /add | /delete | /active:yes|no /domain: changes Active Directory. */
+function netUserDomainChange(ctx: WindowsContext, operands: string[], switches: string[], active: string | undefined): WindowsResult {
+  const { state } = ctx;
+  const name = operands[0];
+  if (!name) return ctx.fail(cmdDoc('net')!.topics!.user, 1);
+  if (!ctx.isAdmin) return ctx.fail(`${DC_NOTE}\n\n${DENIED}`, 2, NOT_ELEVATED(ctx, 'Changing domain accounts'));
+  const existing = state.adUsers.find(u => u.sAMAccountName.toLowerCase() === name.toLowerCase());
+  if (switches.includes('/add')) {
+    if (existing) return ctx.fail(`${DC_NOTE}\n\nThe account already exists.${helpMsg(2224)}`, 2);
+    const password = operands[1];
+    // A blank password fails the default domain policy
+    if (!password) return ctx.fail(`${DC_NOTE}\n\n${PASSWORD_POLICY}`, 2);
+    state.adUsers.push({
+      sAMAccountName: name, givenName: '', surname: '', displayName: name, email: '', department: '',
+      ou: 'CN=Users,DC=corp,DC=local', enabled: !/^\/active:no$/.test(active ?? ''), locked: false, passwordNeverExpires: false, memberOf: ['Domain Users'],
+    });
+    const du = state.adGroups.find(g => g.name.toLowerCase() === 'domain users');
+    if (du && !du.members.includes(name)) du.members.push(name);
+    return ctx.ok(`${DC_NOTE}\n\n${DONE}`);
+  }
+  if (!existing) return ctx.fail(`${DC_NOTE}\n\nThe user name could not be found.${helpMsg(2221)}`, 2);
+  if (switches.includes('/delete')) {
+    state.adUsers = state.adUsers.filter(u => u !== existing);
+    for (const g of state.adGroups) g.members = g.members.filter(m => m.toLowerCase() !== name.toLowerCase());
+    return ctx.ok(`${DC_NOTE}\n\n${DONE}`);
+  }
+  const value = active!.split(':')[1]?.toLowerCase();
+  if (value !== undefined && value !== 'yes' && value !== 'no') return ctx.fail(`${cmdDoc('net')!.topics!.user}${helpMsg(3505)}`, 1);
+  existing.enabled = value !== 'no';
+  return ctx.ok(`${DC_NOTE}\n\n${DONE}`);
+}
+
+/** net group: domain groups, which only a domain controller (or /domain) can show or change. */
+function netGroup(ctx: WindowsContext, rest: string[]): WindowsResult {
+  const switches = rest.filter(a => a.startsWith('/')).map(a => a.toLowerCase());
+  const operands = rest.filter(a => !a.startsWith('/'));
+  const { state } = ctx;
+  if (!switches.includes('/domain')) {
+    return ctx.fail(`This command can be used only on a Windows Domain Controller.${helpMsg(3515)}`, 2, 'This PC is a domain member, not a domain controller. Add /domain to send the request to the domain controller.');
+  }
+  if (!operands.length) {
+    return ctx.ok([DC_NOTE, '', '', 'Group Accounts for \\\\DC01', '', RULE, ...state.adGroups.map(g => `*${g.name}`), DONE].join('\n'));
+  }
+  const group = state.adGroups.find(g => g.name.toLowerCase() === operands[0].toLowerCase());
+  if (!group) return ctx.fail(`${DC_NOTE}\n\nThe group name could not be found.${helpMsg(2220)}`, 2);
+  const add = switches.includes('/add');
+  const del = switches.includes('/delete');
+  if (add || del) {
+    if (!ctx.isAdmin) return ctx.fail(`${DC_NOTE}\n\n${DENIED}`, 2, NOT_ELEVATED(ctx, 'Changing domain group membership'));
+    const users = operands.slice(1);
+    if (!users.length) return ctx.fail(`${DC_NOTE}\n\n${add ? 'The group already exists.' : 'The group cannot be deleted from here.'}${helpMsg(add ? 2223 : 2220)}`, 2);
+    for (const name of users) {
+      const u = state.adUsers.find(x => x.sAMAccountName.toLowerCase() === name.toLowerCase());
+      if (!u) return ctx.fail(`${DC_NOTE}\n\nThere is no such global user or group: ${name}.${helpMsg(3783)}`, 2);
+      const has = group.members.some(m => m.toLowerCase() === u.sAMAccountName.toLowerCase()) || u.memberOf.some(g => g.toLowerCase() === group.name.toLowerCase());
+      if (add) {
+        if (has) return ctx.fail(`${DC_NOTE}\n\nSystem error 1320 has occurred.\n\nThe specified account name is already a member of the group.`, 2);
+        group.members.push(u.sAMAccountName);
+        u.memberOf.push(group.name);
+      } else {
+        if (!has) return ctx.fail(`${DC_NOTE}\n\nSystem error 1321 has occurred.\n\nThe specified user account is not a member of the specified group account.`, 2);
+        group.members = group.members.filter(m => m.toLowerCase() !== u.sAMAccountName.toLowerCase());
+        u.memberOf = u.memberOf.filter(g => g.toLowerCase() !== group.name.toLowerCase());
+      }
+    }
+    return ctx.ok(`${DC_NOTE}\n\n${DONE}`);
+  }
+  const members = [...new Set([...group.members, ...state.adUsers.filter(u => u.memberOf.includes(group.name)).map(u => u.sAMAccountName)])];
+  return ctx.ok([DC_NOTE, '', `Group name     ${group.name}`, `Comment        ${group.description}`, '', 'Members', '', RULE, ...threeColumns(members), DONE].join('\n'));
+}
+
 function netUser(ctx: WindowsContext, rest: string[]): WindowsResult {
   const switches = rest.filter(a => a.startsWith('/')).map(a => a.toLowerCase());
   const operands = rest.filter(a => !a.startsWith('/'));
   const domain = switches.includes('/domain');
   const { state } = ctx;
+  const active = switches.find(s => s.startsWith('/active'));
+  if (domain && (switches.includes('/add') || switches.includes('/delete') || active)) return netUserDomainChange(ctx, operands, switches, active);
+  if (active && operands[0]) {
+    if (!ctx.isAdmin) return ctx.fail(DENIED, 2, NOT_ELEVATED(ctx, 'Changing an account'));
+    if (!findName(localUsers(ctx), operands[0])) return ctx.fail(`The user name could not be found.${helpMsg(2221)}`, 2);
+    return ctx.ok(DONE);
+  }
   if (switches.includes('/add') || switches.includes('/delete')) {
     if (!ctx.isAdmin) return ctx.fail(DENIED, 2, NOT_ELEVATED(ctx, 'Adding or deleting accounts'));
     const name = operands[0];
@@ -432,7 +685,7 @@ function netUser(ctx: WindowsContext, rest: string[]): WindowsResult {
   }
   const name = domain ? ad!.sAMAccountName : local!;
   const field = (k: string, v = '') => `${k.padEnd(29)}${v}`.trimEnd();
-  const active = domain ? (ad!.locked ? 'Locked' : ad!.enabled ? 'Yes' : 'No') : DISABLED_BUILTINS.has(name) ? 'No' : 'Yes';
+  const accountActive = domain ? (ad!.locked ? 'Locked' : ad!.enabled ? 'Yes' : 'No') : DISABLED_BUILTINS.has(name) ? 'No' : 'Yes';
   const localMember = Object.entries(localGroups(ctx)).filter(([, m]) => m.some(u => u.toLowerCase() === name.toLowerCase())).map(([g]) => `*${g}`);
   return ctx.ok([
     ...(domain ? [DC_NOTE, ''] : []),
@@ -441,7 +694,7 @@ function netUser(ctx: WindowsContext, rest: string[]): WindowsResult {
     field('Comment', name === 'Administrator' ? 'Built-in account for administering the computer/domain' : ''),
     field("User's comment"),
     field('Country/region code', '000 (System Default)'),
-    field('Account active', active),
+    field('Account active', accountActive),
     field('Account expires', 'Never'),
     '',
     field('Password last set', '10/1/2026 9:00:00 AM'),
@@ -535,6 +788,8 @@ function net(ctx: WindowsContext): WindowsResult {
   const [subRaw, ...rest] = ctx.args;
   switch (subRaw?.toLowerCase()) {
     case 'user': case 'users': return netUser(ctx, rest);
+    case 'group': return netGroup(ctx, rest);
+    case 'use': return netUse(ctx, rest);
     case 'localgroup': return netLocalgroup(ctx, rest);
     case 'start': return netService(ctx, true, rest);
     case 'stop': return netService(ctx, false, rest);
@@ -544,7 +799,7 @@ function net(ctx: WindowsContext): WindowsResult {
 }
 
 cmdCommands.registerAll({
-  whoami: ctx => ctx.ok(`corp\\${ctx.state.currentUser.toLowerCase()}`),
+  whoami,
   hostname: ctx => ctx.ok(ctx.state.hostname),
   ver: ctx => ctx.ok('\nMicrosoft Windows [Version 10.0.22621.2428]'),
   systeminfo,

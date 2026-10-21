@@ -34,7 +34,9 @@ function ip(ctx: LinuxContext): LinuxResult {
   // [show|list] [dev] NAME
   const words = rest.filter(w => !['show', 'list', 'ls', 'lst', 'sh', 'dev'].includes(w));
   const dev = words[0];
-  const all = ctx.state.interfaces.map((iface, idx) => ({ iface, idx }));
+  // The kernel registers lo first, so it is always index 1
+  const ordered = [...ctx.state.interfaces.filter(i => i.name === 'lo'), ...ctx.state.interfaces.filter(i => i.name !== 'lo')];
+  const all = ordered.map((iface, idx) => ({ iface, idx }));
   const chosen = dev ? all.filter(x => x.iface.name === dev) : all;
   if (dev && !chosen.length) return ctx.fail(`Device "${dev}" does not exist.`, 1);
 
@@ -45,12 +47,17 @@ function ip(ctx: LinuxContext): LinuxResult {
       const state = lo ? 'UNKNOWN' : iface.status;
       return isAddr ? `${iface.name.padEnd(16)} ${state.padEnd(14)} ${prefix}` : `${iface.name.padEnd(16)} ${state.padEnd(14)} ${lo ? '00:00:00:00:00:00' : iface.mac}`;
     }
+    const tail = isAddr ? 'group default qlen 1000' : 'mode DEFAULT group default qlen 1000';
     const head = lo
-      ? `${idx + 1}: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN`
-      : `${idx + 1}: ${iface.name}: <BROADCAST,MULTICAST,${iface.status === 'UP' ? 'UP,LOWER_UP' : 'DOWN'}> mtu 1500 qdisc fq_codel state ${iface.status}`;
+      ? `${idx + 1}: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN ${tail}`
+      : `${idx + 1}: ${iface.name}: <BROADCAST,MULTICAST,${iface.status === 'UP' ? 'UP,LOWER_UP' : 'DOWN'}> mtu 1500 qdisc fq_codel state ${iface.status} ${tail}`;
     const link = lo ? '    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00' : `    link/ether ${iface.mac} brd ff:ff:ff:ff:ff:ff`;
     if (!isAddr) return `${head}\n${link}`;
-    const inet = lo ? `    inet ${prefix} scope host lo` : `    inet ${prefix} brd ${broadcast(iface.ip, iface.netmask)} scope global ${iface.name}`;
+    const inet = lo
+      ? `    inet ${prefix} scope host lo\n       valid_lft forever preferred_lft forever`
+      : iface.dhcpEnabled
+        ? `    inet ${prefix} brd ${broadcast(iface.ip, iface.netmask)} scope global dynamic ${iface.name}\n       valid_lft 86137sec preferred_lft 86137sec`
+        : `    inet ${prefix} brd ${broadcast(iface.ip, iface.netmask)} scope global ${iface.name}\n       valid_lft forever preferred_lft forever`;
     return `${head}\n${link}\n${inet}`;
   }).join('\n'));
 }

@@ -1,6 +1,7 @@
 // Optional sign-in. The app never depends on it: signed out, offline, or on a host without the
 // account API (GitHub Pages, `vite preview`), sign-in is simply not offered.
 import { useCallback, useEffect, useState } from 'react';
+import { apiBase } from './apiBase';
 
 export interface AccountUser {
   id: string;
@@ -20,7 +21,8 @@ export type AccountState =
 /** Builds that ship without the account API (the GitHub Pages copy) set VITE_ACCOUNTS=off. */
 export const ACCOUNTS_ENABLED = import.meta.env.VITE_ACCOUNTS !== 'off';
 
-const apiUrl = (path: string) => new URL(`api/${path}`, document.baseURI).toString();
+const apiUrl = (path: string) =>
+  new URL(`api/${path}`, apiBase(import.meta.env.BASE_URL, window.location.origin, document.baseURI)).toString();
 
 /** Where "Sign in with GitHub" goes; GitHub sends the learner back to the page they were on. */
 export function githubSignInHref(hash: string = window.location.hash): string {

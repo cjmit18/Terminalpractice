@@ -167,6 +167,8 @@ const newWindows = () => createSession(createDefaultWindowsFs(), WINDOWS_STATE, 
 export const SandboxMode: React.FC = () => {
   const [shell, setShell] = useState<TerminalShell>('bash');
   const [showFiles, setShowFiles] = useState(false);
+  // Counts resets, so the terminal shows the login banner of the fresh machine
+  const [resetCount, setResetCount] = useState(0);
 
   // bash runs on one machine; Command Prompt and PowerShell share the Windows one
   const linux = useShellSession(newLinux);
@@ -195,7 +197,11 @@ export const SandboxMode: React.FC = () => {
               <FolderTree className="size-4" aria-hidden="true" />
               Files
             </button>
-            <ResetButton label="Reset" onClick={() => machine.reset(isLinux ? newLinux() : newWindows())} />
+            <ResetButton label="Reset" onClick={() => {
+                machine.reset(isLinux ? newLinux() : newWindows());
+                setResetCount(n => n + 1);
+              }}
+            />
           </>
         }
       />
@@ -209,6 +215,7 @@ export const SandboxMode: React.FC = () => {
             history={session.history}
             onExecuteCommand={(cmd) => machine.run(cmd, shell)}
             onClearHistory={machine.clearHistory}
+            resetKey={resetCount}
             isDiskpartActive={!isLinux && session.diskpartActive}
             currentUser={session.state.currentUser}
             hostname={session.state.hostname}
