@@ -10,6 +10,9 @@ import { PermissionMatrixSim } from './PermissionMatrixSim';
 import { createSession, ShellSession, useShellSession } from './lab/useShellSession';
 import { TasksPanel, ConceptsPanel, WalkthroughPanel } from './lab/LabManual';
 import { PageHeader, ResetButton, segmentClass } from './lab/PageHeader';
+import { useGameLayer } from './celebrate/GameLayer';
+import { LabRecap } from './celebrate/LabRecap';
+import { hintFact, resetFact } from '../lib/activity';
 
 interface ModuleRunnerProps {
   module: ExamModule;
@@ -17,6 +20,8 @@ interface ModuleRunnerProps {
   completedObjectiveIds: string[];
   /** Called once per objective, the first time it passes */
   onObjectiveComplete: (moduleId: string, objectiveId: string) => void;
+  /** Where to go after this lab, when it is part of a path (shown in the recap once it is done) */
+  next?: { href: string; title: string } | null;
 }
 
 type SideTab = 'tasks' | 'simulator' | 'concepts' | 'walkthrough';
@@ -28,7 +33,9 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
   module,
   completedObjectiveIds,
   onObjectiveComplete,
+  next,
 }) => {
+  const { record, announce } = useGameLayer();
   const [activeShell, setActiveShell] = useState<TerminalShell>(module.defaultShell);
   const [activeTab, setActiveTab] = useState<SideTab>('tasks');
   const [mobilePane, setMobilePane] = useState<'lab' | 'terminal'>('lab');
@@ -41,6 +48,14 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
   moduleRef.current = module;
   const onCompleteRef = useRef(onObjectiveComplete);
   onCompleteRef.current = onObjectiveComplete;
+  const announceRef = useRef(announce);
+  announceRef.current = announce;
+
+  // For the recap: the command line that passed each task in this visit (null: the simulator did)
+  const [passedBy, setPassedBy] = useState<Record<string, string | null>>({});
+  // True once the last task passed during this visit, so the recap shows then and not on every visit
+  const [finishedHere, setFinishedHere] = useState(false);
+  const lastOutcomeRef = useRef<ShellSession['lastOutcome']>(undefined);
 
   // Checks every open objective against the session a command (or simulator) just produced
   const verify = useCallback((s: ShellSession) => {
@@ -55,13 +70,23 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
         if (import.meta.env.DEV) console.error(`Verifier for "${obj.id}" threw`, err);
       }
     }
+    // A new command produced this session; a simulator panel changes state without one
+    const byCommand = s.lastOutcome && s.lastOutcome !== lastOutcomeRef.current ? s.lastOutcome.line : null;
+    lastOutcomeRef.current = s.lastOutcome;
     if (newlyDone.length === 0) return;
     newlyDone.forEach(id => completedRef.current.add(id));
     setCompleted(new Set(completedRef.current));
+    setPassedBy(prev => ({ ...prev, ...Object.fromEntries(newlyDone.map(id => [id, byCommand])) }));
+    if (mod.objectives.every(o => completedRef.current.has(o.id))) setFinishedHere(true);
     newlyDone.forEach(id => onCompleteRef.current(mod.id, id));
+    const total = mod.objectives.length;
+    for (const id of newlyDone) {
+      const index = mod.objectives.findIndex(o => o.id === id);
+      announceRef.current({ kind: 'task', title: mod.objectives[index].title, index: index + 1, total });
+    }
   }, []);
 
-  const { session, run, setSystemState, clearHistory, reset: resetSession } = useShellSession(() => freshSession(module), verify);
+  const { session, run, setSystemState, clearHistory, reset: resetSession } = useShellSession(() => freshSession(module), verify, record);
   // Counts resets, so the terminal knows a fresh machine started (and shows its login banner)
   const [resetCount, setResetCount] = useState(0);
   const reset = useCallback((next: ShellSession) => {
@@ -76,6 +101,8 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
     setActiveShell(module.defaultShell);
     setActiveTab('tasks');
     setMobilePane('lab');
+    setPassedBy({});
+    setFinishedHere(false);
     reset(freshSession(module));
     // completedObjectiveIds is read once per module; App keeps it in step through onObjectiveComplete
   }, [module.id]);
@@ -107,7 +134,12 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
   const handleResetLab = () => {
     // Resetting restores the environment; objectives already earned stay earned
     reset(freshSession(module));
+    // Finishing a lab after resetting it earns "Fresh start"; a lab already done does not count
+    if (!module.objectives.every(o => completedRef.current.has(o.id))) record([resetFact(module.id)]);
   };
+
+  // A hint opened for a task: finishing that task afterwards earns "Hints are tools"
+  const handleHint = useCallback((objectiveId: string) => record([hintFact(module.id, objectiveId)]), [record, module.id]);
 
   const total = module.objectives.length;
   const done = module.objectives.filter(o => completed.has(o.id)).length;
@@ -237,7 +269,12 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
             tabIndex={0}
             className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 py-6"
           >
-            <div hidden={currentTab !== 'tasks'}><TasksPanel key={module.id} module={module} completed={completed} /></div>
+            <div hidden={currentTab !== 'tasks'}>
+              {isComplete && finishedHere && <LabRecap module={module} passedBy={passedBy} next={next ?? null} />}
+              {/* TODO(merge): pass onHint={(objectiveId, _rung) => handleHint(objectiveId)} to TasksPanel once the
+                  hints branch adds the optional onHint prop to LabManual.tsx */}
+              <TasksPanel key={module.id} module={module} completed={completed} />
+            </div>
             {module.simType !== 'terminal-only' && <div hidden={currentTab !== 'simulator'} className="h-full">{renderSimulator()}</div>}
             <div hidden={currentTab !== 'concepts'}><ConceptsPanel module={module} /></div>
             <div hidden={currentTab !== 'walkthrough'}><WalkthroughPanel key={module.id} module={module} onRunStep={runStep} /></div>
@@ -256,6 +293,7 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
             history={session.history}
             onExecuteCommand={execute}
             onClearHistory={clearHistory}
+            onActivity={record}
             resetKey={resetCount}
             isDiskpartActive={session.diskpartActive}
             currentUser={state.currentUser}

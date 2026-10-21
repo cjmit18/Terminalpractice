@@ -22,9 +22,13 @@ import {
   findStep,
   journeyCodec,
   labCheck,
+  labPlacements,
   markRead,
+  quizPassed,
   recordQuizScore,
   resetPath,
+  stepAfter,
+  stepKey,
   stepTitle,
   visit,
 } from './lib/journey';
@@ -34,11 +38,16 @@ import { PathOverview } from './components/journey/PathOverview';
 import { StepPage } from './components/journey/StepPage';
 import { PageErrorBoundary } from './components/PageErrorBoundary';
 import { lazyWithReload, reloadOnPreloadError } from './lib/chunkReload';
+import { ACTIVITY_KEY, activityCodec, addFacts, quizMissFact, resetFact } from './lib/activity';
+import { GameLayerProvider } from './components/celebrate/GameLayer';
 
 const MODULES_BY_ID = new Map(ALL_MODULES.map(m => [m.id, m]));
 // How lab progress and the journey are saved and shared with the app's other open tabs
 const PROGRESS_CODEC = progressCodec(ALL_MODULES);
 const JOURNEY_CODEC = journeyCodec(LEARNING_PATHS);
+// Badges and the facts behind them (src/lib/activity.ts); no lab or path reset touches it
+const ACTIVITY_CODEC = activityCodec();
+const LAB_PLACEMENTS = labPlacements(LEARNING_PATHS);
 
 // Pages that are not needed for the first screen load on demand. If a chunk fails to load (this tab
 // runs an older build than the server has), the page reloads once; otherwise PageErrorBoundary shows.
@@ -71,6 +80,7 @@ export default function App() {
   const [lastTrack, setLastTrack] = useState<TrackSection>('linux');
   // Lessons read, quiz scores and the last step opened in the learning paths, saved and shared like progress
   const [journey, setJourney] = useSyncedStorage(JOURNEY_KEY, JOURNEY_CODEC);
+  const [activity, setActivity] = useSyncedStorage(ACTIVITY_KEY, ACTIVITY_CODEC);
   // The last learning page open this session, so the Learn link brings you back to it
   const [lastLearnHref, setLastLearnHref] = useState<string | null>(null);
   const mainRef = useRef<HTMLElement>(null);
@@ -259,13 +269,39 @@ export default function App() {
   const handleObjectiveComplete = (moduleId: string, objectiveId: string) =>
     setProgressRecord(prev => completeObjective(prev, moduleId, objectiveId));
 
-  const handleMarkRead = (pathId: string, stepId: string) => setJourney(j => markRead(j, pathId, stepId));
-  const handleQuizScore = (pathId: string, stepId: string, score: QuizScore) =>
+  const handleMarkRead = (pathId: string, stepId: string) => {
+    setJourney(j => markRead(j, pathId, stepId));
+    setActivity(a => addFacts(a, []));
+  };
+  const handleQuizScore = (pathId: string, stepId: string, score: QuizScore) => {
+    const path = LEARNING_PATHS.find(p => p.id === pathId);
+    const step = path ? findStep(path, stepId)?.step : undefined;
+    // A first miss on a checkpoint not passed before: passing it later earns "Second wind"
+    const missed =
+      step?.kind === 'quiz' &&
+      !quizPassed(score, step.passMark) &&
+      !quizPassed(journey.quiz[stepKey(pathId, stepId)], step.passMark);
     setJourney(j => recordQuizScore(j, pathId, stepId, score));
+    setActivity(a => addFacts(a, missed ? [quizMissFact(pathId, stepId)] : []));
+  };
 
   const resetTrackProgress = (t: TrackSection) => {
-    setProgressRecord(prev => resetModules(prev, TRACK_MODULES[t].map(m => m.id)));
+    const ids = TRACK_MODULES[t].map(m => m.id);
+    setProgressRecord(prev => resetModules(prev, ids));
+    // Labs that had progress: finishing one again later earns "Fresh start"
+    setActivity(a => addFacts(a, ids.filter(id => (progress[id] ?? []).length > 0).map(resetFact)));
   };
+
+  // A lab opened from the lab lists that is also a step in a path: where that path goes next
+  const standaloneNext = (() => {
+    if (!activeModule) return null;
+    const place = LAB_PLACEMENTS.get(activeModule.id)?.[0];
+    if (!place) return null;
+    const after = stepAfter(place.path, place.stepId, src);
+    return after
+      ? { href: routeHref({ section: 'learn', pathId: place.path.id, stepId: after.step.id }), title: `${stepTitle(after.step, MODULES_BY_ID)} in ${place.path.title}` }
+      : { href: routeHref({ section: 'learn', pathId: place.path.id, stepId: null }), title: `${place.path.title} overview` };
+  })();
 
   const { done: tasksDone, total: tasksTotal } = countDone(progress, ALL_MODULES);
 
@@ -285,6 +321,14 @@ export default function App() {
   const loading = <p className="px-4 sm:px-6 py-8 text-sm text-muted">Loading…</p>;
 
   return (
+    <GameLayerProvider
+      activity={activity}
+      setActivity={setActivity}
+      paths={LEARNING_PATHS}
+      modules={ALL_MODULES}
+      progress={progress}
+      journey={journey}
+    >
     <div className="h-dvh flex flex-col bg-bg text-text font-sans">
       <a
         href="#main"
@@ -343,6 +387,7 @@ export default function App() {
               module={activeModule}
               completedObjectiveIds={progress[activeModule.id] ?? []}
               onObjectiveComplete={handleObjectiveComplete}
+              next={standaloneNext}
             />
           </div>
         )}
@@ -378,6 +423,7 @@ export default function App() {
 
       <BottomNav current={route.section} hrefs={hrefs} labsHref={hrefs[lastTrack]} />
     </div>
+    </GameLayerProvider>
   );
 }
 

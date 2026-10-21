@@ -15,6 +15,7 @@ import {
 import { learnHref } from '../../lib/router';
 import { ProgressBar, primaryLinkClass, secondaryLinkClass, textLinkClass } from './shared';
 import { pathProgressText, stagesText } from './progressText';
+import { BadgesSection } from '../badges/BadgesSection';
 
 interface PathsListProps {
   paths: LearningPath[];
@@ -98,6 +99,8 @@ export const PathsList: React.FC<PathsListProps> = ({ paths, src, modulesById })
           );
         })}
       </ul>
+
+      <BadgesSection />
 
       <section aria-labelledby="about-heading" className="mt-16 pt-6 border-t border-line text-sm text-muted space-y-2 max-w-prose">
         <h2 id="about-heading" className="text-base font-semibold text-text">About this project</h2>
