@@ -216,3 +216,39 @@ test('A7: useradd -m copies /etc/skel; the defaults files exist; adduser is not 
   assert.equal(add.stderr, 'bash: adduser: this command exists on real systems but is not simulated here');
   assert.match(add.explanation ?? '', /useradd -m/);
 });
+
+// ---------- A4: parameter expansion (outputs from bash 5.2) ----------
+
+test('A4: ${...} operators: length, substrings, trimming, replacement, case, nested defaults', () => {
+  const run = linuxSession();
+  assert.equal(run('echo ${HOME:0:5}').stdout, '/home');
+  assert.equal(run('echo ${HOME#/home/}').stdout, 'student');
+  assert.equal(run('echo ${HOME%/student}').stdout, '/home');
+  assert.equal(run('echo ${HOME/student/x}').stdout, '/home/x');
+  assert.equal(run('echo ${x:-${y:-${z:-deep}}}').stdout, 'deep');
+  assert.equal(run('echo ${#HOME}').stdout, '13');
+  assert.equal(run('echo ${HOME^^} ${HOME,,}').stdout, '/HOME/STUDENT /home/student');
+  run('x=abcabc');
+  assert.equal(run('echo ${x//b/Y} ${x/#a/S} ${x/%c/E} ${x:2} ${x: -2} ${x:1:-1} ${x##*b} ${x%%b*} ${x^} ${x#*b} ${x%b*}').stdout,
+    'aYcaYc Sbcabc abcabE cabc bc bcab c a Abcabc cabc abca');
+  assert.equal(run('echo ${x/b} ${x//[ab]/-} ${x/*/Z} ${x:(-3):2} ${x:10} ${x/"b"/\'Q\'}').stdout, 'acabc --c--c Z ab aQcabc');
+  run('f=archive.tar.gz');
+  assert.equal(run('echo ${f%.*} ${f%%.*} ${f#*.} ${f##*.}').stdout, 'archive.tar archive tar.gz gz');
+  run('p=/usr/local/bin/tool');
+  assert.equal(run('echo ${p##*/} ${p%/*}').stdout, 'tool /usr/local/bin');
+  assert.equal(run('echo "${UNSET-default value}" ${UNSET:+alt} ${HOME:+alt}').stdout, 'default value alt');
+  assert.equal(run('y=; echo "[${y-set}]" "[${y:-empty}]"').stdout, '[] [empty]');
+  assert.equal(run('echo ${q:=assigned}; echo $q').stdout, 'assigned\nassigned');
+  assert.equal(run('n=HOME; echo ${!n}').stdout, '/home/student');
+  assert.equal(run('s="hello world"; echo ${s^} ${s@U} ${s@Q}').stdout, "Hello world HELLO WORLD 'hello world'");
+});
+
+test('A4: anything else is a bad substitution (status 1, the command does not run)', () => {
+  const run = linuxSession();
+  for (const body of ['${}', '${HOME@}', '${1x}', '${HOME;x}']) {
+    const res = run(`touch made; echo ${body}`);
+    assert.equal(res.stdout, '', body);
+    assert.equal(res.stderr, `bash: ${body}: bad substitution`, body);
+    assert.equal(res.exitCode, 1, body);
+  }
+});

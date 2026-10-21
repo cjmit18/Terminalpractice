@@ -8,7 +8,7 @@ import { MAX_ARITH_DEPTH } from '../limits';
 /** One piece of a word, remembering whether it was quoted (quoted pieces are never split or globbed). */
 export type WordPart =
   | { k: 'lit'; text: string; quoted: boolean }
-  | { k: 'param'; name: string; op?: string; arg?: string; quoted: boolean }
+  | { k: 'param'; name: string; op?: string; arg?: string; arg2?: string; raw?: string; quoted: boolean }
   | { k: 'cmd'; src: string; quoted: boolean }
   | { k: 'arith'; src: string; quoted: boolean }
   | { k: 'tilde'; user: string };
@@ -73,6 +73,87 @@ function scanBacktick(s: string, i: number): number {
   return Math.min(i, s.length) + 1;
 }
 
+/** Index of the } that closes a ${ whose body starts at i (nested ${ }, $( ) and quotes skipped), or -1. */
+function scanBrace(s: string, i: number): number {
+  let depth = 1;
+  while (i < s.length) {
+    const c = s[i];
+    if (c === '\\') { i += 2; continue; }
+    if (c === "'") { const j = s.indexOf("'", i + 1); if (j === -1) return -1; i = j + 1; continue; }
+    if (c === '"') {
+      i++;
+      while (i < s.length && s[i] !== '"') i += s[i] === '\\' ? 2 : 1;
+      i++;
+      continue;
+    }
+    if (c === '`') { i = scanBacktick(s, i + 1); continue; }
+    if (c === '$' && s[i + 1] === '(') { i = scanParens(s, i + 2); continue; }
+    if (c === '$' && s[i + 1] === '{') { depth++; i += 2; continue; }
+    if (c === '}' && --depth === 0) return i;
+    i++;
+  }
+  return -1;
+}
+
+/** Index of the first `sep` in s outside quotes, ${ }, $( ) and backslash escapes, or -1. */
+function topLevelIndex(s: string, sep: string): number {
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (c === '\\') { i++; continue; }
+    if (c === "'") { const j = s.indexOf("'", i + 1); if (j === -1) return -1; i = j; continue; }
+    if (c === '$' && s[i + 1] === '{') { const j = scanBrace(s, i + 2); if (j === -1) return -1; i = j; continue; }
+    if (c === '$' && s[i + 1] === '(') { i = scanParens(s, i + 2) - 1; continue; }
+    if (c === sep) return i;
+  }
+  return -1;
+}
+
+const PARAM_NAME = /^([A-Za-z_]\w*|\d+|[?$#!@*-])/;
+
+/**
+ * Parses the inside of ${...}: a name and at most one operator. Anything bash would reject is
+ * kept with op 'bad' and reported as "bad substitution" when the word is expanded.
+ */
+function parseParam(body: string, quoted: boolean): WordPart {
+  const raw = `\${${body}}`;
+  const bad: WordPart = { k: 'param', name: body, op: 'bad', raw, quoted };
+  // ${#name}: length
+  if (body.length > 1 && body[0] === '#') {
+    const m = body.slice(1).match(/^([A-Za-z_]\w*|\d+|[?$#!@*-])$/);
+    return m ? { k: 'param', name: m[1], op: 'len', raw, quoted } : bad;
+  }
+  // ${!name}: indirection
+  if (body.length > 1 && body[0] === '!') {
+    const m = body.slice(1).match(/^([A-Za-z_]\w*|\d+)$/);
+    return m ? { k: 'param', name: m[1], op: 'ind', raw, quoted } : bad;
+  }
+  const m = body.match(PARAM_NAME);
+  if (!m) return bad;
+  const name = m[1];
+  const rest = body.slice(name.length);
+  if (rest === '') return { k: 'param', name, quoted };
+  const part = (op: string, arg?: string, arg2?: string): WordPart => ({ k: 'param', name, op, arg, arg2, raw, quoted });
+  const def = rest.match(/^(:?[-=+?])([\s\S]*)$/);
+  if (def) return part(def[1], def[2]);
+  if (rest[0] === ':') {
+    const spec = rest.slice(1);
+    const colon = topLevelIndex(spec, ':');
+    return colon === -1 ? part('sub', spec) : part('sub', spec.slice(0, colon), spec.slice(colon + 1));
+  }
+  const trim = rest.match(/^(##|#|%%|%)([\s\S]*)$/);
+  if (trim) return part(trim[1], trim[2]);
+  const repl = rest.match(/^(\/\/|\/#|\/%|\/)([\s\S]*)$/);
+  if (repl) {
+    const slash = topLevelIndex(repl[2], '/');
+    return slash === -1 ? part(repl[1], repl[2], '') : part(repl[1], repl[2].slice(0, slash), repl[2].slice(slash + 1));
+  }
+  const kase = rest.match(/^(\^\^|\^|,,|,)([\s\S]*)$/);
+  if (kase) return part(kase[1], kase[2]);
+  const tr = rest.match(/^@([ULuQ])$/);
+  if (tr) return part('@' + tr[1]);
+  return bad;
+}
+
 /** Inside backticks, \` \\ and \$ stand for the character itself. */
 const unBacktick = (src: string) => src.replace(/\\([`\\$])/g, '$1');
 
@@ -99,14 +180,10 @@ function readDollar(s: string, i: number, quoted: boolean): { part: WordPart; ne
     return { part: { k: 'cmd', src: s.slice(i + 2, end - 1), quoted }, next: Math.min(end, s.length) };
   }
   if (n === '{') {
-    const end = s.indexOf('}', i + 2);
+    const end = scanBrace(s, i + 2);
     const body = s.slice(i + 2, end === -1 ? s.length : end);
     const next = end === -1 ? s.length : end + 1;
-    const len = body.match(/^#([A-Za-z_]\w*|[0-9?$#])$/);
-    if (len) return { part: { k: 'param', name: len[1], op: '#', quoted }, next };
-    const m = body.match(/^([A-Za-z_]\w*|[0-9?$#!@*-])(:?[-=+?])?([\s\S]*)$/);
-    if (m) return { part: { k: 'param', name: m[1], op: m[2], arg: m[2] ? m[3] : undefined, quoted }, next };
-    return { part: { k: 'param', name: body, quoted }, next };
+    return { part: parseParam(body, quoted), next };
   }
   if (isNameStart(n)) {
     let j = i + 1;
@@ -477,7 +554,7 @@ export function wordText(word: Word): string {
     switch (p.k) {
       case 'lit': return p.text;
       case 'tilde': return `~${p.user}`;
-      case 'param': return p.op || p.arg ? `\${${p.name}${p.op ?? ''}${p.arg ?? ''}}` : `$${p.name}`;
+      case 'param': return p.raw ?? (p.op || p.arg ? `\${${p.name}${p.op ?? ''}${p.arg ?? ''}}` : `$${p.name}`);
       case 'cmd': return `$(${p.src})`;
       case 'arith': return `$((${p.src}))`;
     }
@@ -518,21 +595,176 @@ export interface Field {
 
 const literalGlob = (t: string) => t.replace(/[*?[]/g, c => `[${c}]`);
 
+/**
+ * Turns the text after an operator (${x:-TEXT}, ${x#TEXT}) into a word: quotes, backslashes and
+ * nested $-expansions and backticks are honoured; spaces are kept as they are.
+ */
+function argWord(text: string): Word {
+  const parts: WordPart[] = [];
+  const lit = (t: string, quoted: boolean) => {
+    const last = parts[parts.length - 1];
+    if (last && last.k === 'lit' && last.quoted === quoted) last.text += t;
+    else parts.push({ k: 'lit', text: t, quoted });
+  };
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === '\\' && i + 1 < text.length) { lit(text[i + 1], true); i += 2; continue; }
+    if (c === "'") {
+      const j = text.indexOf("'", i + 1);
+      const end = j === -1 ? text.length : j;
+      lit(text.slice(i + 1, end), true);
+      i = end + 1;
+      continue;
+    }
+    if (c === '"') {
+      lit('', true);
+      i++;
+      while (i < text.length && text[i] !== '"') {
+        if (text[i] === '\\' && i + 1 < text.length && '$`"\\'.includes(text[i + 1])) { lit(text[i + 1], true); i += 2; continue; }
+        if (text[i] === '$') {
+          const r = readDollar(text, i, true);
+          if (r) { parts.push(r.part); i = r.next; continue; }
+        }
+        if (text[i] === '`') {
+          const end = scanBacktick(text, i + 1);
+          parts.push({ k: 'cmd', src: unBacktick(text.slice(i + 1, end - 1)), quoted: true });
+          i = end;
+          continue;
+        }
+        lit(text[i], true);
+        i++;
+      }
+      i++;
+      continue;
+    }
+    if (c === '$') {
+      const r = readDollar(text, i, false);
+      if (r) { parts.push(r.part); i = r.next; continue; }
+    }
+    if (c === '`') {
+      const end = scanBacktick(text, i + 1);
+      parts.push({ k: 'cmd', src: unBacktick(text.slice(i + 1, end - 1)), quoted: false });
+      i = end;
+      continue;
+    }
+    lit(c, false);
+    i++;
+  }
+  return { parts };
+}
+
+const argText = (text: string | undefined, ex: Expander) => expandToString(argWord(text ?? ''), ex);
+
+/** A glob pattern (from ${x#pat} and friends) as an anchored RegExp; quoted characters are literal. */
+function argPattern(text: string | undefined, ex: Expander): RegExp {
+  const fields = expandWord(argWord(text ?? ''), ex, false);
+  const glob = fields.map(f => f.glob ?? literalGlob(f.text)).join(' ');
+  let src = '';
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
+    if (c === '*') src += '[\\s\\S]*';
+    else if (c === '?') src += '[\\s\\S]';
+    else if (c === '[') {
+      const end = glob.indexOf(']', i + 2);
+      if (end === -1) src += '\\[';
+      else { src += '[' + glob.slice(i + 1, end).replace(/^!/, '^').replace(/\\/g, '\\\\') + ']'; i = end; }
+    } else src += c.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+  }
+  return new RegExp(`^(?:${src})$`);
+}
+
+/** Longest match of `re` starting at `start` (end index), or -1. */
+function longestAt(v: string, start: number, re: RegExp): number {
+  for (let end = v.length; end >= start; end--) if (re.test(v.slice(start, end))) return end;
+  return -1;
+}
+
 function paramValue(p: Extract<WordPart, { k: 'param' }>, ex: Expander): string {
+  if (p.op === 'bad') throw new ExpansionError(`bash: ${p.raw}: bad substitution`);
   const v = ex.lookup(p.name);
-  if (p.op === '#') return String((v ?? '').length);
   if (!p.op) return v ?? '';
+  const val = v ?? '';
+  switch (p.op) {
+    case 'len': return String([...val].length);
+    case 'ind': return v === undefined ? '' : ex.lookup(v) ?? '';
+    case 'sub': {
+      const chars = [...val];
+      let off = evalArithmetic(p.arg ?? '', ex);
+      if (off < 0) off = Math.max(chars.length + off, -1);
+      if (off < 0 || off > chars.length) return '';
+      if (p.arg2 === undefined) return chars.slice(off).join('');
+      const len = evalArithmetic(p.arg2, ex);
+      if (len < 0) {
+        const end = chars.length + len;
+        if (end < off) throw new ExpansionError(`bash: ${p.arg2.trim()}: substring expression < 0`);
+        return chars.slice(off, end).join('');
+      }
+      return chars.slice(off, off + len).join('');
+    }
+    case '#': case '##': {
+      const re = argPattern(p.arg, ex);
+      const ks = [...Array(val.length + 1).keys()];
+      const k = (p.op === '#' ? ks : ks.reverse()).find(n => re.test(val.slice(0, n)));
+      return k === undefined ? val : val.slice(k);
+    }
+    case '%': case '%%': {
+      const re = argPattern(p.arg, ex);
+      const ks = [...Array(val.length + 1).keys()];
+      const k = (p.op === '%' ? ks.reverse() : ks).find(n => re.test(val.slice(n)));
+      return k === undefined ? val : val.slice(0, k);
+    }
+    case '/': case '//': case '/#': case '/%': {
+      if (!p.arg) return val;
+      const re = argPattern(p.arg, ex);
+      const rep = argText(p.arg2, ex);
+      if (p.op === '/#') { const end = longestAt(val, 0, re); return end === -1 ? val : rep + val.slice(end); }
+      if (p.op === '/%') {
+        for (let start = 0; start <= val.length; start++) if (re.test(val.slice(start))) return val.slice(0, start) + rep;
+        return val;
+      }
+      let out = '';
+      let i = 0;
+      let done = false;
+      while (i <= val.length) {
+        const end = done ? -1 : longestAt(val, i, re);
+        if (end > i) {
+          out += rep;
+          i = end;
+          if (p.op === '/') done = true;
+          continue;
+        }
+        if (i < val.length) out += val[i];
+        i++;
+      }
+      return out;
+    }
+    case '^': case '^^': case ',': case ',,': {
+      const re = p.arg ? argPattern(p.arg, ex) : null;
+      const upper = p.op[0] === '^';
+      const all = p.op.length === 2;
+      return [...val].map((ch, idx) => {
+        if ((!all && idx > 0) || (re && !re.test(ch))) return ch;
+        return upper ? ch.toUpperCase() : ch.toLowerCase();
+      }).join('');
+    }
+    case '@U': return val.toUpperCase();
+    case '@L': return val.toLowerCase();
+    case '@u': return val.charAt(0).toUpperCase() + val.slice(1);
+    case '@Q': return v === undefined ? '' : `'${val.replace(/'/g, "'\\''")}'`;
+  }
+  // ${x-word} ${x:-word} ${x=word} ${x+word} ${x?word}: with a colon, empty counts as unset
   const colon = p.op.startsWith(':');
   const kind = p.op.slice(-1);
   const isSet = colon ? !!v : v !== undefined;
-  const arg = expandToString({ parts: [{ k: 'lit', text: p.arg ?? '', quoted: false }] }, ex);
+  const arg = () => argText(p.arg, ex);
   switch (kind) {
-    case '-': return isSet ? v! : arg;
-    case '=': if (!isSet) { ex.assign(p.name, arg); return arg; } return v!;
-    case '+': return isSet ? arg : '';
-    case '?': if (!isSet) throw new ExpansionError(`bash: ${p.name}: ${arg || 'parameter null or not set'}`); return v!;
+    case '-': return isSet ? v! : arg();
+    case '=': if (!isSet) { const a = arg(); ex.assign(p.name, a); return a; } return v!;
+    case '+': return isSet ? arg() : '';
+    case '?': if (!isSet) { const a = arg(); throw new ExpansionError(`bash: ${p.name}: ${a || 'parameter null or not set'}`); } return v!;
   }
-  return v ?? '';
+  return val;
 }
 
 /** Value of one expandable part, before field splitting. */
