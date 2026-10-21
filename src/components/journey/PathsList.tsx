@@ -15,6 +15,7 @@ import {
 import { learnHref } from '../../lib/router';
 import { ProgressBar, primaryLinkClass, secondaryLinkClass, textLinkClass } from './shared';
 import { pathProgressText, stagesText } from './progressText';
+import { FirstStepsBanner } from './FirstStepsBanner';
 
 interface PathsListProps {
   paths: LearningPath[];
@@ -35,6 +36,8 @@ export const PathsList: React.FC<PathsListProps> = ({ paths, src, modulesById })
           few questions to check it stuck.
         </p>
       </header>
+
+      <FirstStepsBanner paths={paths} src={src} />
 
       {resume && (
         <p className="mt-6 text-[15px]">
