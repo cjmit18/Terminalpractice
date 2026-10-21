@@ -51,6 +51,15 @@ test('cd - returns to the previous directory and prints it', () => {
   assert.equal(run('cd a b').stderr, 'bash: cd: too many arguments');
 });
 
+test('chmod X adds execute only to directories and already-executable files', () => {
+  const run = linuxSession();
+  run('touch plain run.sh; chmod 744 run.sh; chmod 600 plain; mkdir d; chmod 700 d');
+  run('chmod go+X plain run.sh d');
+  assert.match(run('ls -l plain').stdout, /^-rw------- /);
+  assert.match(run('ls -l run.sh').stdout, /^-rwxr-xr-x /);
+  assert.match(run('ls -ld d').stdout, /^drwx--x--x /);
+});
+
 test('/boot exists as the mount point df and lsblk name', () => {
   const run = linuxSession();
   assert.match(run('ls /boot').stdout, /vmlinuz-5\.15\.0-101-generic/);

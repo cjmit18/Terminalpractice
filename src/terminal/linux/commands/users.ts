@@ -158,13 +158,15 @@ function chmod(ctx: LinuxContext): LinuxResult {
   }
   if (targetPaths.length === 0) return ctx.fail(`chmod: missing operand after '${modeArg}'`);
 
+  // X means x, but only for directories and files that already have x for someone
+  const forNode = (n: FileNode) => modeArg.replace(/X/g, n.type === 'directory' || /x|s|t/.test(n.permissions.slice(-9)) ? 'x' : '');
   const denied: string[] = [];
   for (const p of targetPaths) {
     const abs = ctx.resolve(p);
     const node = ctx.node(abs);
     if (!ctx.traverse(abs).ok) return ctx.fail(`chmod: cannot access '${p}': Permission denied`);
     if (!node) return ctx.fail(`chmod: cannot access '${p}': No such file or directory`);
-    if (!applyChmod(node.permissions, modeArg)) return ctx.fail(`chmod: invalid mode: '${modeArg}'`);
+    if (!applyChmod(node.permissions, forNode(node))) return ctx.fail(`chmod: invalid mode: '${modeArg}'`);
 
     const applyTree = (n: FileNode, path: string) => {
       if (!ctx.isRoot && ctx.user !== n.owner) {
@@ -172,7 +174,7 @@ function chmod(ctx: LinuxContext): LinuxResult {
         ctx.deny(`${describeIdentity(ctx.user, ctx.groups)} Only a file's owner or root can change its mode, and ${path} is owned by ${n.owner}; read or write permission on it does not count.`);
         return;
       }
-      const result = applyChmod(n.permissions, modeArg)!;
+      const result = applyChmod(n.permissions, forNode(n))!;
       let { sym, octal } = result;
       if (numeric && !clearsDirSpecial && n.type === 'directory') {
         const kept = getSpecialBits(n.permissions.slice(-9)) & 6;
