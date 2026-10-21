@@ -85,19 +85,26 @@ Add it to `src/data/lpiModules.ts` or `src/data/windowsPbqs.ts`, with a one-sent
 
 ## Deployment
 
-The site is static (no server code), so it can be hosted anywhere that serves files. Two hosts are set up:
+The app is static and works without any server. On Cloudflare, a small Worker adds an optional account API (Sign in with GitHub); everywhere else the app simply does not offer sign-in.
 
-### Cloudflare Workers (static assets)
+### Cloudflare Workers
 
-`wrangler.jsonc` describes a static-assets Worker named `terminalpractice` that serves `dist/`. Cloudflare Workers Builds is connected to this repository, so every push builds and deploys automatically: pushes to `main` go to production, and pull requests get a preview deployment with its own URL (posted on the PR by Cloudflare's bot).
+`wrangler.jsonc` describes the Worker `terminalpractice`: it serves `dist/` as static assets and runs `worker/index.ts` only for `/api/*` (`run_worker_first`), with a D1 database (`DB`) for accounts. Cloudflare Workers Builds is connected to this repository and builds on every push.
 
-- `npm run deploy` builds and deploys from your machine (`wrangler deploy`; run `npx wrangler login` once first).
-- `npx wrangler dev` serves the built site locally through Cloudflare's runtime.
-- `wrangler deploy` runs `npm run build` itself (the `build` section of `wrangler.jsonc`), so it never ships a stale `dist/`.
-- Workers Builds settings in the Cloudflare dashboard: the deploy command is `npx wrangler deploy` (the default); no separate build command is needed. Node 22 comes from `.node-version`.
+- `npm run deploy`: applies new database migrations (`migrations/`) to the remote D1 database, then `wrangler deploy` (which runs `npm run build` first). Run `npx wrangler login` once before deploying from your machine. Set the same command as the **Deploy command** in the Workers Builds settings.
+- `npm run dev:cf`: the full stack locally (static app, Worker and a local D1 copy) at <http://localhost:8787>.
+- Node 22 for Workers Builds comes from `.node-version`.
+
+### Accounts (optional sign-in)
+
+- `worker/api.ts`: GitHub sign-in (`/api/auth/github/start`, `/api/auth/github/callback`), `/api/me`, `/api/logout`. Sessions are random tokens in an `HttpOnly; Secure; SameSite=Lax` `__Host-` cookie; D1 stores only their SHA-256.
+- The GitHub token is used once to read the public profile and never stored. No passwords, no email address.
+- Sign-in stays hidden until the GitHub App is configured: see [docs/GITHUB_SIGNIN_SETUP.md](docs/GITHUB_SIGNIN_SETUP.md). The plan for the next phases (progress sync, account page) is in [docs/LOGIN_PLAN.md](docs/LOGIN_PLAN.md).
+- The callback address is built from the address the site was reached on, so moving to a custom domain needs no code change.
+- Tests: `worker/api.test.ts` runs the API against Node's built-in SQLite with the real migration and a fake GitHub; `e2e/account.spec.ts` covers the header control.
 
 ### GitHub Pages
 
-Pushes to `main` also run `.github/workflows/deploy.yml`, which tests, builds and publishes `dist/` to GitHub Pages. One-time setup: in the repository settings, under **Pages**, set **Source** to **GitHub Actions**. The build uses a relative base path, so it works from a project URL such as `https://<user>.github.io/<repo>/`. If Cloudflare becomes the only host, delete that workflow and turn Pages off.
+Pushes to `main` also run `.github/workflows/deploy.yml`, which tests, builds and publishes `dist/` to GitHub Pages, with `VITE_ACCOUNTS=off` because that host has no account API. One-time setup: in the repository settings, under **Pages**, set **Source** to **GitHub Actions**. The build uses a relative base path, so it works from a project URL such as `https://<user>.github.io/<repo>/`. If Cloudflare becomes the only host, delete that workflow and turn Pages off.
 
 CI (`.github/workflows/ci.yml`) runs typecheck, tests, build and the browser tests on every push and pull request.

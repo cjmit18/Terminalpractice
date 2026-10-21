@@ -21,7 +21,10 @@ self.addEventListener('activate', event => {
 
 self.addEventListener('fetch', event => {
   const { request } = event;
-  if (request.method !== 'GET' || new URL(request.url).origin !== self.location.origin) return;
+  const url = new URL(request.url);
+  if (request.method !== 'GET' || url.origin !== self.location.origin) return;
+  // The account API is always live: never cache or answer it from here (sign-in, "who am I")
+  if (url.pathname.startsWith(new URL('./api/', self.registration.scope).pathname)) return;
 
   event.respondWith(
     // ignoreVary: hosts send "Vary: Origin", and module scripts carry an Origin header the precache requests lacked

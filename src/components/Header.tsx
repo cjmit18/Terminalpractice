@@ -3,6 +3,7 @@ import { BookOpen, GraduationCap, Layers, Monitor, Moon, SquareTerminal, Sun, Te
 import type { LucideIcon } from 'lucide-react';
 import { Section } from '../lib/router';
 import { ThemeChoice } from '../lib/theme';
+import { AccountMenu } from './AccountMenu';
 
 /** Desktop navigation, one row. */
 export const NAV_ITEMS: { section: Section; label: string }[] = [
@@ -82,6 +83,7 @@ export const Header: React.FC<HeaderProps> = ({ current, hrefs, tasksDone, tasks
           </p>
           <ThemeSwitch theme={theme} onChange={onThemeChange} />
           <ThemeCycleButton theme={theme} onChange={onThemeChange} />
+          <AccountMenu />
         </div>
       </div>
     </header>

@@ -4,8 +4,21 @@ import { test as base, expect, type Locator, type Page } from '@playwright/test'
  * Shared test setup: every test fails if the page logs a console error or throws,
  * unless it opts out with `test.use({ allowConsoleErrors: true })`.
  */
-export const test = base.extend<{ allowConsoleErrors: boolean; consoleErrors: string[] }>({
+/** What the stubbed account API answers for /api/me (the preview server has no Worker behind it). */
+export type MeResponse = { user: { id: string; name: string; login: string | null; avatarUrl: string | null } | null; providers: { github: boolean } };
+
+export const test = base.extend<{ allowConsoleErrors: boolean; consoleErrors: string[]; me: MeResponse; accountApi: void }>({
   allowConsoleErrors: [false, { option: true }],
+  // Default: no account API configured, so the app shows no sign-in control, as on a fresh deploy
+  me: [{ user: null, providers: { github: false } }, { option: true }],
+  accountApi: [
+    async ({ context, me }, use) => {
+      await context.route('**/api/me', route => route.fulfill({ json: me }));
+      await context.route('**/api/logout', route => route.fulfill({ json: { ok: true } }));
+      await use();
+    },
+    { auto: true },
+  ],
   consoleErrors: [
     async ({ page, allowConsoleErrors }, use) => {
       const errors: string[] = [];

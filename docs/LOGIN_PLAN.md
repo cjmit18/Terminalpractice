@@ -1,6 +1,6 @@
 # Plan: user accounts and login
 
-Status: proposal for review. Nothing here is built yet.
+Status: Phases 1 and 2 (Worker API, GitHub sign-in) are built; the GitHub App still has to be created (see `docs/GITHUB_SIGNIN_SETUP.md`). Phases 3 to 5 are planned.
 
 ## Goal
 
@@ -45,7 +45,7 @@ Browser (React app, service worker)
 CREATE TABLE users (
   id            TEXT PRIMARY KEY,            -- random UUID
   display_name  TEXT,
-  email         TEXT,                        -- from the provider, used only for account recovery/contact
+  avatar_url    TEXT,                        -- from the provider (not displayed yet; no third-party images)
   created_at    INTEGER NOT NULL
 );
 
@@ -77,7 +77,7 @@ Storing progress as JSON documents keeps the server simple and matches what the 
 
 | Method and path | Purpose |
 |---|---|
-| `GET /api/auth/:provider/start` | Starts OAuth: creates `state` and a PKCE verifier (short-lived cookie), redirects to the provider |
+| `GET /api/auth/:provider/start` | Starts OAuth: creates `state` (short-lived cookie together with the page to return to), redirects to the provider |
 | `GET /api/auth/:provider/callback` | Verifies `state`, exchanges the code, finds or creates the user, sets the session cookie, redirects to `/#/learn` |
 | `GET /api/me` | Who is signed in (or 401) |
 | `POST /api/logout` | Deletes the session row and clears the cookie |
@@ -118,11 +118,11 @@ The merge function is pure TypeScript shared by the app and the Worker, so one s
 
 ## Security and privacy checklist
 
-- OAuth with `state` and PKCE; exact redirect URIs registered with each provider.
+- OAuth with `state`; exact redirect URIs registered with each provider. PKCE is left out: it protects clients that cannot keep a secret, and here the client secret never leaves the Worker.
 - Cookies as above; additionally check the `Origin` header on every state-changing request (`PUT`, `POST`, `DELETE`).
 - Rate-limit sign-in and API routes (Workers rate limiting binding or a WAF rule).
 - Secrets (`GITHUB_CLIENT_SECRET`, `GOOGLE_CLIENT_SECRET`) via `wrangler secret put`, never in the repo; `.dev.vars` for local development is already git-ignored.
-- Collect the minimum: provider id, display name, email. No passwords, no tracking.
+- Collect the minimum: provider id, username and display name. No email, no passwords, no tracking.
 - Export and delete available to every user from day one.
 - Audience: learners may be under 18. State a minimum age of 13 in the privacy note, because collecting data from children under 13 brings extra legal duties (COPPA in the US).
 - Add security headers for the static site (Content-Security-Policy, Referrer-Policy) via a `_headers` file.
@@ -145,10 +145,11 @@ The merge function is pure TypeScript shared by the app and the Worker, so one s
 
 Each phase is a separate PR with its own tests.
 
-## Decisions needed from you
+## Decisions (made)
 
-1. **Sign-in providers to start with:** GitHub only, GitHub and Google, or email codes too? GitHub suits IT learners and needs no email service; Google covers people without GitHub.
-2. **Domain:** keep `*.workers.dev`, or a custom domain? OAuth redirect URIs are registered per domain, so decide before Phase 2.
-3. **GitHub Pages:** keep it as a signed-out mirror, or retire it so there is one site? Sign-in only works on the Cloudflare host because the API lives there.
-4. **Minimum age** for accounts (recommendation: 13).
-5. **Who owns the OAuth apps:** they are registered under your GitHub and Google accounts; you will need to create them (I can walk you through it) and add the secrets with `wrangler secret put`.
+1. **Sign-in:** GitHub first, through a **GitHub App** rather than an OAuth App, because a GitHub App takes up to 10 callback URLs: the `workers.dev` address and `localhost` now, the custom domain added later without removing the old one.
+2. **Domain:** `*.workers.dev` for now; a custom domain later. The Worker builds the callback URL from the address it was reached on, so switching needs no code change (steps in `docs/GITHUB_SIGNIN_SETUP.md`).
+3. **Minimum age:** 13, stated in the privacy note when the account page arrives (Phase 4).
+4. **Email:** not collected. Sign-in reads only the public GitHub profile (id, username, name), which needs no GitHub permissions.
+5. **GitHub Pages:** stays as a signed-out copy for now (`VITE_ACCOUNTS=off` hides sign-in there).
+6. **The GitHub App** is created under the repo owner's GitHub account (it holds the client secret); `docs/GITHUB_SIGNIN_SETUP.md` has the steps.
