@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import { TerminalShell, HistoryItem } from '../types/terminal';
 import { Copy, Check, Eraser, ArrowUp, ArrowDown } from 'lucide-react';
 
@@ -202,16 +202,23 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
     onClearHistory();
   };
 
-  // Insert text at the caret so the toolbar works mid-line, then restore focus and caret
+  // Insert text at the caret so the toolbar works mid-line, then restore focus and caret.
+  // The caret is placed in a layout effect, in the same commit as the new text: placing it a frame
+  // later let fast typing land first, and the late caret move then sent later keys to the wrong spot.
+  const pendingCaret = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    const el = inputRef.current;
+    if (pendingCaret.current === null || !el) return;
+    el.setSelectionRange(pendingCaret.current, pendingCaret.current);
+    pendingCaret.current = null;
+  }, [input]);
   const insertAtCaret = (text: string) => {
     const el = inputRef.current;
     const start = el?.selectionStart ?? input.length;
     const end = el?.selectionEnd ?? input.length;
+    pendingCaret.current = start + text.length;
     setInput(input.slice(0, start) + text + input.slice(end));
-    requestAnimationFrame(() => {
-      el?.focus();
-      el?.setSelectionRange(start + text.length, start + text.length);
-    });
+    el?.focus();
   };
 
   const renderPrompt = (promptShell: TerminalShell, promptCwd: string, user: string, diskpart: boolean) => {
