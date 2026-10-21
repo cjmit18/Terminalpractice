@@ -22,8 +22,8 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "terminuscli",
-      "database_id": "a1e3a142-a5d2-4b68-b68b-1e32c95995ee",
+      "database_name": "terminalpractice",
+      "database_id": "741adee3-13fb-48e7-90c1-34024d069bfa",
       "migrations_dir": "migrations"
     }
   ],
@@ -35,8 +35,8 @@
     "d1_databases": [
       {
         "binding": "DB",
-        "database_name": "terminalpractice-preview",
-        "database_id": "e671f478-ea60-41d5-a2ec-a3668c02c05a",
+        "database_name": "terminuscli-preview",
+        "database_id": "03f84a31-ace4-4c07-b144-df736596fd4d",
         "migrations_dir": "migrations"
       }
     ]
