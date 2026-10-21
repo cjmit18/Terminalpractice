@@ -88,7 +88,8 @@ export interface PsParameter {
   desc: string;
   required?: boolean;
   position?: string;
-  pipeline?: boolean;
+  /** Accepts pipeline input: true means ByValue; a string gives the exact binding, e.g. 'ByPropertyName'. */
+  pipeline?: boolean | 'ByValue' | 'ByPropertyName' | 'ByValue, ByPropertyName' | 'ByPropertyName, ByValue';
   wildcards?: boolean;
 }
 
@@ -113,4 +114,6 @@ export interface PsDoc {
   related: string[];
   /** learn.microsoft.com path segment for the Online Version link. */
   onlinePath?: string;
+  /** A function whose help is another command's (mkdir shows New-Item's help, help shows Get-Help's). */
+  forwardHelpTo?: string;
 }

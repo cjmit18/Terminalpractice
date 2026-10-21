@@ -5,9 +5,12 @@ import { runChain } from './chain';
 import { cloneState } from './state';
 import { WindowsContext, WindowsResult, cmdCommands, psCommands } from './windows/context';
 import { DISKPART_BANNER, handleDiskpartCommand } from './windows/diskpart';
-import { runPowerShellPipeline } from './windows/powershell';
-import { expandCmdVariables, expandPowerShellEnv } from './windows/env';
-import { psNotRecognized } from './windows/psUtil';
+import './windows/powershell';
+import './windows/psSystem';
+import { runPowerShellPipeline } from './windows/psPipeline';
+import { expandCmdVariables, expandPowerShellEnv, setErrorLevel } from './windows/env';
+import { psExtractRedirects, psNotRecognized, psNotSimulated, psSplitPipeline, psStage } from './windows/psUtil';
+import { isNotSimulatedWindows } from './notSimulated';
 import './windows/psFiles';
 import './windows/cmd/files';
 import './windows/cmd/text';
@@ -47,8 +50,11 @@ export function executeWindowsLine(
   // CMD expands %VAR% once for the whole line, before splitting on & and |
   const expanded = expandCmdVariables(line, state, cwd);
   const stages = splitChainedCommandLine(expanded, 'cmd');
-  if (stages.length > 1) return runChain(stages, cwd, fs, state, executeCmdPipeline);
-  return executeCmdPipeline(expanded, cwd, fs, state);
+  const res = stages.length > 1 ? runChain(stages, cwd, fs, state, executeCmdPipeline) : executeCmdPipeline(expanded, cwd, fs, state);
+  // %ERRORLEVEL% reports the exit code of the last command that sets one
+  const lastName = parsePipelinedLine(stages[stages.length - 1]?.commandLine ?? '', 'cmd').pop()?.name ?? '';
+  setErrorLevel(res.newState, lastName, res.exitCode);
+  return res;
 }
 
 /** Runs one CMD command against the pipeline's working copies, then applies its 2> redirect. */
@@ -67,6 +73,8 @@ function executeSingleCmdCommand(
     ? ctx.ok(usage)
     : handler
     ? handler(ctx)
+    : isNotSimulatedWindows(parsed.name)
+    ? ctx.fail(`'${parsed.name}' exists on real Windows but is not simulated here.`, 9009)
     : ctx.fail(`'${parsed.name}' is not recognized as an internal or external command,\noperable program or batch file.`, 9009);
 
   const er = parsed.stderrRedirect;
@@ -170,13 +178,37 @@ function executePowerShellCommand(
   fs: FileNode,
   state: SystemState
 ): WindowsExecutionResult {
-  const line = expandPowerShellEnv(rawLine, state);
-  const stages = parsePipelinedLine(line, 'powershell');
+  const { body, redirect } = psExtractRedirects(expandPowerShellEnv(rawLine, state));
+  let res = runPowerShellLine(body, cwd, fs, state);
+  if (redirect.stderr === 'null') res = { ...res, stderr: '' };
+  if (redirect.stderr === 'merge') res = { ...res, stdout: [res.stdout, res.stderr].filter(Boolean).join('\n'), stderr: '' };
+  for (const [stream, target] of [['stdout', redirect.stdout], ['stderr', typeof redirect.stderr === 'object' ? redirect.stderr : undefined]] as const) {
+    if (!target) continue;
+    const write = writeWindowsFile(res.newFs, res.newState, normalizePath(target.target, res.newCwd, true), res[stream], target.append);
+    res = write ? { ...res, [stream]: '', stderr: write.error, exitCode: 1, explanation: write.explanation } : { ...res, [stream]: '' };
+  }
+  return res;
+}
+
+function runPowerShellLine(
+  line: string,
+  cwd: string,
+  fs: FileNode,
+  state: SystemState
+): WindowsExecutionResult {
+  const stages = psSplitPipeline(line).map(psStage);
   const first = stages[0];
   const ctx = new WindowsContext(first?.name ?? '', first?.args ?? [], '', line, cwd, cloneFileSystem(fs), cloneState(state));
+  ctx.tokens = first?.tokens ?? [];
+  const runNative = (cmdLine: string) => executeCmdCommand(cmdLine, cwd, ctx.fs, ctx.state);
 
-  const piped = runPowerShellPipeline(ctx, stages);
-  if (piped) return piped;
+  if (stages.length > 1) return runPowerShellPipeline(ctx, stages, runNative);
+  // A value on its own is output, as in PowerShell
+  if (first && !first.tokens.length && /^(["']).*\1$/.test(first.raw)) return ctx.ok(first.name);
+  if (/^-?\d+(\.\d+)?$/.test(line.trim())) return ctx.ok(line.trim());
+  if (/^\$\w+(\s*=|$)/.test(line.trim())) {
+    return ctx.fail('Variables and script expressions are not supported in this simulator; run the cmdlet directly instead.', 1);
+  }
 
   const asked = first ? psDashQuestion(ctx, first.name, first.args) : null;
   if (asked) return asked;
@@ -187,7 +219,8 @@ function executePowerShellCommand(
 
   // Native programs (ipconfig.exe, ping.exe, ...) run the same inside PowerShell
   const exe = (first?.name ?? '').toLowerCase().replace(/\.exe$/, '');
-  if (NATIVE_TOOLS.includes(exe)) return executeCmdCommand(line.replace(/^(\S+?)\.exe\b/i, '$1'), cwd, fs, state);
+  if (NATIVE_TOOLS.includes(exe)) return runNative(line.replace(/^(\S+?)\.exe\b/i, '$1'));
+  if (first && isNotSimulatedWindows(first.name)) return ctx.fail(psNotSimulated(first.name), 1);
 
   return ctx.fail(psNotRecognized(line, first?.name ?? ''), 1);
 }

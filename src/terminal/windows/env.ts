@@ -37,7 +37,8 @@ export function windowsEnvironment(state: SystemState): Record<string, string> {
     windir: 'C:\\Windows',
   };
   const merged = { ...defaults };
-  for (const [k, v] of Object.entries(state.envVars ?? {})) {
+  // Names starting with = are CMD's hidden per-drive directories and exit code, not variables
+  for (const [k, v] of Object.entries(state.envVars ?? {}).filter(([k]) => !k.startsWith('='))) {
     // Names are case-insensitive: a lab's USERNAME replaces the default Username key
     for (const existing of Object.keys(merged)) if (existing.toLowerCase() === k.toLowerCase()) delete merged[existing];
     merged[k] = v;
@@ -63,7 +64,7 @@ export function expandCmdVariables(line: string, state: SystemState, cwd: string
     cd: () => cwd,
     date: () => `${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][now.getDay()]} ${p2(now.getMonth() + 1)}/${p2(now.getDate())}/${now.getFullYear()}`,
     time: () => `${String(now.getHours()).padStart(2, ' ')}:${p2(now.getMinutes())}:${p2(now.getSeconds())}.00`,
-    errorlevel: () => '0',
+    errorlevel: () => state.envVars?.['=ExitCode'] ?? '0',
     random: () => String(Math.floor(Math.random() * 32768)),
   };
   return line.replace(/%([^%\s=]+)%/g, (whole, name: string) => {
@@ -72,6 +73,15 @@ export function expandCmdVariables(line: string, state: SystemState, cwd: string
     const dyn = dynamic[name.toLowerCase()];
     return dyn ? dyn() : whole;
   });
+}
+
+/** Commands that leave %ERRORLEVEL% as it was when they succeed. */
+const KEEPS_ERRORLEVEL = new Set(['echo', 'echo.', 'rem', 'cls', 'set', 'title', 'prompt', 'pushd', 'popd']);
+
+/** Records a CMD command's exit code for %ERRORLEVEL% (kept in the hidden =ExitCode variable). */
+export function setErrorLevel(state: SystemState, command: string, exitCode: number): void {
+  if (exitCode === 0 && KEEPS_ERRORLEVEL.has(command.toLowerCase())) return;
+  state.envVars = { ...(state.envVars ?? {}), '=ExitCode': String(exitCode) };
 }
 
 /** Expands $env:NAME in a PowerShell line. */

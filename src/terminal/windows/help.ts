@@ -88,7 +88,7 @@ function parameterBlock(p: PsParameter, full: boolean): string[] {
       '',
       `        Required?                    ${p.required ? 'true' : 'false'}`,
       `        Position?                    ${p.position ?? 'named'}`,
-      `        Accept pipeline input?       ${p.pipeline ? 'True (ByValue)' : 'False'}`,
+      `        Accept pipeline input?       ${p.pipeline ? `True (${p.pipeline === true ? 'ByValue' : p.pipeline})` : 'False'}`,
       `        Accept wildcard characters?  ${p.wildcards ? 'true' : 'false'}`,
     );
   }
@@ -158,7 +158,7 @@ const ABOUT_HELP = [
   '      Get-Command -Noun Process       Commands that work on processes',
   '      Get-Command -Verb Get           Commands that read something',
   '',
-  ...indent('help and man are aliases of Get-Help.'),
+  ...indent('help is a function that runs Get-Help one page at a time, and man is an alias of help.'),
 ].join('\n');
 
 function helpTopicTable(docs: PsDoc[]): string {
@@ -181,7 +181,9 @@ function getHelp(ctx: WindowsContext): WindowsResult {
     if (matches.length === 1) return ctx.ok(renderGetHelp(matches[0]));
     if (matches.length) return ctx.ok(helpTopicTable(matches));
   }
-  const doc = psDoc(name);
+  const found = psDoc(name);
+  // Functions such as mkdir and help show the help of the command they run
+  const doc = found?.forwardHelpTo ? psDoc(found.forwardHelpTo) : found;
   if (!doc) {
     return ctx.fail(psError(ctx.raw, 'Get-Help', `Get-Help could not find ${name} in a help file in this session. To download updated help topics type: "Update-Help". To get help online, search for the help topic in the TechNet library at https:/go.microsoft.com/fwlink/?LinkID=107116.`,
       'ResourceUnavailable', name, 'HelpNotFoundException', 'HelpNotFound'));
@@ -209,7 +211,7 @@ interface CommandRow { type: 'Alias' | 'Function' | 'Cmdlet' | 'Application'; na
 function commandRows(): CommandRow[] {
   const rows: CommandRow[] = [];
   for (const d of PS_DOCS) {
-    const [verb, noun] = d.name.split('-');
+    const [verb, noun] = d.name.includes('-') ? d.name.split('-') : [undefined, undefined];
     rows.push({ type: d.commandType, name: d.name, shown: d.name, version: d.version, source: d.module, verb, noun, module: d.module });
     for (const a of d.aliases) rows.push({ type: 'Alias', name: a, shown: `${a} -> ${d.name}`, version: d.version, source: d.module, module: d.module });
   }
@@ -278,7 +280,7 @@ function getCommand(ctx: WindowsContext): WindowsResult {
   return ctx.result(rows.length ? commandTable(rows) : '', errors.join('\n'), errors.length ? 1 : 0);
 }
 
-psCommands.register('Get-Help', getHelp);
+psCommands.register(['Get-Help', 'help'], getHelp);
 psCommands.register('Get-Command', getCommand);
 
 /**
@@ -296,6 +298,7 @@ export function registerDocAliases(): void {
 /** `<cmdlet> -?`: the cmdlet's help instead of running it. Returns null otherwise. */
 export function psDashQuestion(ctx: WindowsContext, name: string, args: string[]): WindowsResult | null {
   if (!args.includes('-?')) return null;
-  const doc = psDoc(name);
+  const found = psDoc(name);
+  const doc = found?.forwardHelpTo ? psDoc(found.forwardHelpTo) : found;
   return doc ? ctx.ok(renderGetHelp(doc)) : null;
 }
