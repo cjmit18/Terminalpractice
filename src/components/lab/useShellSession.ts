@@ -4,6 +4,7 @@ import { FileNode, SystemState, TerminalShell } from '../../types/terminal';
 import { executeLinuxLine } from '../../terminal/linuxEngine';
 import { executeWindowsLine } from '../../terminal/windowsEngine';
 import { TerminalLine } from '../TerminalView';
+import { CommandOutcome, classifyCommand } from '../../lib/activity';
 
 /** Everything one simulated machine needs between commands */
 export interface ShellSession {
@@ -13,6 +14,8 @@ export interface ShellSession {
   history: TerminalLine[];
   diskpartActive: boolean;
   lastResult?: CommandContext;
+  /** The last command's full outcome (with stderr), for noticing learning moments. Memory only. */
+  lastOutcome?: CommandOutcome;
 }
 
 export function createSession(fs: FileNode, state: SystemState, cwd: string): ShellSession {
@@ -50,13 +53,14 @@ export function runLine(session: ShellSession, line: string, shell: TerminalShel
   }
 
   const lastResult: CommandContext = { command: line, exitCode, stdout };
+  const lastOutcome: CommandOutcome = { line, exitCode, stdout, stderr, explanation };
 
   // `clear` wipes the screen, but output after it in the same line (`clear; echo hi`) and errors still show
   let previous = session.history;
   if (stdout.includes(CLEAR_SCREEN)) {
     previous = [];
     stdout = stdout.slice(stdout.lastIndexOf(CLEAR_SCREEN) + CLEAR_SCREEN.length).replace(/^\x1b\[[0-9;]*H/, '').replace(/^\r?\n/, '');
-    if (!stdout && !stderr) return { ...next, history: [], lastResult };
+    if (!stdout && !stderr) return { ...next, history: [], lastResult, lastOutcome };
   }
 
   const entry: TerminalLine = {
@@ -74,19 +78,26 @@ export function runLine(session: ShellSession, line: string, shell: TerminalShel
     inDiskpart,
   };
 
-  return { ...next, history: [...previous, entry], lastResult };
+  return { ...next, history: [...previous, entry], lastResult, lastOutcome };
 }
 
 /**
  * Holds a session in a ref so several commands in the same tick (a multi-line walkthrough step,
  * a simulator button) each see the result of the previous one, then mirrors it into React state.
- * `onChange` is called synchronously with every new session.
+ * `onChange` is called synchronously with every new session. `onActivity` gets the learning facts
+ * (see classifyCommand) of each command line run.
  */
-export function useShellSession(initial: () => ShellSession, onChange?: (s: ShellSession) => void) {
+export function useShellSession(
+  initial: () => ShellSession,
+  onChange?: (s: ShellSession) => void,
+  onActivity?: (facts: string[]) => void,
+) {
   const [session, setSession] = useState<ShellSession>(initial);
   const ref = useRef<ShellSession>(session);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const onActivityRef = useRef(onActivity);
+  onActivityRef.current = onActivity;
 
   const commit = useCallback((next: ShellSession) => {
     ref.current = next;
@@ -99,7 +110,13 @@ export function useShellSession(initial: () => ShellSession, onChange?: (s: Shel
     (lines: string | string[], shell: TerminalShell) => {
       const list = (Array.isArray(lines) ? lines : [lines]).map(l => l.trim()).filter(Boolean);
       for (const line of list) {
-        commit(runLine(ref.current, line, shell));
+        const prev = ref.current.lastOutcome;
+        const next = runLine(ref.current, line, shell);
+        commit(next);
+        if (onActivityRef.current && next.lastOutcome) {
+          const facts = classifyCommand(next.lastOutcome, shell, prev);
+          if (facts.length) onActivityRef.current(facts);
+        }
       }
     },
     [commit]
