@@ -1,6 +1,7 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  // Must match the Worker connected to this repo in the Cloudflare dashboard (Workers Builds)
+  // Test site. Must match the Worker connected to this repo in the Cloudflare dashboard (Workers Builds).
+  // The real site (terminuscli.com) is env.production below: npx wrangler deploy --env production
   "name": "terminalpractice",
   "compatibility_date": "2026-10-13",
   // `wrangler deploy` builds first, so a deploy never ships a stale or missing dist/
@@ -47,5 +48,23 @@
         "migrations_dir": "migrations"
       }
     ]
+  },
+  "env": {
+    // terminuscli.com. Build, main and assets carry over from above; vars and bindings don't, so they're repeated.
+    "production": {
+      "name": "terminuscli",
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "terminuscli",
+          "database_id": "a1e3a142-a5d2-4b68-b68b-1e32c95995ee",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "vars": {
+        // Same GitHub App as the test site; it lists a callback URL for each host
+        "GITHUB_CLIENT_ID": ""
+      }
+    }
   }
 }
