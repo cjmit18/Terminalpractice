@@ -211,7 +211,7 @@ export const LPI_MODULES: ExamModule[] = [
         id: 'obj-grep',
         title: 'Find the failed logins',
         description: 'Search /var/log/auth.log for lines containing "Failed password".',
-        hint: 'Run grep "Failed password" /var/log/auth.log. Keep the quotes: without them, grep looks for "Failed" in a file called password.',
+        hint: 'Run grep "Failed password" /var/log/auth.log. Keep the quotes: without them, grep searches for "Failed" alone, reports that a file called password does not exist, and still prints the lines that contain Failed.',
         verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && /grep/.test(ctx.command) && ctx.stdout.includes('198.51.100.44'),
       },
       {
@@ -393,7 +393,7 @@ export const LPI_MODULES: ExamModule[] = [
         title: 'Check the passwd entry',
         command: 'grep sarah /etc/passwd',
         explanation: 'Each line has seven colon-separated fields: name:password:UID:GID:GECOS:home:shell. Check that the last two are /home/sarah and /bin/bash.',
-        underlyingConcept: 'The x in the password field means the hash is kept in /etc/shadow, which normal users cannot read (mode 640 with group shadow on Debian, 000 on Red Hat).',
+        underlyingConcept: 'The x in the password field means the hash is kept in /etc/shadow, which normal users cannot read (on Debian and Ubuntu it is mode 640, -rw-r-----, owned by root with group shadow; Red Hat uses mode 000).',
       },
     ],
     examTips: [
@@ -411,7 +411,7 @@ export const LPI_MODULES: ExamModule[] = [
     summary: 'Read a GPT partition table and match it to what is mounted.',
     difficulty: 'Intermediate',
     estimatedMinutes: 15,
-    scenarioDescription: 'You are taking over this server and want to know how its disk is laid out before you change anything. Read the partition table with fdisk -l and find the EFI system, swap and root partitions, then use df -h to see what is mounted where and how full it is.',
+    scenarioDescription: 'You are taking over this server and want to know how its disk is laid out before you change anything. Read the partition table with fdisk -l and find the /boot, swap and root partitions, then use df -h to see what is mounted where and how full it is.',
     systemContext: 'Host: lpi-lab01 | Disk: /dev/sda, 50 GiB, GPT',
     defaultShell: 'bash',
     allowedShells: ['bash'],
