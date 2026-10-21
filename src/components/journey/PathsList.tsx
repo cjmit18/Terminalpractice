@@ -19,6 +19,7 @@ import { ProgressBar, primaryLinkClass, secondaryLinkClass, textLinkClass } from
 import { pathProgressText, stagesText } from './progressText';
 import { FirstStepsBanner } from './FirstStepsBanner';
 import { BadgesSection } from '../badges/BadgesSection';
+import { TodayAndWeek } from '../celebrate/TodayAndWeek';
 
 interface PathsListProps {
   paths: LearningPath[];
@@ -53,6 +54,7 @@ export const PathsList: React.FC<PathsListProps> = ({ paths, src, modulesById })
       )}
 
       <ReviewEntry paths={paths} src={src} />
+      <TodayAndWeek />
 
       <ul className="mt-8 border-t border-line">
         {paths.map(path => {

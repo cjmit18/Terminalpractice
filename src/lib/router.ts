@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react';
  * Hash routes:
  *   #/learn, #/learn/<pathId>, #/learn/<pathId>/<stepId>, #/learn/review,
  *   #/linux, #/linux/<moduleId>, #/windows, #/windows/<moduleId>,
- *   #/simulators, #/sandbox, #/sandbox/challenge, #/sandbox/challenge/<challengeId>, #/reference
+ *   #/simulators, #/sandbox, #/sandbox/challenge, #/sandbox/challenge/<challengeId>, #/reference,
+ *   #/badge/<badgeId>
  * Anything else falls back to #/learn.
  */
 
@@ -17,7 +18,22 @@ export type Route =
   | { section: TrackSection; moduleId: string | null }
   | { section: 'simulators' | 'sandbox' | 'reference' }
   /** The mini challenges: the list (challengeId null) or one challenge */
-  | { section: 'sandbox'; challengeId: string | null };
+  | { section: 'sandbox'; challengeId: string | null }
+
+  /** #/badge/<badgeId>: what one badge means. Not a nav section; the link carries no personal data */
+  | { section: 'badge'; badgeId: string };
+
+/** Every page's section, including pages that are not in the nav */
+export type RouteSection = Route['section'];
+
+/** The nav section a page belongs to (a badge page sits with the badges on Learn) */
+export function navSection(section: RouteSection): Section {
+  return section === 'badge' ? 'learn' : section;
+}
+
+export function badgeHref(badgeId: string): string {
+  return routeHref({ section: 'badge', badgeId });
+}
 
 /** #/learn/review. No learning path may use this id. */
 export const REVIEW_SEGMENT = 'review';
@@ -25,7 +41,7 @@ export const DEFAULT_ROUTE: Route = { section: 'learn', pathId: null, stepId: nu
 
 const SECTIONS: Section[] = ['learn', 'linux', 'windows', 'simulators', 'sandbox', 'reference'];
 
-export function isTrackSection(section: Section): section is TrackSection {
+export function isTrackSection(section: RouteSection): section is TrackSection {
   return section === 'linux' || section === 'windows';
 }
 
@@ -39,6 +55,7 @@ export function parseHash(hash: string): Route | null {
     }
   });
   if (parts.length === 0) return null;
+  if (parts[0] === 'badge') return parts.length === 2 ? { section: 'badge', badgeId: parts[1] } : null;
   const section = parts[0] as Section;
   if (!SECTIONS.includes(section)) return null;
   if (section === 'learn') {
@@ -71,6 +88,7 @@ export function routeHref(route: Route): string {
   if ('challengeId' in route) {
     return route.challengeId ? `#/sandbox/challenge/${encodeURIComponent(route.challengeId)}` : '#/sandbox/challenge';
   }
+  if (route.section === 'badge') return `#/badge/${encodeURIComponent(route.badgeId)}`;
   if ('moduleId' in route && route.moduleId) {
     return `#/${route.section}/${encodeURIComponent(route.moduleId)}`;
   }

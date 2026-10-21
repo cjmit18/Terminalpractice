@@ -10,7 +10,7 @@ import { ModuleSelector } from './components/ModuleSelector';
 import { ModuleRunner } from './components/ModuleRunner';
 import { ExamModule } from './types/modules';
 import { SystemState } from './types/terminal';
-import { Route, Section, TrackSection, isTrackSection, replaceRoute, routeHref, useHashRoute } from './lib/router';
+import { Route, Section, TrackSection, isTrackSection, navSection, replaceRoute, routeHref, useHashRoute } from './lib/router';
 import { completeObjective, countDone, progressCodec, PROGRESS_KEY, resetModules } from './lib/progress';
 import { useSyncedStorage } from './lib/syncedStorage';
 import { useTheme } from './lib/theme';
@@ -40,9 +40,10 @@ import { StepPage } from './components/journey/StepPage';
 import { ReviewPage } from './components/journey/ReviewPage';
 import { PageErrorBoundary } from './components/PageErrorBoundary';
 import { lazyWithReload, reloadOnPreloadError } from './lib/chunkReload';
-import { ACTIVITY_KEY, activityCodec, addFacts, quizMissFact, resetFact } from './lib/activity';
+import { ACTIVITY_KEY, activityCodec, addFacts, addPractice, quizMissFact, resetFact } from './lib/activity';
 import { GameLayerProvider } from './components/celebrate/GameLayer';
 import { CHALLENGES_BY_ID } from './data/challenges';
+import { BadgePage } from './components/badges/BadgePage';
 
 const MODULES_BY_ID = new Map(ALL_MODULES.map(m => [m.id, m]));
 // How lab progress and the journey are saved and shared with the app's other open tabs
@@ -275,7 +276,7 @@ export default function App() {
       challengeTitle,
       challengeRoute ? 'Challenges' : null,
       reviewOpen ? 'Review' : null,
-      PAGE_TITLES[route.section],
+      route.section === 'badge' ? 'Badge' : PAGE_TITLES[route.section],
       'Terminus CertSim',
     ];
     document.title = parts.filter(Boolean).join(' · ');
@@ -286,7 +287,7 @@ export default function App() {
 
   const handleMarkRead = (pathId: string, stepId: string) => {
     setJourney(j => markRead(j, pathId, stepId));
-    setActivity(a => addFacts(a, []));
+    setActivity(a => addPractice(a, []));
   };
   const handleQuizScore = (pathId: string, stepId: string, score: QuizScore) => {
     const path = LEARNING_PATHS.find(p => p.id === pathId);
@@ -297,7 +298,8 @@ export default function App() {
       !quizPassed(score, step.passMark) &&
       !quizPassed(journey.quiz[stepKey(pathId, stepId)], step.passMark);
     setJourney(j => recordQuizScore(j, pathId, stepId, score));
-    setActivity(a => addFacts(a, missed ? [quizMissFact(pathId, stepId)] : []));
+    // Any quiz attempt counts toward the weekly goal
+    setActivity(a => addPractice(a, missed ? [quizMissFact(pathId, stepId)] : []));
   };
   // Each checkpoint or review answer, for the review queue
   const handleAnswer = (pathId: string, questionId: string, right: boolean) =>
@@ -360,7 +362,7 @@ export default function App() {
       </a>
 
       <Header
-        current={route.section}
+        current={navSection(route.section)}
         hrefs={hrefs}
         tasksDone={tasksDone}
         tasksTotal={tasksTotal}
@@ -445,10 +447,12 @@ export default function App() {
             <CommandEncyclopedia />
           </Suspense>
         )}
+
+        {route.section === 'badge' && <BadgePage badgeId={route.badgeId} />}
         </PageErrorBoundary>
       </main>
 
-      <BottomNav current={route.section} hrefs={hrefs} labsHref={hrefs[lastTrack]} />
+      <BottomNav current={navSection(route.section)} hrefs={hrefs} labsHref={hrefs[lastTrack]} />
     </div>
     </GameLayerProvider>
   );
