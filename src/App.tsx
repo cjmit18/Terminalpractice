@@ -11,7 +11,7 @@ import { ModuleRunner } from './components/ModuleRunner';
 import { ExamModule } from './types/modules';
 import { SystemState } from './types/terminal';
 import { Route, Section, TrackSection, isTrackSection, replaceRoute, routeHref, useHashRoute } from './lib/router';
-import { completeObjective, countDone, progressCodec, PROGRESS_KEY, resetModules } from './lib/progress';
+import { completeObjective, countDone, progressCodec, PROGRESS_KEY, resetModules, sanitizeProgress } from './lib/progress';
 import { useSyncedStorage } from './lib/syncedStorage';
 import { useTheme } from './lib/theme';
 import { ALL_MODULES, TRACK_MODULES, TRACK_NAMES, topicLabel } from './lib/modules';
@@ -27,6 +27,7 @@ import {
   quizPassed,
   recordQuizScore,
   resetPath,
+  sanitizeJourney,
   stepAfter,
   stepKey,
   stepTitle,
@@ -73,13 +74,15 @@ export default function App() {
   // moduleId -> completed objective ids (plus reset tombstones), saved in localStorage and kept in
   // step with other open tabs: saves merge with what is stored, other tabs' saves merge in here
   const [progressRecord, setProgressRecord] = useSyncedStorage(PROGRESS_KEY, PROGRESS_CODEC);
-  const progress = progressRecord.done;
+  // The record also keeps what a newer build saved; only known labs and tasks are shown and counted
+  const progress = useMemo(() => sanitizeProgress(progressRecord.done, ALL_MODULES), [progressRecord.done]);
   // The lab last open in each track, so coming back to a track returns you to it
   const [lastLab, setLastLab] = useState<Record<TrackSection, string | null>>({ linux: null, windows: null });
   // The lab track used last, for the single Labs item in the phone nav
   const [lastTrack, setLastTrack] = useState<TrackSection>('linux');
   // Lessons read, quiz scores and the last step opened in the learning paths, saved and shared like progress
-  const [journey, setJourney] = useSyncedStorage(JOURNEY_KEY, JOURNEY_CODEC);
+  const [journeyRecord, setJourney] = useSyncedStorage(JOURNEY_KEY, JOURNEY_CODEC);
+  const journey = useMemo(() => sanitizeJourney(journeyRecord, LEARNING_PATHS), [journeyRecord]);
   const [activity, setActivity] = useSyncedStorage(ACTIVITY_KEY, ACTIVITY_CODEC);
   // The last learning page open this session, so the Learn link brings you back to it
   const [lastLearnHref, setLastLearnHref] = useState<string | null>(null);

@@ -83,6 +83,34 @@ test('two tabs on one lab: completions and resets from the other tab reach the r
   await tab2.close();
 });
 
+// An older build (an old tab after a deploy, or a rollback) must never delete what a newer build saved
+test('progress for labs, tasks, paths and steps this build does not know is kept', async ({ page }) => {
+  const seededProgress = { 'future-lab-xyz': ['obj1'], 'lpi-101-1-system-architecture': ['hw-lspci', 'future-obj'] };
+  const seededJourney = { read: ['future-path/intro', 'lpic1-101/how-linux-sees-hardware'], quiz: { 'future-path/quiz': { correct: 3, total: 4 } }, last: { pathId: 'future-path', stepId: 'intro', at: 1 } };
+  await page.goto('#/learn');
+  await page.evaluate(([p, j]) => {
+    localStorage.setItem('certsim:progress:v1', JSON.stringify(p));
+    localStorage.setItem('certsim:journey:v1', JSON.stringify(j));
+  }, [seededProgress, seededJourney] as const);
+  await page.reload();
+  await page.goto(HW_LAB);
+  await expect(headerProgress(page)).toHaveText(done(1));
+  const journeyText = async () => (await page.evaluate(() => localStorage.getItem('certsim:journey:v1'))) ?? '';
+  expect(await stored(page)).toEqual(seededProgress);
+  expect(JSON.parse(await journeyText())).toEqual(seededJourney);
+
+  // Saving new work keeps it too
+  await showTerminal(page);
+  await runCommand(page, 'lsmod');
+  await expect(headerProgress(page)).toHaveText(done(2));
+  expect(await stored(page)).toEqual({ ...seededProgress, 'lpi-101-1-system-architecture': ['hw-lspci', 'hw-lsmod', 'future-obj'] });
+  await page.goto('#/learn/lpic1-101/how-linux-sees-hardware');
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+  const journey = JSON.parse(await journeyText());
+  expect(journey.read).toEqual(expect.arrayContaining(['future-path/intro']));
+  expect(journey.quiz['future-path/quiz']).toEqual({ correct: 3, total: 4 });
+});
+
 // A command's own result is fresh evidence: when it was this tab's last command at the reset, running
 // it again still earns the task (only unchanged machine state waits to stop passing once)
 test('two tabs on one lab: a reset does not hold back a task whose command was the last one run here', async ({ page, context }) => {

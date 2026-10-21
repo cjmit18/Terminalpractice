@@ -22,6 +22,7 @@ import {
   resetPath,
   resumeTarget,
   sanitizeJourney,
+  sanitizeJourneyRecord,
   serializeJourney,
   stageComplete,
   stageUnlocked,
@@ -293,4 +294,24 @@ test('Journey: steps sharing a choiceGroup are alternatives, any one completes t
     assert.equal(pathPercent(CHOICE, s), 100);
     assert.equal(stepAfter(CHOICE, 'l1', s), null);
   }
+});
+
+test('Journey: what a newer build saved survives parse, merge and save; only known steps are shown', () => {
+  const text = JSON.stringify({
+    read: ['future-path/intro', 'p/l1', 'p/new-lesson'],
+    quiz: { 'future-path/q': { correct: 2, total: 3 } },
+    last: { pathId: 'future-path', stepId: 'intro', at: 10 },
+    resets: { 'future-path': 5 },
+  });
+  const stored = parseJourney(text, [PATH]);
+  assert.deepEqual(stored.read, ['p/l1', 'future-path/intro', 'p/new-lesson']);
+  assert.deepEqual(stored.quiz, { 'future-path/q': { correct: 2, total: 3 } });
+  assert.deepEqual(stored.last, { pathId: 'future-path', stepId: 'intro', at: 10 });
+  const mine = markRead(stored, 'p', 'l2');
+  const saved = parseJourney(serializeJourney(mergeJourney(stored, mine, [PATH])), [PATH]);
+  assert.ok(saved.read.includes('future-path/intro') && saved.read.includes('p/new-lesson') && saved.read.includes('p/l2'));
+  assert.deepEqual(saved.resets, { 'future-path': 5 });
+  assert.deepEqual(sanitizeJourneyRecord(saved, [PATH]), saved, 'canonical');
+  // Shown and counted: known paths and steps only
+  assert.deepEqual(sanitizeJourney(saved, [PATH]), { read: ['p/l1', 'p/l2'], quiz: {}, last: null });
 });

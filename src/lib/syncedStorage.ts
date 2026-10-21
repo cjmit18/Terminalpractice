@@ -1,4 +1,4 @@
-import { Dispatch, SetStateAction, useEffect, useState } from 'react';
+import { Dispatch, SetStateAction, useEffect, useRef, useState } from 'react';
 import { readStorage, writeStorage } from './storage';
 
 /** How a value is read from, merged with and written to one localStorage key. */
@@ -18,13 +18,17 @@ export interface SyncedCodec<T> {
  *   whole stale copy over what another tab saved. Nothing is written when the merged text is
  *   already what is stored, so tabs do not echo each other's writes back and forth.
  * - A `storage` event (another tab wrote the key) is merged into this tab's state at once.
+ * - Opening the app writes nothing: until this tab changes something, what is stored stays as it is.
  *
  * The codec must be stable (create it once, outside the component).
  */
 export function useSyncedStorage<T>(key: string, codec: SyncedCodec<T>): [T, Dispatch<SetStateAction<T>>] {
   const [state, setState] = useState<T>(() => codec.parse(readStorage(key)));
+  // The value read on load: saving it back would change nothing this tab did
+  const loaded = useRef(state);
 
   useEffect(() => {
+    if (state === loaded.current) return;
     const storedText = readStorage(key);
     const merged = codec.merge(codec.parse(storedText), state);
     const text = codec.serialize(merged);
