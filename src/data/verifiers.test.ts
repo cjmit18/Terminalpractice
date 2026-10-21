@@ -68,10 +68,6 @@ const objective = (labId: string, objId: string) => {
   return o;
 };
 
-// Engine behavior that other packages are implementing. These tests keep their assertions and
-// are marked todo until the engine change lands; remove the todo flag once they pass.
-const PENDING_LINUX = { todo: 'needs the Linux engine change (stat, getent)' };
-
 // ---------------------------------------------------------------------------------------------
 // lpi-103-2: text processing
 // ---------------------------------------------------------------------------------------------
@@ -200,7 +196,7 @@ test('lpi-107-1 in the engine: -G passes, -g and a bare useradd do not', () => {
   }
 });
 
-test('lpi-107-1 in the engine: getent passwd sarah shows the entry', PENDING_LINUX, () => {
+test('lpi-107-1 in the engine: getent passwd sarah shows the entry', () => {
   const run = labRun('lpi-107-1-user-administration');
   run('sudo useradd -m -s /bin/bash -G developers sarah');
   run('getent passwd sarah');
@@ -244,7 +240,7 @@ test('lpi-104-5 in the engine: flag order does not matter', () => {
   assert.ok(!run.done.has('perm-check'));
 });
 
-test('lpi-104-5 in the engine: stat shows the directory', PENDING_LINUX, () => {
+test('lpi-104-5 in the engine: stat shows the directory', () => {
   const run = labRun('lpi-104-5-permissions');
   run('stat /home/student/finance');
   assert.ok(run.done.has('perm-check'));
