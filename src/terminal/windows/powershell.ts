@@ -11,21 +11,25 @@ import './psAD';
 export type Row = Record<string, unknown>;
 
 export const SERVICE_HEADER = 'Status   Name               DisplayName\n------   ----               -----------';
-export const PROCESS_HEADER = ' NPM(K)    PM(M)      WS(M)     CPU(s)      Id  SI ProcessName\n ------    -----      -----     ------      --  -- -----------';
+export const PROCESS_HEADER = 'Handles  NPM(K)    PM(K)      WS(K)     CPU(s)     Id  SI ProcessName\n-------  ------    -----      -----     ------     --  -- -----------';
 
 /** Service objects as the pipeline sees them (the ServiceController properties). */
 export const serviceObject = (s: WindowsService): Row => ({ Status: s.status, Name: s.name, DisplayName: s.displayName, StartType: s.startType, ServiceName: s.name });
 export const serviceTable = (items: Row[]) =>
   `${SERVICE_HEADER}\n${items.map(s => `${String(s.Status).padEnd(8, ' ')} ${String(s.Name).padEnd(18, ' ')} ${s.DisplayName}`).join('\n')}`;
 
-/** Process objects as the pipeline sees them. */
+/** Process objects as the pipeline sees them. Handles and paged pool are made up but stable per process. */
 export const processObject = (p: ProcessItem): Row => {
   const name = p.command.replace(/\.exe$/i, '');
-  return { ProcessName: name, Id: p.pid, CPU: p.cpu, WS: Math.round(p.mem * 2 * 1048576), PM: Math.round(p.mem * 1048576), SI: p.user === 'SYSTEM' ? 0 : 1, Name: name, UserName: p.user };
+  return {
+    Handles: 150 + ((p.pid * 37) % 850), NPM: Math.max(4, Math.round(p.mem * 0.8)) * 1024, ProcessName: name, Id: p.pid, CPU: p.cpu,
+    WS: Math.round(p.mem * 2 * 1048576), PM: Math.round(p.mem * 1048576), SI: p.user === 'SYSTEM' ? 0 : 1, Name: name, UserName: p.user,
+  };
 };
+/** The Windows PowerShell 5.1 default view of processes (the K columns are kilobytes). */
 export const processTable = (items: Row[]) => `${PROCESS_HEADER}\n${items.map(p => {
-  const mem = Number(p.PM) / 1048576;
-  return `     10     ${mem.toFixed(2).padStart(5, ' ')}      ${(mem * 2).toFixed(2).padStart(5, ' ')}       ${Number(p.CPU).toFixed(2).padStart(5, ' ')}    ${String(p.Id).padStart(4, ' ')}   ${p.SI} ${p.ProcessName}`;
+  const kb = (v: unknown) => String(Math.round(Number(v) / 1024));
+  return `${String(p.Handles).padStart(7)}${kb(p.NPM).padStart(8)}${kb(p.PM).padStart(9)}${kb(p.WS).padStart(11)}${Number(p.CPU).toFixed(2).padStart(11)}${String(p.Id).padStart(7)}${String(p.SI).padStart(4)} ${p.ProcessName}`;
 }).join('\n')}`;
 
 function bind(ctx: WindowsContext, cmdlet: string, spec: Record<string, PsParamSpec>, aliases: Record<string, string> = {}): PsBound | WindowsResult {
@@ -36,15 +40,26 @@ const isResult = (b: PsBound | WindowsResult): b is WindowsResult => 'exitCode' 
 
 // ---------------------------------------------------------------- services
 
+// Parameters shared by the service cmdlets; each cmdlet adds its own (Get-Service.md, Start-Service.md ... for 5.1)
 const SERVICE_PARAMS: Record<string, PsParamSpec> = {
-  Name: { kind: 'list', position: 0 }, DisplayName: { kind: 'list' }, Force: { kind: 'switch' }, PassThru: { kind: 'switch' },
-  NoWait: { kind: 'switch' }, Include: { kind: 'list' }, Exclude: { kind: 'list' }, ComputerName: { kind: 'list' },
-  DependentServices: { kind: 'switch' }, RequiredServices: { kind: 'switch' }, WhatIf: { kind: 'switch' }, Confirm: { kind: 'switch' },
+  Name: { kind: 'list', position: 0 }, DisplayName: { kind: 'list' }, Include: { kind: 'list' }, Exclude: { kind: 'list' },
+};
+const SERVICE_ALIASES: Record<string, string> = { ServiceName: 'Name', Cn: 'ComputerName', DS: 'DependentServices', SDO: 'RequiredServices', ServicesDependedOn: 'RequiredServices' };
+const sw = (...names: string[]) => Object.fromEntries(names.map(n => [n, { kind: 'switch' } as PsParamSpec]));
+const GET_SERVICE: Record<string, PsParamSpec> = { ComputerName: { kind: 'list' }, ...sw('DependentServices', 'RequiredServices') };
+const CHANGE_SERVICE: Record<string, Record<string, PsParamSpec>> = {
+  'Start-Service': sw('PassThru', 'WhatIf', 'Confirm'),
+  'Stop-Service': sw('Force', 'NoWait', 'PassThru', 'WhatIf', 'Confirm'),
+  'Restart-Service': sw('Force', 'PassThru', 'WhatIf', 'Confirm'),
+  'Suspend-Service': sw('PassThru', 'WhatIf', 'Confirm'),
+  'Resume-Service': sw('PassThru', 'WhatIf', 'Confirm'),
+  'Set-Service': { ComputerName: { kind: 'list' }, ...sw('PassThru', 'WhatIf', 'Confirm') },
 };
 
 /** Services matching -Name / positional names (comma lists and wildcards), or an error result. */
 export function matchServices(ctx: WindowsContext, cmdlet: string, extra: Record<string, PsParamSpec> = {}): { items: WindowsService[]; error?: string; b: PsBound } | WindowsResult {
-  const b = bind(ctx, cmdlet, { ...SERVICE_PARAMS, ...extra }, { ServiceName: 'Name', SN: 'Name' });
+  const spec = { ...SERVICE_PARAMS, ...(CHANGE_SERVICE[cmdlet] ?? GET_SERVICE), ...extra };
+  const b = bind(ctx, cmdlet, spec, Object.fromEntries(Object.entries(SERVICE_ALIASES).filter(([, to]) => spec[to])));
   if (isResult(b)) return b;
   const wanted = b.list('Name') ?? [];
   const display = b.list('DisplayName') ?? [];
@@ -120,6 +135,9 @@ function setService(ctx: WindowsContext): WindowsResult {
   const status = statusArg === undefined ? undefined : ['Running', 'Stopped', 'Paused'].find(x => x.toLowerCase() === statusArg.toLowerCase());
   if (statusArg !== undefined && !status) {
     return ctx.fail(psError(ctx.raw, cmdlet, `Cannot bind parameter 'Status'. Cannot convert value "${statusArg}" to type "System.ServiceProcess.ServiceControllerStatus".`, 'InvalidArgument', '', 'ParameterBindingException', 'CannotConvertArgumentNoMessage'));
+  }
+  if (b.has('WhatIf')) {
+    return ctx.ok(m.items.map(s => `What if: Performing the operation "Set-Service" on target "${s.displayName} (${s.name})".`).join('\n'));
   }
   if (!ctx.isAdmin) {
     const s = m.items[0];

@@ -13,16 +13,43 @@ const leaf = (p: string) => p.slice(p.lastIndexOf('\\') + 1);
 const parentOf = (p: string) => p.slice(0, p.lastIndexOf('\\')) || 'C:\\';
 const join = (dir: string, name: string) => (dir.endsWith('\\') ? dir + name : `${dir}\\${name}`);
 
+/** -WhatIf and -Confirm, which the cmdlets that change items support. -Confirm cannot prompt here, so it is accepted and ignored. */
+const SHOULD_PROCESS = { WhatIf: 'switch', Confirm: 'switch' } as const;
+const whatIf = (op: string, target: string) => `What if: Performing the operation "${op}" on target "${target}".`;
+
 const HEADER = ['Mode                 LastWriteTime         Length Name', '----                 -------------         ------ ----'];
-function itemRow(n: FileNode, name: string): string {
-  const dir = n.type === 'directory';
-  return `${dir ? 'd-----' : '-a----'}        10/19/2026   ${dir ? '9:30' : '9:45'} AM ${(dir ? '' : String(fileSize(n))).padStart(14)} ${name}`;
+
+/** A file or folder as Get-ChildItem passes it down the pipeline (Length is missing on folders). */
+export type ItemRow = { Mode: string; LastWriteTime: string; Length?: number; Name: string; Directory: string };
+
+function itemObject(n: FileNode, name: string, dir: string): ItemRow {
+  const folder = n.type === 'directory';
+  const row: ItemRow = { Mode: folder ? 'd-----' : '-a----', LastWriteTime: `10/19/2026   ${folder ? '9:30' : '9:45'} AM`, Name: name, Directory: dir };
+  if (!folder) row.Length = fileSize(n);
+  return row;
 }
 function listing(dir: string, rows: string[]): string {
   return ['', `    Directory: ${dir}`, '', '', ...HEADER, ...rows, ''].join('\n');
 }
 
-function getChildItem(ctx: WindowsContext): WindowsResult {
+/** The default view of file and folder objects: a Directory: block for each run of items from one folder. */
+export function itemTable(items: Record<string, unknown>[]): string {
+  const blocks: string[] = [];
+  let i = 0;
+  while (i < items.length) {
+    const dir = String(items[i].Directory ?? '');
+    const lines: string[] = [];
+    for (; i < items.length && String(items[i].Directory ?? '') === dir; i++) {
+      const r = items[i];
+      lines.push(`${r.Mode}        ${r.LastWriteTime} ${String(r.Length ?? '').padStart(14)} ${r.Name}`);
+    }
+    blocks.push(listing(dir, lines));
+  }
+  return blocks.join('\n');
+}
+
+/** Get-ChildItem's items as objects, with -Name's relative names; or an error result. */
+export function childItems(ctx: WindowsContext): { items: ItemRow[]; names: string[]; nameOnly: boolean; errors: string[]; note?: string } | WindowsResult {
   const name = 'Get-ChildItem';
   const p = bindParams(ctx.args, { Path: 'value', Filter: 'value', Recurse: 'switch', Force: 'switch', Name: 'switch', File: 'switch', Directory: 'switch' },
     { LiteralPath: 'Path', s: 'Recurse' });
@@ -40,10 +67,11 @@ function getChildItem(ctx: WindowsContext): WindowsResult {
   const keep = (n: FileNode, key: string) =>
     (!pattern || pattern.test(key)) && (!p.named.has('File') || n.type === 'file') && (!p.named.has('Directory') || n.type === 'directory');
 
+  const nameOnly = p.named.has('Name');
   if (node.type === 'file') {
-    return ctx.ok(p.named.has('Name') ? node.name : listing(parentOf(abs), [itemRow(node, node.name)]));
+    return { items: [itemObject(node, node.name, parentOf(abs))], names: [node.name], nameOnly, errors: [] };
   }
-  const blocks: string[] = [];
+  const items: ItemRow[] = [];
   const names: string[] = [];
   const errors: string[] = [];
   let note: string | undefined;
@@ -58,16 +86,20 @@ function getChildItem(ctx: WindowsContext): WindowsResult {
     }
     const entries = Object.entries(dirNode.children ?? {}).sort(([a], [b]) => a.toLowerCase().localeCompare(b.toLowerCase()));
     const rows = entries.filter(([k, n]) => keep(n, k));
-    if (rows.length) {
-      blocks.push(listing(dirPath, rows.map(([k, n]) => itemRow(n, k))));
-      names.push(...rows.map(([k]) => (rel ? `${rel}\\${k}` : k)));
-    }
+    items.push(...rows.map(([k, n]) => itemObject(n, k, dirPath)));
+    names.push(...rows.map(([k]) => (rel ? `${rel}\\${k}` : k)));
     if (p.named.has('Recurse')) {
       for (const [k, n] of entries) if (n.type === 'directory') walk(n, join(dirPath, k), rel ? `${rel}\\${k}` : k);
     }
   };
   walk(node, base, '');
-  return ctx.result(p.named.has('Name') ? names.join('\n') : blocks.join('\n'), errors.join('\n'), errors.length ? 1 : 0, note);
+  return { items, names, nameOnly, errors, note };
+}
+
+function getChildItem(ctx: WindowsContext): WindowsResult {
+  const r = childItems(ctx);
+  if ('exitCode' in r) return r;
+  return ctx.result(r.nameOnly ? r.names.join('\n') : itemTable(r.items), r.errors.join('\n'), r.errors.length ? 1 : 0, r.note);
 }
 
 function getContent(ctx: WindowsContext): WindowsResult {
@@ -124,7 +156,7 @@ function setLocation(ctx: WindowsContext): WindowsResult {
 
 function newItem(ctx: WindowsContext): WindowsResult {
   const name = 'New-Item';
-  const p = bindParams(ctx.args, { Path: 'value', Name: 'value', ItemType: 'value', Value: 'value', Force: 'switch' }, { Type: 'ItemType' });
+  const p = bindParams(ctx.args, { Path: 'value', Name: 'value', ItemType: 'value', Value: 'value', Force: 'switch', ...SHOULD_PROCESS }, { Type: 'ItemType' });
   if (typeof p === 'string') return ctx.fail(badParameter(ctx.raw, name, p));
   const isMkdir = ['mkdir', 'md'].includes(ctx.name.toLowerCase());
   const type = isMkdir ? 'directory' : String(p.named.get('ItemType') ?? 'file').toLowerCase();
@@ -138,6 +170,7 @@ function newItem(ctx: WindowsContext): WindowsResult {
     return ctx.fail(psError(ctx.raw, name, `An item with the specified name ${abs} already exists.`, 'ResourceExists', abs, 'IOException',
       type === 'directory' ? 'DirectoryExist' : 'NewItemIOError'));
   }
+  if (p.named.has('WhatIf')) return ctx.ok(whatIf(`Create ${type === 'directory' ? 'Directory' : 'File'}`, `Destination: ${abs}`));
   const why = ctx.protectedReason(abs, 'write');
   if (why) return ctx.fail(accessDenied(ctx.raw, name, abs), 1, why);
   const parts = abs.split('\\').filter(Boolean);
@@ -155,12 +188,12 @@ function newItem(ctx: WindowsContext): WindowsResult {
   }
   const created = ctx.node(abs);
   if (!created) return ctx.fail(pathNotFound(ctx.raw, name, abs));
-  return ctx.ok(listing(parentOf(abs), [itemRow(created, leaf(abs))]));
+  return ctx.ok(itemTable([itemObject(created, leaf(abs), parentOf(abs))]));
 }
 
 function copyItem(ctx: WindowsContext): WindowsResult {
   const name = 'Copy-Item';
-  const p = bindParams(ctx.args, { Path: 'value', Destination: 'value', Recurse: 'switch', Force: 'switch' });
+  const p = bindParams(ctx.args, { Path: 'value', Destination: 'value', Recurse: 'switch', Force: 'switch', ...SHOULD_PROCESS });
   if (typeof p === 'string') return ctx.fail(badParameter(ctx.raw, name, p));
   const src = (p.named.get('Path') as string | undefined) ?? p.positional[0];
   const dest = (p.named.get('Destination') as string | undefined) ?? p.positional[p.named.has('Path') ? 0 : 1] ?? '.';
@@ -177,6 +210,7 @@ function copyItem(ctx: WindowsContext): WindowsResult {
       'InvalidOperationException', 'CopyItemArgumentError'));
   }
   if (!ctx.node(parentOf(destAbs))) return ctx.fail(psError(ctx.raw, name, `Could not find a part of the path '${destAbs}'.`, 'WriteError', destAbs, 'DirectoryNotFoundException', 'CopyItemIOError'));
+  if (p.named.has('WhatIf')) return ctx.ok(whatIf(`Copy ${node.type === 'directory' ? 'Directory' : 'File'}`, `Item: ${srcAbs} Destination: ${destAbs}`));
   const why = ctx.protectedReason(destAbs, 'write') ?? ctx.protectedReason(srcAbs, 'read');
   if (why) return ctx.fail(accessDenied(ctx.raw, name, destAbs), 1, why);
   const errors: string[] = [];
@@ -207,7 +241,7 @@ function copyItem(ctx: WindowsContext): WindowsResult {
 
 function removeItem(ctx: WindowsContext): WindowsResult {
   const name = 'Remove-Item';
-  const p = bindParams(ctx.args, { Path: 'value', Recurse: 'switch', Force: 'switch' });
+  const p = bindParams(ctx.args, { Path: 'value', Recurse: 'switch', Force: 'switch', ...SHOULD_PROCESS });
   if (typeof p === 'string') return ctx.fail(badParameter(ctx.raw, name, p));
   const targets = p.named.has('Path') ? [p.named.get('Path') as string] : p.positional;
   const errors: string[] = [];
@@ -222,6 +256,7 @@ function removeItem(ctx: WindowsContext): WindowsResult {
       : ctx.node(abs) ? [abs] : [];
     if (matches.length === 0) { errors.push(pathNotFound(ctx.raw, name, abs)); continue; }
     for (const m of matches) {
+      if (p.named.has('WhatIf')) { out.push(whatIf(`Remove ${ctx.node(m)!.type === 'directory' ? 'Directory' : 'File'}`, m)); continue; }
       const why = ctx.protectedReason(m, 'write');
       if (why) { errors.push(accessDenied(ctx.raw, name, m)); note = why; continue; }
       const n = ctx.node(m)!;

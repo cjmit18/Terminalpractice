@@ -212,3 +212,69 @@ test('B7 (L2-18): net user /active:yes /domain clears the lockout and the disabl
   assert.deepEqual([jdoe().enabled, jdoe().locked], [true, false]);
   assert.ok(ad.done.has(ad.lab.objectives[0].id), `${ad.lab.objectives[0].id} passes`);
 });
+
+test('B8 (L2-19): common parameters bind, -WhatIf only where supported, Get-Service aliases', () => {
+  const run = windowsSession('powershell');
+  assert.match(run('Get-Service -ErrorAction SilentlyContinue W32Time').stdout, /W32Time/);
+  assert.equal(run('Get-Service -Verbose -OutVariable svc -ea Stop Dhcp').exitCode, 0);
+  const quiet = run('Get-Service nosuch -ErrorAction SilentlyContinue');
+  assert.deepEqual([quiet.stdout, quiet.stderr], ['', '']);
+  assert.match(run('Get-Service nosuch -ErrorAction Stop').stderr, /Cannot find any service/);
+  assert.match(run('Get-Service -ErrorAction Bogus').stderr, /Cannot convert value "Bogus" to type "System\.Management\.Automation\.ActionPreference"/);
+  assert.match(run('Get-ChildItem -ErrorAction SilentlyContinue').stdout, /Desktop/);
+
+  assert.match(run('Get-Service -WhatIf').stderr, /A parameter cannot be found that matches parameter name 'WhatIf'/);
+  assert.match(run('Start-Service W32Time -WhatIf').stdout, /^What if: Performing the operation "Start-Service" on target "Windows Time \(W32Time\)"\.$/);
+  assert.equal(run.state().services.find(s => s.name === 'W32Time')?.status, 'Stopped');
+  const startType = run.state().services.find(s => s.name === 'W32Time')?.startType;
+  assert.match(run('Set-Service W32Time -StartupType Disabled -WhatIf').stdout, /^What if:/);
+  assert.equal(run.state().services.find(s => s.name === 'W32Time')?.startType, startType);
+  assert.match(run('Remove-Item Desktop -WhatIf').stdout, /What if: Performing the operation "Remove Directory" on target "C:\\Users\\Student\\Desktop"/);
+  assert.match(run('Get-ChildItem -Name').stdout, /^Desktop$/m, '-WhatIf removed nothing');
+
+  assert.match(run('Get-Service -SN W32Time').stderr, /parameter name 'SN'/);
+  for (const alias of ['-ServiceName W32Time', '-DS W32Time', '-SDO W32Time', '-ServicesDependedOn W32Time']) {
+    assert.equal(run(`Get-Service ${alias}`).exitCode, 0, alias);
+  }
+  assert.doesNotMatch(run('Get-Service -S').stderr, /-SN\b/);
+  // ps-get-service accepts gsv once the verifier allows it; the engine side runs it
+  assert.match(run('gsv w32time').stdout, /Stopped +W32Time/);
+});
+
+test('B8 (L2-19): Get-Process uses the 5.1 columns', () => {
+  const out = windowsSession('powershell')('Get-Process').stdout.split('\n');
+  assert.equal(out[0], 'Handles  NPM(K)    PM(K)      WS(K)     CPU(s)     Id  SI ProcessName');
+  assert.equal(out[1], '-------  ------    -----      -----     ------     --  -- -----------');
+  // Each value ends under the end of its heading
+  const ends = [7, 15, 24, 35, 46, 53, 57];
+  for (const row of out.slice(2)) {
+    for (const end of ends) assert.match(row[end - 1], /\d/, `${row} at ${end}`);
+    assert.equal(row[57], ' ');
+  }
+});
+
+test('B8 (L2-19): Sort-Object and Where-Object keep the Get-ChildItem view', () => {
+  const run = windowsSession('powershell');
+  run('New-Item a.txt -Value hello');
+  run('New-Item big.txt -Value "a much longer line of text"');
+  const sorted = run('Get-ChildItem | Sort-Object Length -Descending').stdout;
+  assert.match(sorted, /^\n {4}Directory: C:\\Users\\Student\n\n\nMode {17}LastWriteTime {9}Length Name\n/);
+  const names = [...sorted.matchAll(/^[-d][-a]---- .* (\S+)$/gm)].map(m => m[1]);
+  assert.deepEqual(names.slice(0, 2), ['big.txt', 'a.txt'], 'the longer file first');
+  assert.deepEqual(names.slice(2).sort(), ['Desktop', 'Documents'], 'folders (no Length) last');
+  assert.match(run('Get-ChildItem | Where-Object Name -like "b*"').stdout, /-a---- .* big\.txt$/m);
+  assert.match(run('Get-ChildItem | Select-Object Name').stdout, /^\nName\n----\nbig\.txt|Desktop/);
+  assert.equal(run('Get-ChildItem -Name | Sort-Object -Descending').stdout.split('\n')[0], 'Documents');
+});
+
+test('B8 (L2-19): $PWD and $HOME expand instead of echoing the name', () => {
+  const run = windowsSession('powershell');
+  assert.equal(run('echo $PWD').stdout, '\nPath\n----\nC:\\Users\\Student\n');
+  assert.equal(run('$PWD').stdout, '\nPath\n----\nC:\\Users\\Student\n');
+  assert.equal(run('"I am in $PWD"').stdout, 'I am in C:\\Users\\Student');
+  assert.equal(run('Write-Output $PWD.Path').stdout, 'C:\\Users\\Student');
+  assert.equal(run("Write-Output '$PWD'").stdout, '$PWD', 'single quotes are literal');
+  run('cd C:\\Windows');
+  run('cd $HOME');
+  assert.equal(run.cwd(), `C:\\Users\\${run.state().currentUser}`);
+});

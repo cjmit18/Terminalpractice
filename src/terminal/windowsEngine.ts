@@ -8,7 +8,7 @@ import { DISKPART_BANNER, handleDiskpartCommand } from './windows/diskpart';
 import './windows/powershell';
 import './windows/psSystem';
 import { runPowerShellPipeline } from './windows/psPipeline';
-import { expandCmdVariables, expandPowerShellEnv, setErrorLevel } from './windows/env';
+import { expandCmdVariables, expandPowerShellAutomatic, expandPowerShellEnv, setErrorLevel } from './windows/env';
 import { psExtractRedirects, psNotRecognized, psNotSimulated, psSplitPipeline, psStage } from './windows/psUtil';
 import { psSplitStatements, psSyntaxError } from './windows/psParse';
 import { cmdSyntaxError } from './windows/cmd/syntax';
@@ -272,8 +272,14 @@ function executePowerShellStatement(
   state: SystemState
 ): WindowsExecutionResult {
   if (!statement) return { stdout: '', stderr: '', exitCode: 0, newCwd: cwd, newFs: fs, newState: state };
-  const { body, redirect } = psExtractRedirects(expandPowerShellEnv(statement, state));
+  // $PWD on its own (or written out) is the PathInfo object, shown as Get-Location shows it
+  if (/^((write-output|echo|write)\s+)?\$pwd$/i.test(statement)) statement = 'Get-Location';
+  const { body, redirect } = psExtractRedirects(expandPowerShellAutomatic(expandPowerShellEnv(statement, state), cwd, state));
   let res = runPowerShellLine(body, cwd, fs, state);
+  // -ErrorAction SilentlyContinue or Ignore hides non-terminating errors (not parameter binding errors)
+  if (/(^|\s)-(ea|errora\w*)(:|\s+)['"]?(silentlycontinue|ignore|0|4)\b/i.test(body) && !/ParameterBindingException/.test(res.stderr)) {
+    res = { ...res, stderr: '' };
+  }
   if (redirect.stderr === 'null') res = { ...res, stderr: '' };
   if (redirect.stderr === 'merge') res = { ...res, stdout: [res.stdout, res.stderr].filter(Boolean).join('\n'), stderr: '' };
   for (const [stream, target] of [['stdout', redirect.stdout], ['stderr', typeof redirect.stderr === 'object' ? redirect.stderr : undefined]] as const) {
