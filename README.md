@@ -8,33 +8,47 @@ Covers hands-on objectives for:
 
 ## What's in the app
 
-- **12 guided lab modules** (5 Linux, 7 Windows). Each has a scenario, objectives that are checked against real simulated system state, hints, exam tips and a full walkthrough.
-- **Terminal sandbox**: free-form Linux Bash, CMD and PowerShell sessions with a live view of the virtual filesystem.
-- **System simulators**: interactive Active Directory, Group Policy, DiskPart, network topology and permission-matrix panels.
-- **Command reference**: searchable list of exam-relevant commands.
-- **Phone support**: single-pane lab layout, a key toolbar (`Tab`, `Ctrl+C`, arrows, and `| > < & / ~ - _ . $ * " ' \ :`) and an input configured so the keyboard does not autocorrect or capitalize commands.
-- **Installable and offline**: web app manifest, icons and a service worker. Fonts are bundled, so nothing is fetched from third parties.
+- **12 guided labs** (5 Linux, 7 Windows). Each has a short scenario, a task list that is checked against the simulated system's real state, hints, exam tips and a walkthrough you can run step by step.
+- **Explanations when you are blocked**: when a command fails with "Permission denied", the terminal adds a short note saying which permission check failed and why.
+- **Sandbox**: free-form bash, Command Prompt and PowerShell sessions, with a file tree that shows the real simulated filesystem, permissions and owners.
+- **Simulators**: Active Directory Users and Computers, Group Policy Management, Disk Management, a network diagram and a file permission calculator.
+- **Command reference**: searchable pages with syntax, options, examples and exam notes.
+- **Progress is saved** in your browser, and every page has its own URL, so links and the back button work.
+- **Light and dark themes** (follows your system unless you choose one).
+- **Phone support**: one pane at a time in labs, a key toolbar (`Tab`, `Ctrl+C`, arrows and the symbols phone keyboards hide) and an input that does not autocorrect commands.
+- **Installable and offline**: web app manifest, icons and a service worker. Fonts (IBM Plex Sans and Mono) are bundled, so nothing is fetched from third parties.
 
 ### Simulated command support
 
-- **Linux:** `ls` (including `-l`, `-a`, `-d`), `cat`, `grep`, `awk`, `sed`, `sort`, `uniq`, `head`, `tail`, `wc`, `echo`, `tee`, `touch`, `mkdir -p`, `rm`, `chmod` (octal, symbolic, `-R`, SUID/SGID/sticky), `chown`, `umask`, `useradd`, `usermod -aG`, `id`, `tar`, `sudo`, `su`, `systemctl`, `journalctl`, `fdisk -l`, `df`, `lspci`, `lsmod`, `dmesg`, `ip`, `ps`, `kill`
-- **Windows:** `ipconfig`, `ping`, `tracert`, `netstat`, `route print`, `tasklist`, `taskkill`, `gpupdate`, `gpresult`, interactive `diskpart`, `sfc`, `dism`, `net user`, `findstr`, plus PowerShell cmdlets such as `Get-Service`, `Start-Service`, `Get-Process` (with `Where-Object` using `-eq`, `-ne`, `-like`), `Test-NetConnection` and the Active Directory cmdlets used by the labs
-- **Shell features:** pipes, `>` and `>>`, `2>`, `2>>`, `2>&1`, quote-aware parsing, `&&`, `||` and `;` in Bash, and `&`, `&&`, `||` in CMD
+- **Linux:** files (`ls`, `cat`, `cp`, `mv`, `rm`, `mkdir`, `touch`, `find`, `tar`), text (`grep` with `-r -i -v -n -c -l -E`, `sed`, `awk`, `cut`, `tr`, `sort`, `uniq`, `head`, `tail`, `wc`, `tee`), permissions and users (`chmod`, `chown`, `chgrp`, `umask`, `id`, `useradd`, `usermod`, `sudo`, `su`), system (`systemctl`, `journalctl`, `ps`, `kill`, `df`, `free`, `fdisk -l`, `lspci`, `lsmod`, `dmesg`, `date`, `which`, `history`), network (`ip`, `ping`, `ss`, `netstat`), plus `export`, `env`, `source` and running scripts
+- **Command Prompt:** `dir`, `cd`, `type`, `mkdir`, `copy`, `del`, `set` and `%VAR%` expansion, `ver`, `systeminfo`, `ipconfig`, `ping`, `tracert`, `nslookup`, `netstat`, `route print`, `tasklist`, `taskkill`, `gpupdate`, `gpresult`, `sfc`, `dism`, `chkdsk`, `net user`, `findstr` and an interactive `diskpart`
+- **PowerShell:** `Get-ChildItem`, `Get-Content`, `Get-Location`, `Get-Service`, `Start-Service`, `Get-Process` (with `Where-Object`), `Test-NetConnection` and the Active Directory cmdlets the labs use
+- **Shell features:** pipes, `>`, `>>`, `2>`, `2>&1`, `/dev/null`, quoting that follows each shell's rules, and `&&`, `||`, `;` in bash and `&`, `&&`, `||` in CMD
 
 ## Project layout
 
 ```
+docs/DESIGN.md              # design brief: tokens, type, layout and copy rules for the UI
 src/
+├── App.tsx                 # routes, saved progress, page layout
+├── lib/                    # hash router, progress storage, theme, module helpers
+├── components/
+│   ├── lab/                # lab manual, shell session hook, file tree
+│   ├── sims/               # shared simulator UI pieces
+│   └── *.tsx               # header, catalog, lab runner, terminal, sandbox, simulators, reference
 ├── terminal/
-│   ├── parser.ts         # tokenizer, pipelines, command chaining, redirects
-│   ├── filesystem.ts     # virtual POSIX/Windows filesystem and permission checks
-│   ├── linuxEngine.ts    # Bash command execution
-│   ├── windowsEngine.ts  # CMD and PowerShell execution, DiskPart subshell
-│   └── rules.test.ts     # unit, regression and walkthrough replay tests
-├── components/           # React UI: module runner, terminal view, simulators, sandbox
-├── data/                 # lab modules, Windows PBQs, command reference
+│   ├── registry.ts         # command registry shared by both engines
+│   ├── chain.ts            # &&, ||, ; runner
+│   ├── parser.ts           # tokenizer, pipelines, redirects
+│   ├── filesystem.ts       # virtual filesystem, permission checks and explanations
+│   ├── linux/              # bash context, input helpers, awk, commands by area
+│   ├── windows/            # CMD commands by area, PowerShell, DiskPart, variables
+│   ├── linuxEngine.ts      # executeLinuxLine
+│   ├── windowsEngine.ts    # executeWindowsLine
+│   └── *.test.ts           # unit, regression and walkthrough replay tests
+├── data/                   # labs, Windows PBQs, command reference
 └── types/
-public/                   # web app manifest, service worker, icons
+public/                     # web app manifest, service worker, icons
 ```
 
 ## Development
@@ -57,9 +71,17 @@ npm run preview    # serve the production build
 - **Walkthrough replay:** every module's own solution steps are run through the engine, and every objective's verifier must pass. A module that cannot be completed fails the build.
 - **Regression tests** for each bug found in review (`ls -ld`, `chmod -R` with files you do not own, `tar` flag parsing, `usermod` with unknown users, `id` group numbers, CMD `2>&1`, `ls -l` on unreadable files).
 
+### Adding a command
+
+Commands live in `src/terminal/linux/commands/` and `src/terminal/windows/` by area and register themselves in the engine's registry. Read files through the shared input helper so named files and stdin behave the same, use the context's permission helpers so denials come with an explanation, and add tests next to the existing ones.
+
+### UI changes
+
+Read `docs/DESIGN.md` first. Use the design tokens (`bg-surface`, `text-muted`, `border-line`, `text-accent`...) rather than raw Tailwind palette colors, and check both themes.
+
 ### Adding a module
 
-Add it to `src/data/lpiModules.ts` or `src/data/windowsPbqs.ts`. Verifiers receive the filesystem, system state and the last command (`CommandContext`: command, exit code, stdout). Check success and evidence in the output, not just the command text. Put the commands a student types in `solutionWalkthrough`, one per line; the replay test will tell you if they do not satisfy every objective.
+Add it to `src/data/lpiModules.ts` or `src/data/windowsPbqs.ts`, with a one-sentence `summary` for the lab list. Verifiers receive the filesystem, system state and the last command (`CommandContext`: command, exit code, stdout). Check success and evidence in the output, not just the command text. Put the commands a student types in `solutionWalkthrough`, one per line; the replay test will tell you if they do not satisfy every objective.
 
 ## Deployment
 
