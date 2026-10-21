@@ -20,6 +20,7 @@ import { learnHref } from '../../lib/router';
 import { KIND_ICON, KIND_LABEL, ProgressBar, primaryLinkClass } from './shared';
 import { pathProgressText, stagesText } from './progressText';
 import { PathBadgeLine } from '../badges/PathBadgeLine';
+import { SkillMap } from './SkillMap';
 
 interface PathOverviewProps {
   path: LearningPath;
@@ -114,6 +115,7 @@ export const PathOverview: React.FC<PathOverviewProps> = ({ path, src, modulesBy
           />
         ))}
       </ol>
+      <SkillMap path={path} src={src} />
 
       {hasJourneyProgress && (
         <p className="mt-10 text-sm text-muted">
