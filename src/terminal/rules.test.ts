@@ -915,3 +915,4 @@ import './textTools.test.ts';
 import './linuxCommands.test.ts';
 import './windowsCommands.test.ts';
 import '../data/paths.test.ts';
+import './linuxHelp.test.ts';

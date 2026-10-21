@@ -113,8 +113,10 @@ function touch(ctx: LinuxContext): LinuxResult {
 }
 
 function rm(ctx: LinuxContext): LinuxResult {
-  const { args } = ctx;
-  const targets = args.filter(a => !a.startsWith('-'));
+  const end = ctx.args.indexOf('--');
+  const args = end === -1 ? ctx.args : ctx.args.slice(0, end);
+  // after --, every argument is a file name, even one that starts with -
+  const targets = [...args.filter(a => !a.startsWith('-')), ...(end === -1 ? [] : ctx.args.slice(end + 1))];
   const recursive = args.some(a => /^-[a-zA-Z]*[rR]/.test(a));
   const force = args.some(a => /^-[a-zA-Z]*f/.test(a));
 

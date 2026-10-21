@@ -15,6 +15,7 @@ import './linux/commands/text';
 import './linux/commands/users';
 import './linux/commands/system';
 import './linux/commands/network';
+import { helpOptionOutput } from './linux/commands/help';
 
 export interface LinuxExecutionResult extends StageResult {}
 
@@ -239,12 +240,17 @@ function runLinuxCommand(
   }
 
   let res: StageResult;
-  if (isScriptPath(name)) {
+  const binHelp = /^\/(usr\/)?s?bin\/[^/]+$/.test(name) ? helpOptionOutput(name.slice(name.lastIndexOf('/') + 1), args) : null;
+  if (binHelp) {
+    res = ctx.result(binHelp.stdout, binHelp.stderr, binHelp.exitCode);
+  } else if (isScriptPath(name)) {
     res = runScriptFile(ctx, name, true);
   } else {
     const handler = linuxCommands.get(name);
     if (!handler) return ctx.fail(`bash: ${name}: command not found`, 127);
-    res = handler(ctx);
+    // --help is answered here, from the docs, so the command itself never runs
+    const help = helpOptionOutput(name, args);
+    res = help ? ctx.result(help.stdout, help.stderr, help.exitCode) : handler(ctx);
   }
 
   if (asUserState) {

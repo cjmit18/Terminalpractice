@@ -3,7 +3,7 @@ import { createNode, describeIdentity } from '../../filesystem';
 import { parseOptions, optionValue, padNum } from '../../textUtils';
 import { LinuxContext, LinuxResult, linuxCommands } from '../context';
 
-// System, hardware, processes, services, packages, archives and help
+// System, hardware, processes, services, packages and archives
 
 const DMESG = [
   '[    0.000000] Linux version 5.15.0-101-generic (buildd@lcy02-amd64-072) (gcc version 11.4.0)',
@@ -45,13 +45,6 @@ const JOURNAL = [
   'Oct 19 10:00:22 lpi-lab sshd[1450]: Accepted publickey for student from 192.168.1.100 port 51220 ssh2',
   'Oct 19 10:15:30 lpi-lab nginx[2100]: [notice] configuration file /etc/nginx/nginx.conf test is successful',
 ].join('\n');
-
-export const MAN_PAGES: { [key: string]: string } = {
-  chmod: 'CHMOD(1)                 User Commands                CHMOD(1)\n\nNAME\n       chmod - change file mode bits\n\nSYNOPSIS\n       chmod [OPTION]... MODE[,MODE]... FILE...\n       chmod [OPTION]... OCTAL-MODE FILE...\n\nDESCRIPTION\n       chmod changes the file mode bits of each given file according to mode.\n       Mode can be octal (e.g. 755 = rwxr-xr-x) or symbolic (u+x, g-w).\n\nLPI EXAM NOTE:\n       Octal values: 4 = Read, 2 = Write, 1 = Execute.\n       SUID = 4000, SGID = 2000, Sticky Bit = 1000.',
-  tar: 'TAR(1)                   User Commands                  TAR(1)\n\nNAME\n       tar - an archiving utility\n\nSYNOPSIS\n       tar [OPTION...] [FILE]...\n\nEXAMPLES\n       tar -czvf archive.tar.gz /path    Create gzipped archive\n       tar -xzvf archive.tar.gz          Extract gzipped archive\n       tar -tvf archive.tar              List archive contents',
-  grep: 'GREP(1)                  User Commands                 GREP(1)\n\nNAME\n       grep - print lines matching a pattern\n\nSYNOPSIS\n       grep [OPTIONS] PATTERN [FILE...]\n\nOPTIONS\n       -i, --ignore-case\n       -v, --invert-match\n       -c, --count\n       -n, --line-number\n       -E, --extended-regexp',
-  ps: 'PS(1)                    User Commands                   PS(1)\n\nNAME\n       ps - report a snapshot of the current processes.\n\nSYNOPSIS\n       ps [options]\n\nEXAMPLES\n       ps aux    Display all running processes with user, PID, CPU, MEM\n       ps -ef    Standard Unix syntax for all process list',
-};
 
 function ps(ctx: LinuxContext): LinuxResult {
   const header = 'USER       PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND';
@@ -152,11 +145,6 @@ function tar(ctx: LinuxContext): LinuxResult {
     return ctx.ok(node.content || 'notes.txt\nscripts/backup.sh');
   }
   return ctx.ok('notes.txt\nscripts/backup.sh');
-}
-
-function man(ctx: LinuxContext): LinuxResult {
-  const topic = ctx.args[0] || 'ls';
-  return ctx.ok(MAN_PAGES[topic] || `MANUAL PAGE FOR '${topic}'\nNo manual entry for ${topic} in section 1`);
 }
 
 // ---------- services ----------
@@ -454,24 +442,6 @@ function date(ctx: LinuxContext): LinuxResult {
   return ctx.ok(formatDate(when, '%a %b %e %H:%M:%S %Z %Y'));
 }
 
-/** Shell builtins with no file on disk: `which` finds nothing for them. */
-const SHELL_ONLY = new Set(['cd', 'umask', 'source', '.', 'history', 'exit', 'export', 'type', 'alias', 'unset']);
-const SBIN = new Set(['useradd', 'usermod', 'groupadd', 'fdisk', 'ifconfig', 'ip', 'lsmod', 'modprobe', 'sysctl', 'ss']);
-
-function which(ctx: LinuxContext): LinuxResult {
-  const opts = parseOptions(ctx.args);
-  const out: string[] = [];
-  let missing = false;
-  for (const name of opts.operands) {
-    if (linuxCommands.has(name) && !SHELL_ONLY.has(name)) {
-      out.push(`${SBIN.has(name) ? '/usr/sbin' : '/usr/bin'}/${name}`);
-    } else {
-      missing = true;
-    }
-  }
-  return ctx.result(out.join('\n'), '', missing || opts.operands.length === 0 ? 1 : 0);
-}
-
 function history(ctx: LinuxContext): LinuxResult {
   const opts = parseOptions(ctx.args, 'd');
   if (opts.flags.has('c')) {
@@ -540,7 +510,6 @@ linuxCommands.registerAll({
   lsblk,
   free,
   date,
-  which,
   history,
   env,
   printenv: env,
@@ -552,5 +521,4 @@ linuxCommands.registerAll({
   apt,
   'apt-get': apt,
   tar,
-  man,
 });
