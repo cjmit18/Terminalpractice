@@ -1,4 +1,4 @@
-import { Dispatch, SetStateAction, useEffect, useRef, useState } from 'react';
+import { Dispatch, MutableRefObject, SetStateAction, useCallback, useEffect, useRef, useState } from 'react';
 import { readStorage, writeStorage } from './storage';
 
 /** How a value is read from, merged with and written to one localStorage key. */
@@ -20,12 +20,20 @@ export interface SyncedCodec<T> {
  * - A `storage` event (another tab wrote the key) is merged into this tab's state at once.
  * - Opening the app writes nothing: until this tab changes something, what is stored stays as it is.
  *
+ * The third value is true while the latest change came from another tab (a `storage` event) and
+ * false after this tab's own setter; a reader may set it back to false once it has looked.
+ *
  * The codec must be stable (create it once, outside the component).
  */
-export function useSyncedStorage<T>(key: string, codec: SyncedCodec<T>): [T, Dispatch<SetStateAction<T>>] {
+export function useSyncedStorage<T>(key: string, codec: SyncedCodec<T>): [T, Dispatch<SetStateAction<T>>, MutableRefObject<boolean>] {
   const [state, setState] = useState<T>(() => codec.parse(readStorage(key)));
   // The value read on load: saving it back would change nothing this tab did
   const loaded = useRef(state);
+  const fromOtherTab = useRef(false);
+  const setLocal = useCallback<Dispatch<SetStateAction<T>>>(value => {
+    fromOtherTab.current = false;
+    setState(value);
+  }, []);
 
   useEffect(() => {
     if (state === loaded.current) return;
@@ -44,12 +52,14 @@ export function useSyncedStorage<T>(key: string, codec: SyncedCodec<T>): [T, Dis
       const stored = codec.parse(readStorage(key));
       setState(prev => {
         const merged = codec.merge(stored, prev);
-        return codec.serialize(merged) === codec.serialize(prev) ? prev : merged;
+        if (codec.serialize(merged) === codec.serialize(prev)) return prev;
+        fromOtherTab.current = true;
+        return merged;
       });
     };
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
   }, [key, codec]);
 
-  return [state, setState];
+  return [state, setLocal, fromOtherTab];
 }

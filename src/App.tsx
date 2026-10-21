@@ -73,7 +73,7 @@ export default function App() {
   const [theme, setTheme] = useTheme();
   // moduleId -> completed objective ids (plus reset tombstones), saved in localStorage and kept in
   // step with other open tabs: saves merge with what is stored, other tabs' saves merge in here
-  const [progressRecord, setProgressRecord] = useSyncedStorage(PROGRESS_KEY, PROGRESS_CODEC);
+  const [progressRecord, setProgressRecord, progressFromOtherTab] = useSyncedStorage(PROGRESS_KEY, PROGRESS_CODEC);
   // The record also keeps what a newer build saved; only known labs and tasks are shown and counted
   const progress = useMemo(() => sanitizeProgress(progressRecord.done, ALL_MODULES), [progressRecord.done]);
   // The lab last open in each track, so coming back to a track returns you to it
@@ -81,9 +81,9 @@ export default function App() {
   // The lab track used last, for the single Labs item in the phone nav
   const [lastTrack, setLastTrack] = useState<TrackSection>('linux');
   // Lessons read, quiz scores and the last step opened in the learning paths, saved and shared like progress
-  const [journeyRecord, setJourney] = useSyncedStorage(JOURNEY_KEY, JOURNEY_CODEC);
+  const [journeyRecord, setJourney, journeyFromOtherTab] = useSyncedStorage(JOURNEY_KEY, JOURNEY_CODEC);
   const journey = useMemo(() => sanitizeJourney(journeyRecord, LEARNING_PATHS), [journeyRecord]);
-  const [activity, setActivity] = useSyncedStorage(ACTIVITY_KEY, ACTIVITY_CODEC);
+  const [activity, setActivity, activityFromOtherTab] = useSyncedStorage(ACTIVITY_KEY, ACTIVITY_CODEC);
   // The last learning page open this session, so the Learn link brings you back to it
   const [lastLearnHref, setLastLearnHref] = useState<string | null>(null);
   const mainRef = useRef<HTMLElement>(null);
@@ -333,6 +333,7 @@ export default function App() {
       modules={ALL_MODULES}
       progress={progress}
       journey={journey}
+      fromOtherTab={[activityFromOtherTab, progressFromOtherTab, journeyFromOtherTab]}
     >
     <div className="h-dvh flex flex-col bg-bg text-text font-sans">
       <a

@@ -92,10 +92,12 @@ interface ProviderProps {
   modules: ExamModule[];
   progress: Record<string, string[]>;
   journey: Journey;
+  /** useSyncedStorage's "latest change came from another tab" flags for the records above */
+  fromOtherTab?: React.MutableRefObject<boolean>[];
   children: React.ReactNode;
 }
 
-export const GameLayerProvider: React.FC<ProviderProps> = ({ activity, setActivity, paths, modules, progress, journey, children }) => {
+export const GameLayerProvider: React.FC<ProviderProps> = ({ activity, setActivity, paths, modules, progress, journey, fromOtherTab, children }) => {
   const prefs = prefsOf(activity);
   const badges = useMemo(() => allBadges(paths), [paths]);
   const modulesById = useMemo(() => new Map(modules.map(m => [m.id, m])), [modules]);
@@ -166,10 +168,14 @@ export const GameLayerProvider: React.FC<ProviderProps> = ({ activity, setActivi
     const ids = newlyEarned(badges, { activity, progress, journey, paths, modules });
     const quiet = silent.current;
     silent.current = false;
+    // Only this tab's own actions are announced here: what another tab did (earning a badge, or
+    // "Clear badges and activity" there) is said in that tab, and caught up with quietly in this one
+    const elsewhere = fromOtherTab?.some(r => r.current) ?? false;
+    fromOtherTab?.forEach(r => (r.current = false));
     if (ids.length === 0) return;
     setActivity(a => earnBadges(a, ids));
     // The first evaluation in a tab only catches up with what was already true: no note
-    if (quiet) return;
+    if (quiet || elsewhere) return;
     for (const id of ids) {
       const b = badges.find(x => x.id === id);
       if (b) announce({ kind: 'badge', name: b.name, description: b.description });

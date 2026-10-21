@@ -38,6 +38,27 @@ test('two tabs: a badge earned in one appears in the other without a reload', as
   await runCommand(other, 'man ls');
   await expect(earnedList(page)).toContainText('man man');
   await expect(earnedList(page)).toContainText('hello, world');
+  // Only the tab where it was earned says so
+  await expect(celebrations(other)).toContainText('man man');
+  await page.waitForTimeout(500);
+  await expect(celebrations(page)).toHaveText('');
+});
+
+test('two tabs: clearing badges in one is quiet in the other', async ({ page, context }) => {
+  // A finished lab, so a badge comes back after the clear
+  await page.goto('#/learn');
+  await page.evaluate(() => localStorage.setItem('certsim:progress:v1', JSON.stringify({ 'lpi-101-1-system-architecture': ['hw-lspci', 'hw-lsmod', 'hw-dmesg'] })));
+  await page.reload();
+  await expect(earnedList(page)).toContainText('First lab');
+  const other = await context.newPage();
+  await other.goto('#/learn');
+  other.once('dialog', d => d.accept());
+  await other.getByRole('button', { name: 'Clear badges and activity' }).click();
+  await expect.poll(async () => (await storedActivity(page)).clearedAt).toBeTruthy();
+  await expect(earnedList(page)).toContainText('First lab');
+  await page.waitForTimeout(500);
+  await expect(celebrations(page)).toHaveText('');
+  await other.close();
 });
 
 test('a lab task passing is announced in the one status region', async ({ page }) => {
