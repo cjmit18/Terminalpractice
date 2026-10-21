@@ -206,7 +206,9 @@ export default function App() {
   // Learning path routes
   const learnRoute = route.section === 'learn' ? route : null;
   const activePath = learnRoute?.pathId ? LEARNING_PATHS.find(p => p.id === learnRoute.pathId) ?? null : null;
-  const activeStep = activePath && learnRoute?.stepId ? findStep(activePath, learnRoute.stepId) : null;
+  // Memoized so a rerender (e.g. another tab's journey save) is not mistaken for opening the step again
+  const routeStepId = learnRoute?.stepId;
+  const activeStep = useMemo(() => (activePath && routeStepId ? findStep(activePath, routeStepId) : null), [activePath, routeStepId]);
   const src: CompletionSource = useMemo(
     () => ({ journey, labComplete: labCheck(progress, ALL_MODULES) }),
     [journey, progress],
