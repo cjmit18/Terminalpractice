@@ -104,3 +104,19 @@ test('B3 (L2-11): CMD cd.. cd\\ cd. cd/d and chdir.., PowerShell cd.. and cd\\',
   ps('cd\\');
   assert.equal(ps.cwd(), 'C:\\');
 });
+
+test('B4 (L2-10): CMD more shows a file, and < feeds a file to a command', () => {
+  const run = windowsSession('cmd');
+  run('echo first line> notes.txt');
+  assert.deepEqual([run('more notes.txt').stdout, run('more notes.txt').exitCode], ['first line', 0]);
+  assert.equal(run('more < notes.txt').stdout, 'first line');
+  assert.equal(run('more <notes.txt').stdout, 'first line');
+  assert.equal(run('findstr first < notes.txt').stdout, 'first line');
+  assert.equal(run('type notes.txt | more').stdout, 'first line');
+  const missing = run('more nosuch.txt');
+  assert.deepEqual([missing.stderr, missing.exitCode], ['Cannot access file C:\\Users\\Student\\nosuch.txt', 1]);
+  const noInput = run('more < nosuch.txt');
+  assert.deepEqual([noInput.stderr, noInput.exitCode], ['The system cannot find the file specified.', 1]);
+  // A quoted < is text
+  assert.equal(run('echo "<b>"').stdout, '"<b>"');
+});

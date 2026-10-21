@@ -98,6 +98,24 @@ function executeSingleCmdCommand(
   // CMD ends an internal command's name at . \ or /, so cd.. cd\ cd/d and dir/w work without a space
   const glued = cmdCommands.has(parsed.name) ? null : parsed.name.match(/^(cd|chdir|dir|md|mkdir|rd|rmdir)([.\\/].*)$/i);
   if (glued && cmdCommands.has(glued[1])) parsed = { ...parsed, name: glued[1], args: [glued[2], ...parsed.args] };
+  // < file: the command reads the file as its standard input
+  const lt = /</.test(parsed.raw.replace(/"[^"]*"?|\^./g, '')) ? parsed.args.findIndex(a => a.startsWith('<')) : -1;
+  if (lt >= 0) {
+    const target = parsed.args[lt] === '<' ? parsed.args[lt + 1] : parsed.args[lt].slice(1);
+    if (!target) return { stdout: '', stderr: 'The syntax of the command is incorrect.', exitCode: 1, newCwd: cwd, newFs: fs, newState: state };
+    const probe = new WindowsContext('', [], '', '', cwd, fs, state);
+    const abs = probe.resolve(target);
+    const why = probe.protectedReason(abs, 'read');
+    if (why) return { stdout: '', stderr: 'Access is denied.', exitCode: 1, newCwd: cwd, newFs: fs, newState: state, explanation: why };
+    const node = probe.node(abs);
+    if (!node || node.type !== 'file') {
+      return { stdout: '', stderr: node ? 'Access is denied.' : 'The system cannot find the file specified.', exitCode: 1, newCwd: cwd, newFs: fs, newState: state };
+    }
+    stdin = node.content ?? '';
+    const args = [...parsed.args];
+    args.splice(lt, parsed.args[lt] === '<' ? 2 : 1);
+    parsed = { ...parsed, args, raw: parsed.raw.replace(/\s*<\s*("[^"]*"|[^\s|&>]+)/, '') };
+  }
   const ctx = new WindowsContext(parsed.name, parsed.args, stdin, parsed.raw, cwd, fs, cloneState(state));
   const handler = cmdCommands.get(parsed.name);
   // <command> /? prints the command's usage instead of running it

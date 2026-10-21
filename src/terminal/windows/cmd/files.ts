@@ -229,4 +229,20 @@ cmdCommands.register(['cd', 'chdir'], cd);
 cmdCommands.register([...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'].map(l => `${l}:`), changeDrive);
 cmdCommands.register(['mkdir', 'md'], mkdir);
 cmdCommands.register(['del', 'erase'], del);
-cmdCommands.registerAll({ dir, type, copy, more: ctx => ctx.ok(ctx.stdin) });
+/** more [file ...]: shows the files, or its input (more < file, cmd | more). Paging is not modelled. */
+function more(ctx: WindowsContext): WindowsResult {
+  const files = operands(ctx.args);
+  if (!files.length) return ctx.ok(ctx.stdin);
+  const out: string[] = [];
+  for (const f of files) {
+    const abs = ctx.resolve(f);
+    const node = ctx.node(abs);
+    const why = ctx.protectedReason(abs, 'read');
+    if (why) return ctx.result(out.join('\n'), ACCESS_DENIED, 1, why);
+    if (!node || node.type !== 'file') return ctx.result(out.join('\n'), `Cannot access file ${abs}`, 1);
+    out.push(node.content || '');
+  }
+  return ctx.ok(out.join('\n'));
+}
+
+cmdCommands.registerAll({ dir, type, copy, more });
