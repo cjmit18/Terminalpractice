@@ -176,8 +176,10 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
     if (!module.objectives.every(o => completedRef.current.has(o.id))) record([resetFact(module.id)]);
   };
 
-  // A hint opened for a task: finishing that task afterwards earns "Hints are tools"
-  const handleHint = useCallback((objectiveId: string) => record([hintFact(module.id, objectiveId)]), [record, module.id]);
+  // A hint opened for a task not done yet: finishing that task afterwards earns "Hints are tools"
+  const handleHint = useCallback((objectiveId: string) => {
+    if (!completedRef.current.has(objectiveId)) record([hintFact(module.id, objectiveId)]);
+  }, [record, module.id]);
 
   const total = module.objectives.length;
   const done = module.objectives.filter(o => completed.has(o.id)).length;
