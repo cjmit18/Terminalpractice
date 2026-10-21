@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { BottomNav, Header } from './components/Header';
 import { ModuleSelector } from './components/ModuleSelector';
@@ -32,16 +32,20 @@ import { LEARNING_PATHS } from './data/paths';
 import { PathsList } from './components/journey/PathsList';
 import { PathOverview } from './components/journey/PathOverview';
 import { StepPage } from './components/journey/StepPage';
+import { PageErrorBoundary } from './components/PageErrorBoundary';
+import { lazyWithReload, reloadOnPreloadError } from './lib/chunkReload';
 
 const MODULES_BY_ID = new Map(ALL_MODULES.map(m => [m.id, m]));
 // How lab progress and the journey are saved and shared with the app's other open tabs
 const PROGRESS_CODEC = progressCodec(ALL_MODULES);
 const JOURNEY_CODEC = journeyCodec(LEARNING_PATHS);
 
-// Pages that are not needed for the first screen load on demand.
-const SimulatorsHub = lazy(() => import('./components/SimulatorsHub').then(m => ({ default: m.SimulatorsHub })));
-const SandboxMode = lazy(() => import('./components/SandboxMode').then(m => ({ default: m.SandboxMode })));
-const CommandEncyclopedia = lazy(() =>
+// Pages that are not needed for the first screen load on demand. If a chunk fails to load (this tab
+// runs an older build than the server has), the page reloads once; otherwise PageErrorBoundary shows.
+reloadOnPreloadError();
+const SimulatorsHub = lazyWithReload(() => import('./components/SimulatorsHub').then(m => ({ default: m.SimulatorsHub })));
+const SandboxMode = lazyWithReload(() => import('./components/SandboxMode').then(m => ({ default: m.SandboxMode })));
+const CommandEncyclopedia = lazyWithReload(() =>
   import('./components/CommandEncyclopedia').then(m => ({ default: m.CommandEncyclopedia })),
 );
 
@@ -303,6 +307,7 @@ export default function App() {
       />
 
       <main id="main" ref={mainRef} tabIndex={-1} className="flex-1 min-h-0 overflow-y-auto focus:outline-none">
+        <PageErrorBoundary resetKey={routeKey}>
         {learnRoute && !learnRoute.pathId && <PathsList paths={LEARNING_PATHS} src={src} modulesById={MODULES_BY_ID} />}
 
         {activePath && !learnRoute?.stepId && (
@@ -368,6 +373,7 @@ export default function App() {
             <CommandEncyclopedia />
           </Suspense>
         )}
+        </PageErrorBoundary>
       </main>
 
       <BottomNav current={route.section} hrefs={hrefs} labsHref={hrefs[lastTrack]} />
