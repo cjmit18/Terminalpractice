@@ -11,6 +11,7 @@ import { runPowerShellPipeline } from './windows/psPipeline';
 import { expandCmdVariables, expandPowerShellEnv, setErrorLevel } from './windows/env';
 import { psExtractRedirects, psNotRecognized, psNotSimulated, psSplitPipeline, psStage } from './windows/psUtil';
 import { isNotSimulatedWindows } from './notSimulated';
+import { suggestCmd, suggestPowerShell } from './suggest';
 import './windows/psFiles';
 import './windows/cmd/files';
 import './windows/cmd/text';
@@ -75,7 +76,7 @@ function executeSingleCmdCommand(
     ? handler(ctx)
     : isNotSimulatedWindows(parsed.name)
     ? ctx.fail(`'${parsed.name}' exists on real Windows but is not simulated here.`, 9009)
-    : ctx.fail(`'${parsed.name}' is not recognized as an internal or external command,\noperable program or batch file.`, 9009);
+    : ctx.fail(`'${parsed.name}' is not recognized as an internal or external command,\noperable program or batch file.`, 9009, suggestCmd(parsed.name));
 
   const er = parsed.stderrRedirect;
   if (er) {
@@ -222,5 +223,5 @@ function runPowerShellLine(
   if (NATIVE_TOOLS.includes(exe)) return runNative(line.replace(/^(\S+?)\.exe\b/i, '$1'));
   if (first && isNotSimulatedWindows(first.name)) return ctx.fail(psNotSimulated(first.name), 1);
 
-  return ctx.fail(psNotRecognized(line, first?.name ?? ''), 1);
+  return ctx.fail(psNotRecognized(line, first?.name ?? ''), 1, suggestPowerShell(first?.name ?? ''));
 }
