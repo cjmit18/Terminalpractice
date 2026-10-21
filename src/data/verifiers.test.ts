@@ -702,3 +702,17 @@ test('first steps: the files always say what to type next, and doing what they s
     assert.deepEqual([...run.done].sort(), m.objectives.map(o => o.id).sort(), id);
   }
 });
+
+test('network lab in the engine: Test-NetConnection to a real host passes after the renew (its SourceAddress line is the PC itself)', () => {
+  for (const line of ['Test-NetConnection 8.8.8.8', 'tnc 8.8.8.8', 'Test-NetConnection 8.8.8.8 -Port 443', 'Test-NetConnection 192.168.1.1']) {
+    const run = labRun(NET, 'powershell');
+    run('ipconfig /renew');
+    const res = run(line);
+    assert.match(res.stdout, /SourceAddress\s*:\s*192\.168\./, line);
+    assert.ok(run.done.has('net-verify-ping'), line);
+  }
+  const own = labRun(NET, 'powershell');
+  own('ipconfig /renew');
+  own('Test-NetConnection 127.0.0.1');
+  assert.ok(!own.done.has('net-verify-ping'), 'loopback still does not count');
+});

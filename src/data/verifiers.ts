@@ -145,7 +145,9 @@ export function connectivityVerified(state: SystemState, ctx?: CommandContext): 
     ...out.matchAll(/^Pinging (?:\S+ \[([^\]]+)\]|(\S+)) with/gim),
     ...out.matchAll(/^Reply from ([^:\s]+):/gim),
     ...out.matchAll(/^RemoteAddress\s*:\s*(\S+)/gim),
-    ...out.matchAll(/^\S+\s+\S+\s+(\d+\.\d+\.\d+\.\d+)\s/gm),
+    // Test-Connection's table rows (Source Destination IPV4Address …); "Key : value" lines such as
+    // Test-NetConnection's SourceAddress are the PC itself, not the destination, so they are skipped
+    ...out.matchAll(/^\S+\s+[^\s:]\S*\s+(\d+\.\d+\.\d+\.\d+)\s/gm),
   ].map(m => m[1] ?? m[2]);
   const named = probe.split(/\s+/).slice(1).flatMap(w => w.split(',')).map(w => w.replace(/^["']|["']$/g, '')).filter(w => w && !w.startsWith('-'));
   if ([...shown, ...named].some(isLocal)) return false;
