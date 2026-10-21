@@ -372,3 +372,11 @@ test('master re-check R-1: piping into a cmdlet the simulator lacks says so, not
   // A simulated cmdlet given the wrong kind of object still gets PowerShell's own error
   assert.match(run('Get-Service | Stop-Process').stderr, /InputObjectNotBound/);
 });
+
+test('PR #10 review: a native program piped on in PowerShell keeps its state changes', () => {
+  const run = windowsSession('powershell');
+  assert.equal(run('ipconfig /renew | Out-Null').stdout, '');
+  assert.equal(run.state().interfaces[0].ip, '192.168.1.145');
+  assert.match(run('taskkill /F /PID 3892 | Select-String SUCCESS').stdout, /PID 3892 has been terminated/);
+  assert.equal(pids(run).includes(3892), false);
+});

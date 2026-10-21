@@ -200,7 +200,13 @@ function runPowerShellLine(
   const first = stages[0];
   const ctx = new WindowsContext(first?.name ?? '', first?.args ?? [], '', line, cwd, cloneFileSystem(fs), cloneState(state));
   ctx.tokens = first?.tokens ?? [];
-  const runNative = (cmdLine: string) => executeCmdCommand(cmdLine, cwd, ctx.fs, ctx.state);
+  // A native program's changes (ipconfig /renew, taskkill ...) stick even when its output is piped on
+  const runNative = (cmdLine: string) => {
+    const res = executeCmdCommand(cmdLine, cwd, ctx.fs, ctx.state);
+    ctx.fs = res.newFs;
+    ctx.state = res.newState;
+    return res;
+  };
 
   if (stages.length > 1) return runPowerShellPipeline(ctx, stages, runNative);
   // A value on its own is output, as in PowerShell
