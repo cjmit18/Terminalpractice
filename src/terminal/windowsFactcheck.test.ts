@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { windowsSession } from './testUtils.ts';
 import { psTokenize } from './windows/psUtil.ts';
+import { NOT_SIMULATED_WINDOWS } from './notSimulated.ts';
 
 // Regression tests for the fact-check findings on the Windows engine (W-*, E-*, D-* IDs).
 
@@ -320,4 +321,26 @@ test('A (D-1..D-4, W-10): aliases, functions and pipeline binding in the docs', 
   assert.equal(nouns.length, 8);
   assert.match(run('ps').stdout, /ProcessName/);
   assert.match(windowsSession('cmd')('whoami /?').stdout, /\/ALL +User name and SID, groups, privileges and claims \(not \/UPN/);
+});
+
+test('F (W-12): net use maps, lists and deletes network drives', () => {
+  const run = windowsSession('cmd', ONLINE);
+  assert.match(run('net use').stdout, /There are no entries in the list\./);
+  assert.equal(run('net use Z: \\\\fs01\\share').stdout, 'The command completed successfully.');
+  assert.match(run('net use').stdout, /^OK {11}Z: {8}\\\\fs01\\share +Microsoft Windows Network$/m);
+  assert.match(run('net use Z: \\\\fs01\\other').stderr, /local device name is already in use/);
+  assert.match(run('net use * \\\\fs01\\public').stdout, /^Drive Y: is now connected to \\\\fs01\\public\./);
+  assert.equal(run('net use Z: /delete').stdout, 'Z: was deleted successfully.');
+  assert.doesNotMatch(run('net use').stdout, /Z:/);
+  assert.doesNotMatch(run('set').stdout, /NetUse/);
+  assert.match(windowsSession('cmd')('net use Z: \\\\fs01\\share').stderr, /System error 53/);
+});
+
+test('H-3: every listed Windows command without a handler gives the not-simulated message', () => {
+  for (const name of NOT_SIMULATED_WINDOWS) {
+    for (const shell of ['cmd', 'powershell'] as const) {
+      const res = windowsSession(shell)(name);
+      assert.doesNotMatch(res.stderr, /not recognized/, `${shell}: ${name} is listed as not simulated`);
+    }
+  }
 });

@@ -2,6 +2,7 @@ import { ProcessItem } from '../../../types/terminal';
 import { createNode, writeFileContent } from '../../filesystem';
 import { WindowsContext, WindowsResult, cmdCommands } from '../context';
 import { cmdDoc } from '../../docs';
+import { hasConnectivity } from './network';
 
 // CMD system tools: whoami, hostname, ver, systeminfo, tasklist, taskkill, sfc, dism, chkdsk,
 // bootrec, gpupdate, gpresult, net
@@ -531,7 +532,45 @@ function whoami(ctx: WindowsContext): WindowsResult {
   return ctx.ok(parts.join('\n\n'));
 }
 
-const PASSWORD_POLICY =`The password does not meet the password policy requirements. Check the minimum password length, password complexity and password history requirements.${helpMsg(2245)}`;
+/** Mapped network drives, kept as hidden =NetUse:Z: entries in state.envVars. */
+const NET_USE_PREFIX = '=NetUse:';
+const mappedDrives = (ctx: WindowsContext): [string, string][] =>
+  Object.entries(ctx.state.envVars ?? {}).filter(([k]) => k.startsWith(NET_USE_PREFIX)).map(([k, v]) => [k.slice(NET_USE_PREFIX.length), v] as [string, string])
+    .sort(([a], [b]) => a.localeCompare(b));
+
+/** net use: list, map (net use Z: \\server\share or net use * ...) and /delete network drives. */
+function netUse(ctx: WindowsContext, rest: string[]): WindowsResult {
+  const switches = rest.filter(a => a.startsWith('/')).map(a => a.toLowerCase());
+  const operands = rest.filter(a => !a.startsWith('/'));
+  const vars = { ...(ctx.state.envVars ?? {}) };
+  const drives = mappedDrives(ctx);
+  if (!operands.length) {
+    if (!drives.length) return ctx.ok('New connections will be remembered.\n\nThere are no entries in the list.\n');
+    return ctx.ok(['New connections will be remembered.', '', '', 'Status       Local     Remote                    Network', '', RULE,
+      ...drives.map(([d, r]) => `OK           ${d.padEnd(10)}${r.padEnd(26)}Microsoft Windows Network`), DONE].join('\n'));
+  }
+  const local = operands[0].toUpperCase();
+  if (switches.includes('/delete') || switches.includes('/d')) {
+    const hit = local === '*' ? drives : drives.filter(([d, r]) => d === local || r.toLowerCase() === operands[0].toLowerCase());
+    if (!hit.length) return ctx.fail(`The network connection could not be found.${helpMsg(2250)}`, 2);
+    for (const [d] of hit) delete vars[`${NET_USE_PREFIX}${d}`];
+    ctx.state.envVars = vars;
+    return ctx.ok(hit.map(([d]) => `${d} was deleted successfully.`).join('\n\n'));
+  }
+  const remote = operands.find(o => o.startsWith('\\\\'));
+  if (!remote) return ctx.fail(`The syntax of this command is:\n\nNET USE\n[devicename | *] [\\\\computername\\sharename[\\volume] [password | *]]\n        [/USER:[domainname\\]username]\n        [[/DELETE] | [/PERSISTENT:{YES | NO}]]${helpMsg(3506)}`, 1);
+  if (!hasConnectivity(ctx)) return ctx.fail('System error 53 has occurred.\n\nThe network path was not found.', 2);
+  // net use \\server\share with no drive letter connects without mapping a drive
+  if (local !== '*' && !/^[A-Z]:$/.test(local)) return ctx.ok(DONE);
+  const used = new Set([...drives.map(([d]) => d), ...ctx.state.disks.flatMap(d => d.partitions).map(p => (p.driveLetter ?? '').toUpperCase()).filter(Boolean), 'C:']);
+  const letter = local === '*' ? [...'ZYXWVUTSRQPONMLKJIHGFED'].map(c => `${c}:`).find(c => !used.has(c)) ?? '' : local;
+  if (used.has(letter)) return ctx.fail('System error 85 has occurred.\n\nThe local device name is already in use.', 2);
+  vars[`${NET_USE_PREFIX}${letter}`] = remote;
+  ctx.state.envVars = vars;
+  return ctx.ok(local === '*' ? `Drive ${letter} is now connected to ${remote}.\n\n${DONE}` : DONE);
+}
+
+const PASSWORD_POLICY = `The password does not meet the password policy requirements. Check the minimum password length, password complexity and password history requirements.${helpMsg(2245)}`;
 
 /** net user NAME [password] /add | /delete | /active:yes|no /domain: changes Active Directory. */
 function netUserDomainChange(ctx: WindowsContext, operands: string[], switches: string[], active: string | undefined): WindowsResult {
@@ -750,6 +789,7 @@ function net(ctx: WindowsContext): WindowsResult {
   switch (subRaw?.toLowerCase()) {
     case 'user': case 'users': return netUser(ctx, rest);
     case 'group': return netGroup(ctx, rest);
+    case 'use': return netUse(ctx, rest);
     case 'localgroup': return netLocalgroup(ctx, rest);
     case 'start': return netService(ctx, true, rest);
     case 'stop': return netService(ctx, false, rest);
