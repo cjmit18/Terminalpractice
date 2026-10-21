@@ -84,6 +84,63 @@ test('ping counts: Linux -c and Windows -n', () => {
   assert.equal((win('ping 8.8.8.8').stdout.match(/Reply from/g) ?? []).length, 4);
 });
 
+test('tasklist /FI filters and /FO formats', () => {
+  const run = windowsSession('cmd');
+  const pid = run('tasklist /FI "PID eq 3892"').stdout;
+  assert.match(pid, /svchost_update\.exe +3892/);
+  assert.equal(pid.split('\n').filter(l => /\.exe/.test(l)).length, 1);
+  const image = run('tasklist /FI "IMAGENAME eq svchost.exe"').stdout;
+  assert.match(image, /^svchost\.exe +844/m);
+  assert.doesNotMatch(image, /svchost_update/);
+  assert.match(run('tasklist /FI "IMAGENAME eq svchost*"').stdout, /svchost_update/);
+  assert.equal(run('tasklist /FI "PID eq 99999"').stdout, 'INFO: No tasks are running which match the specified criteria.');
+  assert.equal(run('tasklist /FI "NOPE eq 1"').stderr, 'ERROR: The search filter cannot be recognized.');
+  assert.match(run('tasklist /FI "PID eq 3892" /FO CSV /NH').stdout, /^"svchost_update\.exe","3892","Console","1","[\d,]+ K"$/);
+  assert.match(run('tasklist /FO LIST /FI "PID eq 4"').stdout, /Image Name: +System\nPID: +4/);
+});
+
+test('net user, net localgroup, net start and net stop', () => {
+  const run = windowsSession('cmd');
+  assert.match(run('net user').stdout, /^User accounts for \\\\WIN-CLIENT01\n\n-+\nAdministrator +DefaultAccount +Guest\nStudent/);
+  const local = run('net user Student').stdout;
+  assert.match(local, /^User name +Student\n/);
+  assert.match(local, /Account active +Yes/);
+  assert.match(local, /Local Group Memberships +\*Administrators/);
+  const domainOnly = run('net user jdoe');
+  assert.equal(domainOnly.exitCode, 2);
+  assert.match(domainOnly.stderr, /^The user name could not be found\./);
+  assert.match(domainOnly.explanation ?? '', /\/domain/);
+  const jdoe = run('net user jdoe /domain').stdout;
+  assert.match(jdoe, /^The request will be processed at a domain controller/);
+  assert.match(jdoe, /Full Name +John Doe/);
+  assert.match(jdoe, /Global Group memberships +\*Domain Users/);
+
+  assert.match(run('net localgroup').stdout, /\*Administrators\n\*Backup Operators/);
+  assert.match(run('net localgroup administrators').stdout, /^Alias name +administrators\nComment +Administrators have complete[\s\S]*Members\n\n-+\nAdministrator\n/);
+  assert.match(run('net localgroup nosuch').stderr, /The specified local group does not exist/);
+  run('net user bob P@ss1 /add');
+  assert.match(run('net user').stdout, /bob/);
+  assert.equal(run('net localgroup administrators bob /add').exitCode, 0);
+  assert.match(run('net localgroup administrators').stdout, /\nbob\n/);
+  assert.match(run('net localgroup administrators bob /add').stderr, /already a member/);
+  assert.match(run('net user bob').stdout, /Local Group Memberships +\*Administrators \*Users/);
+
+  const started = run('net start').stdout;
+  assert.match(started, /^These Windows services are started:\n\n {3}/);
+  assert.match(started, / {3}Print Spooler\n/);
+  assert.match(run('net stop spooler').stdout, /^The Print Spooler service is stopping\.\nThe Print Spooler service was stopped successfully\./);
+  assert.equal(run.state().services.find(s => s.name === 'Spooler')!.status, 'Stopped');
+  assert.doesNotMatch(run('net start').stdout, /Print Spooler/);
+  assert.match(run('net stop spooler').stderr, /is not started/);
+  assert.match(run('net start "Print Spooler"').stdout, /was started successfully/);
+  assert.match(run('net start spooler').stderr, /already been started/);
+  assert.match(run('net start nosuch').stderr, /The service name is invalid/);
+
+  const user = windowsSession('cmd', { isRootOrAdmin: false });
+  const denied = user('net stop spooler');
+  assert.match(denied.stderr, /System error 5 has occurred\.\n\nAccess is denied\./);
+});
+
 test('uname options, ip filtering by device, journalctl -u', () => {
   const run = linuxSession();
   assert.equal(run('uname -r').stdout, '5.15.0-101-generic');

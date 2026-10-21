@@ -152,6 +152,10 @@ export interface SystemState {
   envVars: { [key: string]: string };
   /** Set by `ipconfig /flushdns`; `ipconfig /displaydns` then shows only hosts-file entries. */
   dnsCacheFlushed?: boolean;
+  /** Windows local accounts created with net user /add (the built-in ones are always present). */
+  localUsers?: string[];
+  /** Windows local group membership changed with net localgroup; unset means the defaults. */
+  localGroups?: { [group: string]: string[] };
   /** Lines entered in this bash session, oldest first. Maintained by the Linux engine for `history`. */
   commandHistory?: string[];
 }
