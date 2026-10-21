@@ -1,6 +1,6 @@
 import { FileNode } from '../../../types/terminal';
-import { createNode, removeNode, fileSize, writeFileContent } from '../../filesystem';
-import { LinuxContext, LinuxResult, linuxCommands } from '../context';
+import { removeNode, fileSize, writeFileContent } from '../../filesystem';
+import { LinuxContext, LinuxResult, linuxCommands, createInDir } from '../context';
 
 // Navigation and file management: pwd, cd, ls, mkdir, touch, rm, tee (cat lives with the text filters)
 
@@ -92,7 +92,7 @@ function mkdir(ctx: LinuxContext): LinuxResult {
       if (ctx.node(p)) continue;
       const check = ctx.canWrite(p);
       if (!check.ok) return ctx.fail(`mkdir: cannot create directory '${d}': ${check.error || 'Permission denied'}`);
-      createNode(ctx.fs, p, 'directory', '', false, ctx.user, ctx.group, ctx.dirMode());
+      createInDir(ctx.fs, p, 'directory', '', ctx.user, ctx.group, ctx.dirMode());
     }
   }
   return ctx.ok();
@@ -109,7 +109,7 @@ function touch(ctx: LinuxContext): LinuxResult {
     if (existing) {
       existing.updatedAt = new Date().toISOString();
     } else {
-      createNode(ctx.fs, targetPath, 'file', '', false, ctx.user, ctx.group, ctx.fileMode());
+      createInDir(ctx.fs, targetPath, 'file', '', ctx.user, ctx.group, ctx.fileMode());
     }
   }
   return ctx.ok();
@@ -154,7 +154,7 @@ function tee(ctx: LinuxContext): LinuxResult {
     if (existing && existing.type === 'file') {
       writeFileContent(existing, stdin, append);
     } else {
-      createNode(ctx.fs, targetPath, 'file', stdin, false, ctx.user, ctx.group, ctx.fileMode());
+      createInDir(ctx.fs, targetPath, 'file', stdin, ctx.user, ctx.group, ctx.fileMode());
     }
   }
   return ctx.ok(stdin);

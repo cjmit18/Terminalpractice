@@ -1,7 +1,7 @@
 import { FileNode } from '../../../types/terminal';
-import { createNode, applyChmod, octalToSymbolic, toOctalField, describeIdentity, writeFileContent } from '../../filesystem';
+import { applyChmod, getSpecialBits, applySpecialBits, octalToSymbolic, toOctalField, describeIdentity, writeFileContent } from '../../filesystem';
 import { parseOptions, optionValue } from '../../textUtils';
-import { LinuxContext, LinuxResult, linuxCommands } from '../context';
+import { LinuxContext, LinuxResult, linuxCommands, createInDir } from '../context';
 
 // Identity, ownership and permissions: su, exit, whoami, id, chmod, chown, chgrp, umask,
 // useradd, usermod, groupadd
@@ -51,6 +51,19 @@ function id(ctx: LinuxContext): LinuxResult {
   const groups = name === ctx.user ? ctx.groups : [primary, ...db.groupRows.filter(r => (r[3] ?? '').split(',').includes(name)).map(r => r[0])];
   const gidOf = (g: string) => db.group(g)?.[2] ?? (g === 'student' ? '1000' : '1001');
   const uniq = Array.from(new Set(groups));
+  // -u, -g, -G print just that part (numbers, or names with -n)
+  const flags = ctx.args.filter(a => /^-[ugGnr]+$/.test(a)).join('').replace(/-/g, '');
+  const bad = ctx.args.find(a => a.startsWith('-') && !/^-[ugGnr]+$/.test(a));
+  if (bad) return ctx.fail(`id: invalid option -- '${bad.replace(/^-+/, '')[0] ?? '-'}'\nTry 'id --help' for more information.`);
+  const which = ['u', 'g', 'G'].filter(f => flags.includes(f));
+  if (which.length > 1) return ctx.fail('id: cannot print "only" of more than one choice');
+  if (flags.includes('n') && !which.length) return ctx.fail('id: cannot print only names or real IDs in default format');
+  if (which.length) {
+    const names = flags.includes('n');
+    if (which[0] === 'u') return ctx.ok(names ? name : uid);
+    if (which[0] === 'g') return ctx.ok(names ? primary : gidOf(primary));
+    return ctx.ok(uniq.map(g => (names ? g : gidOf(g))).join(' '));
+  }
   return ctx.ok(`uid=${uid}(${name}) gid=${gidOf(primary)}(${primary}) groups=${uniq.map(g => `${gidOf(g)}(${g})`).join(',')}`);
 }
 
@@ -130,8 +143,16 @@ function chmod(ctx: LinuxContext): LinuxResult {
   const recursive = ctx.args.includes('-R') || ctx.args.includes('--recursive');
   const rest = ctx.args.filter(a => !OPTIONS.has(a));
   if (rest.length === 0) return ctx.fail('chmod: missing operand');
-  const modeArg = rest[0];
+  let modeArg = rest[0];
   const targetPaths = rest.slice(1);
+  // GNU chmod: a numeric mode never clears a directory's setuid/setgid bits unless written
+  // with an extra leading zero (00755); `chmod 755 dir` keeps drwxr-sr-x
+  const numeric = /^[0-7]{1,5}$/.test(modeArg);
+  const clearsDirSpecial = numeric && /^00[0-7]{3}$/.test(modeArg);
+  if (numeric) {
+    if (modeArg.length === 5 && !clearsDirSpecial) return ctx.fail(`chmod: invalid mode: '${modeArg}'`);
+    modeArg = modeArg.slice(-4).padStart(3, '0');
+  }
   if (targetPaths.length === 0) return ctx.fail(`chmod: missing operand after '${modeArg}'`);
 
   const denied: string[] = [];
@@ -149,8 +170,15 @@ function chmod(ctx: LinuxContext): LinuxResult {
         return;
       }
       const result = applyChmod(n.permissions, modeArg)!;
-      n.permissions = result.sym;
-      n.octal = result.octal;
+      let { sym, octal } = result;
+      if (numeric && !clearsDirSpecial && n.type === 'directory') {
+        const kept = getSpecialBits(n.permissions.slice(-9)) & 6;
+        const special = Math.floor(octal / 1000) | kept;
+        sym = applySpecialBits(octalToSymbolic(octal % 1000), special);
+        octal = special * 1000 + (octal % 1000);
+      }
+      n.permissions = sym;
+      n.octal = octal;
       if (recursive && n.children) {
         for (const [name, child] of Object.entries(n.children)) applyTree(child, `${path}/${name}`);
       }
@@ -239,7 +267,7 @@ function useradd(ctx: LinuxContext): LinuxResult {
   }
   // Ubuntu's useradd only creates the home directory with -m (CREATE_HOME is off by default)
   if (opts.flags.has('m') && !ctx.node(home)) {
-    createNode(ctx.fs, home, 'directory', '', false, username, primaryName ?? username, 750);
+    createInDir(ctx.fs, home, 'directory', '', username, primaryName ?? username, 750);
   }
   return ctx.ok();
 }

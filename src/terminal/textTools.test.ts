@@ -75,7 +75,7 @@ test('grep: -i -v -n -c -l -E -F -w -o -q and combined flags', () => {
   assert.equal(run('grep -F "a.b" /etc/passwd').exitCode, 1);
   assert.equal(run('grep -l root /etc/passwd /etc/group').stdout, '/etc/passwd\n/etc/group');
   assert.equal(run('grep -c root /etc/passwd /etc/group').stdout, '/etc/passwd:1\n/etc/group:1');
-  assert.equal(run('grep -o "x:[0-9]*" /etc/hostname 2>/dev/null').exitCode, 2);
+  assert.equal(run('grep -o "x:[0-9]*" /etc/nosuch 2>/dev/null').exitCode, 2);
   assert.equal(run('grep -ow bin /etc/passwd').stdout, 'bin\nbin\nbin\nbin\nbin');
   assert.equal(run('grep -q root /etc/passwd').stdout, '');
   assert.equal(run('grep -q root /etc/passwd').exitCode, 0);
@@ -93,7 +93,7 @@ test('grep -r / -R recurse with path:line output and report unreadable files', (
   const etc = run('grep -r student /etc');
   assert.match(etc.stdout, /\/etc\/group:sudo:x:27:student/);
   assert.match(etc.stdout, /\/etc\/passwd:student:x:1000/);
-  assert.equal(etc.stderr, 'grep: /etc/shadow: Permission denied');
+  assert.equal(etc.stderr, 'grep: /etc/shadow: Permission denied\ngrep: /etc/sudoers: Permission denied');
   assert.equal(etc.exitCode, 2);
 
   run('cd /home/student');
@@ -117,7 +117,7 @@ test('sed: per-line substitution, addresses, -n p, d, -E, -i', () => {
   const run = linuxSession();
   assert.equal(run('echo "aaa" | sed s/a/b/').stdout, 'baa');
   assert.equal(run('echo "aaa" | sed s/a/b/g').stdout, 'bbb');
-  assert.equal(run('printf x | sed s/x/y/ 2>/dev/null; echo -e "x\\nx" | sed s/^x/y/').stdout, 'y\ny');
+  assert.equal(run('printf x | sed s/x/y/ 2>/dev/null; echo -e "x\\nx" | sed s/^x/y/').stdout, 'y\ny\ny');
   assert.equal(run('sed -n 2p /etc/passwd').stdout, 'daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin');
   assert.equal(run('sed -n "/^s/p" /etc/passwd').stdout.split('\n').length, 2);
   assert.equal(run('sed "/nologin/d" /etc/passwd').stdout.split('\n').length, 2);
@@ -160,9 +160,9 @@ test('wc counts like GNU wc', () => {
   assert.equal(run('echo hi | wc -c').stdout, '3');
   assert.equal(run('echo hello world | wc -w').stdout, '2');
   assert.equal(run('echo hello world | wc').stdout, '      1       2      12');
-  assert.equal(run('wc /etc/hosts').stdout, '  4   8 111 /etc/hosts');
+  assert.equal(run('wc /etc/hosts').stdout, '  4   8 113 /etc/hosts');
   const two = run('wc -l /etc/passwd /etc/group');
-  assert.equal(two.stdout, '  6 /etc/passwd\n  7 /etc/group\n 13 total');
+  assert.equal(two.stdout, '  6 /etc/passwd\n  9 /etc/group\n 15 total');
 });
 
 test('head and tail: counts, +N, -c and multi-file headers', () => {
@@ -196,7 +196,7 @@ test('tr: ranges, classes, -d, -s, and no file operands', () => {
   assert.equal(run('echo "a   b" | tr -s " "').stdout, 'a b');
   assert.equal(run('echo abc | tr abc x').stdout, 'xxx');
   assert.equal(run('echo "ph: 555-1234" | tr -cd "[:digit:]"').stdout, '5551234');
-  assert.equal(run('cat /etc/hostname 2>/dev/null; echo a:b | tr : "\\n"').stdout, 'a\nb');
+  assert.equal(run('cat /etc/nosuch 2>/dev/null; echo a:b | tr : "\\n"').stdout, 'a\nb');
   const extra = run('tr a b /etc/passwd');
   assert.equal(extra.stderr, "tr: extra operand '/etc/passwd'\nTry 'tr --help' for more information.");
   assert.equal(extra.exitCode, 1);

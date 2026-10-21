@@ -245,6 +245,28 @@ export const LINUX_DOCS: LinuxDoc[] = [
     noHelpOption: true,
   },
   {
+    name: 'printf', section: 1, summary: 'format and print data', source: COREUTILS,
+    synopsis: ['printf FORMAT [ARGUMENT]...', 'printf OPTION'],
+    description: [
+      'Prints the ARGUMENTs according to FORMAT. Ordinary characters are copied, backslash escapes such as \\n and \\t are interpreted, and each conversion (%s, %d, ...) takes the next argument. The format is reused until all arguments are used. Unlike echo, printf adds no newline of its own.',
+      'Conversions: %s string, %d or %i integer, %u unsigned, %x or %X hexadecimal, %o octal, %c first character, %f %e %g floating point, %b string with escapes, %q shell-quoted string, %% a literal percent sign. A width and precision may come between % and the letter, as in %-10s or %05.2f.',
+      'Bash has its own printf builtin, which is what runs when you type printf.',
+    ],
+    options: [HELP, VERSION],
+    examples: [
+      { cmd: 'printf "%s is %d years old\\n" Ana 30', desc: 'Fill a template from arguments.' },
+      { cmd: 'printf "%-10s|%5s\\n" left right', desc: 'Pad fields to a width (- aligns left).' },
+      { cmd: 'printf "%s\\n" one two three', desc: 'Reuse the format: one argument per line.' },
+    ],
+    info: core('printf', 'Format and print data', 'Printing text', undefined, 'echo invocation'),
+    builtin: {
+      short: 'printf [-v var] format [arguments]', file: true,
+      help: ['Formats and prints ARGUMENTS under control of the FORMAT.', 'FORMAT is a character string with plain characters, escape sequences and format specifications, each of which prints the next argument.'],
+    },
+    exitStatus: 'Returns success unless an invalid option is given or a write or assignment error occurs.',
+    noHelpOption: true,
+  },
+  {
     name: 'cat', section: 1, summary: 'concatenate files and print on the standard output', source: COREUTILS,
     synopsis: ['cat [OPTION]... [FILE]...'],
     description: ['Writes each FILE to standard output, one after the other. With no FILE, or with -, it reads standard input.'],

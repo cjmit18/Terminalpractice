@@ -1,7 +1,7 @@
 import { SystemState, WindowsService } from '../../../types/terminal';
-import { createNode, describeIdentity } from '../../filesystem';
+import { describeIdentity } from '../../filesystem';
 import { parseOptions, optionValue, padNum } from '../../textUtils';
-import { LinuxContext, LinuxResult, linuxCommands } from '../context';
+import { LinuxContext, LinuxResult, linuxCommands, createInDir } from '../context';
 import { DEFAULT_LINUX_DISKS, KERNEL_RELEASE, KERNEL_VERSION, MEMORY_KIB, MODULES } from '../virtualFs';
 
 // System, hardware, processes, services, packages and archives
@@ -10,7 +10,7 @@ const DMESG = [
   '[    0.000000] Linux version 5.15.0-101-generic (buildd@lcy02-amd64-072) (gcc version 11.4.0)',
   '[    0.000000] Command line: BOOT_IMAGE=/vmlinuz-5.15.0-101-generic root=UUID=8d6a8f1e ro quiet splash',
   '[    0.412891] ACPI: Core revision 20210604',
-  '[    1.120542] pci 0000:00:1f.2: [8086:2922] SATA AHCI controller',
+  '[    1.120542] ahci 0000:00:1f.2: AHCI 0001.0000 32 slots 6 ports 1.5 Gbps 0x3f impl SATA mode',
   '[    2.341209] e1000e: Intel(R) PRO/1000 Network Driver',
   '[    2.341512] e1000e 0000:00:19.0 eth0: (PCI Express:2.5GT/s:Width x1) 52:54:00:12:34:56',
   '[    3.150221] systemd[1]: Inserted module \'autofs4\'',
@@ -160,7 +160,7 @@ function tar(ctx: LinuxContext): LinuxResult {
       nonFlags.shift();
     }
     if (!archiveName) return ctx.fail('tar: Cowardly refusing to create an empty archive', 2);
-    createNode(ctx.fs, ctx.resolve(archiveName), 'file', nonFlags.join('\n'), false, ctx.user, ctx.group, ctx.fileMode());
+    createInDir(ctx.fs, ctx.resolve(archiveName), 'file', nonFlags.join('\n'), ctx.user, ctx.group, ctx.fileMode());
     return ctx.ok(hasV ? nonFlags.map(f => `a ${f}`).join('\n') : '');
   }
 

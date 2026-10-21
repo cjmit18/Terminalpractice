@@ -162,4 +162,6 @@ export interface SystemState {
   localGroups?: { [group: string]: string[] };
   /** Lines entered in this bash session, oldest first. Maintained by the Linux engine for `history`. */
   commandHistory?: string[];
+  /** Exit status of the last bash pipeline, for $?. Maintained by the Linux engine. */
+  lastExitCode?: number;
 }

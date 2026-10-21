@@ -236,7 +236,7 @@ test('Storage and hardware listings agree with each other', () => {
   assert.match(lspci, /00:1f\.2 SATA controller/);
   assert.match(run('lsmod').stdout, /^e1000e /m);
   assert.match(run('dmesg | grep 00:19.0').stdout, /e1000e/);
-  assert.match(run('dmesg | grep 00:1f.2').stdout, /SATA AHCI/);
+  assert.match(run('dmesg | grep 00:1f.2').stdout, /^\[ *[\d.]+\] ahci 0000:00:1f\.2: AHCI 0001\.0000 32 slots 6 ports 1\.5 Gbps 0x3f impl SATA mode$/);
 });
 
 test('ss and netstat list sockets from the session state', () => {

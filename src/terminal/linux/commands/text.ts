@@ -1,7 +1,7 @@
 import { FileNode } from '../../../types/terminal';
-import { writeFileContent, createNode } from '../../filesystem';
+import { writeFileContent } from '../../filesystem';
 import { parseOptions, optionValue, toLines, posixToJsRegex, escapeRegex, padNum } from '../../textUtils';
-import { LinuxContext, LinuxResult, linuxCommands } from '../context';
+import { LinuxContext, LinuxResult, linuxCommands, createInDir } from '../context';
 import { readInputs, InputSource } from '../input';
 import { runAwk, AwkError } from '../awk';
 
@@ -14,22 +14,6 @@ function finish(ctx: LinuxContext, stdout: string, errors: string[], errCode: nu
   return ctx.result(stdout, errors.join('\n'), errors.length ? errCode : okCode);
 }
 
-/** Expands $VAR and ${VAR} from the session (unknown variables expand to nothing, like bash). */
-function expandVars(ctx: LinuxContext, text: string): string {
-  const env = ctx.state.envVars ?? {};
-  const lookup = (name: string): string => {
-    switch (name) {
-      case 'USER': case 'LOGNAME': return ctx.state.currentUser;
-      case 'HOSTNAME': return ctx.state.hostname;
-      case 'HOME': return env.HOME ?? (ctx.state.currentUser === 'root' ? '/root' : `/home/${ctx.state.currentUser}`);
-      case 'PWD': return ctx.cwd;
-      case 'UID': return ctx.state.currentUser === 'root' ? '0' : '1000';
-      default: return env[name] ?? '';
-    }
-  };
-  return text.replace(/\$\{(\w+)\}|\$([A-Za-z_]\w*)/g, (_, a, b) => lookup(a ?? b));
-}
-
 function echo(ctx: LinuxContext): LinuxResult {
   const args = [...ctx.args];
   let interpret = false;
@@ -37,7 +21,7 @@ function echo(ctx: LinuxContext): LinuxResult {
     if (args[0].includes('e')) interpret = true;
     args.shift();
   }
-  let text = args.map(a => expandVars(ctx, a)).join(' ');
+  let text = args.join(' ');
   if (interpret) text = text.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\\\/g, '\\');
   return ctx.ok(text);
 }
@@ -487,7 +471,7 @@ function sort(ctx: LinuxContext): LinuxResult {
     if (!check.ok) return ctx.fail(`sort: open failed: ${outFile}: ${check.error}`, 2);
     const node = ctx.node(path);
     if (node) writeFileContent(node, result.join('\n'));
-    else createNode(ctx.fs, path, 'file', result.join('\n'), false, ctx.user, ctx.group, ctx.fileMode());
+    else createInDir(ctx.fs, path, 'file', result.join('\n'), ctx.user, ctx.group, ctx.fileMode());
     return ctx.ok();
   }
   return ctx.ok(result.join('\n'));
@@ -520,7 +504,7 @@ function uniq(ctx: LinuxContext): LinuxResult {
     if (!check.ok) return ctx.fail(`uniq: ${output}: ${check.error}`, 1);
     const node = ctx.node(path);
     if (node) writeFileContent(node, out);
-    else createNode(ctx.fs, path, 'file', out, false, ctx.user, ctx.group, ctx.fileMode());
+    else createInDir(ctx.fs, path, 'file', out, ctx.user, ctx.group, ctx.fileMode());
     return ctx.ok();
   }
   return ctx.ok(out);

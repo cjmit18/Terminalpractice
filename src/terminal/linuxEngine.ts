@@ -1,12 +1,16 @@
 import { FileNode, SystemState } from '../types/terminal';
 import {
-  cloneFileSystem, getNodeAtPath, normalizePath, createNode, canWriteNode, getUserGroups, writeFileContent,
-  describeIdentity,
+  cloneFileSystem, getNodeAtPath, normalizePath, canWriteNode, canReadNode, getUserGroups, writeFileContent,
+  describeIdentity, findTraversalDenial,
 } from './filesystem';
-import { parsePipelinedLine, splitChainedCommandLine, ParsedCommand } from './parser';
+import { ParsedCommand } from './parser';
+import {
+  splitBashChain, parseBashPipeline, expandWord, expandToString, assignmentOf, Expander, ExpansionError, Field,
+} from './linux/shell';
+import { shellVariable, homeOf } from './linux/env';
 import { runChain, StageResult } from './chain';
 import { cloneState } from './state';
-import { LinuxContext, linuxCommands, newFileMode } from './linux/context';
+import { LinuxContext, linuxCommands, newFileMode, createInDir } from './linux/context';
 import { runScriptFile, isScriptPath, setLineRunner } from './linux/scripts';
 import './linux/commands/files';
 import './linux/commands/copymove';
@@ -16,9 +20,11 @@ import './linux/commands/users';
 import './linux/commands/system';
 import './linux/commands/network';
 import './linux/commands/accounts';
+import './linux/commands/printf';
 import { helpOptionOutput } from './linux/commands/help';
 import { syncKernelFiles } from './linux/virtualFs';
 import { expandArgs } from './linux/glob';
+import { isNotSimulatedLinux } from './notSimulated';
 
 export interface LinuxExecutionResult extends StageResult {}
 
@@ -45,8 +51,11 @@ export function executeLinuxLine(
 
 /** Runs a line without recording it in history (used for scripts and `bash -c`). */
 export function runLinuxLine(line: string, cwd: string, fs: FileNode, state: SystemState, depth: number): LinuxExecutionResult {
-  return runChain(splitChainedCommandLine(line, 'bash'), cwd, fs, state,
-    (stage, c, f, s) => executeLinuxPipeline(stage, c, f, s, depth));
+  return runChain(splitBashChain(line), cwd, fs, state, (stage, c, f, s) => {
+    const res = executeLinuxPipeline(stage, c, f, s, depth);
+    // $? reads the status of the last pipeline
+    return { ...res, newState: { ...res.newState, lastExitCode: res.exitCode } };
+  });
 }
 
 /** Shell-level (non-sudo) identity used for redirects: the shell opens files, not the command. */
@@ -75,6 +84,7 @@ function openRedirect(
   fs: FileNode,
   state: SystemState
 ): { opened?: OpenedRedirect; error?: string; explanation?: string } {
+  if (target === '') return { error: 'bash: : No such file or directory' };
   const path = normalizePath(target, cwd, false);
   if (path === DEV_NULL) return { opened: { path: null, append: false } };
   const id = shellIdentity(fs, state);
@@ -85,15 +95,54 @@ function openRedirect(
   if (existing) {
     if (type === '>') writeFileContent(existing, '');
   } else {
-    createNode(fs, path, 'file', '', false, id.user, id.group, newFileMode(state));
+    createInDir(fs, path, 'file', '', id.user, id.group, newFileMode(state));
   }
   return { opened: { path, append: true } };
+}
+
+/** Opens `< file` for reading as the shell user. */
+function openInput(target: string, cwd: string, fs: FileNode, state: SystemState): { text?: string; isDir?: boolean; error?: string; explanation?: string } {
+  const path = normalizePath(target, cwd, false);
+  if (path === DEV_NULL) return { text: '' };
+  const id = shellIdentity(fs, state);
+  const node = getNodeAtPath(fs, path, false);
+  if (id.user !== 'root' && findTraversalDenial(fs, path, id.user, id.groups)) {
+    return { error: `bash: ${target}: Permission denied` };
+  }
+  if (!node) return { error: `bash: ${target}: No such file or directory` };
+  if (node.type === 'directory') return { isDir: true };
+  const check = canReadNode(fs, path, id.user, id.groups, false);
+  if (!check.ok) return { error: `bash: ${target}: ${check.error || 'Permission denied'}`, explanation: check.explanation };
+  return { text: node.content ?? '' };
 }
 
 function writeRedirect(fs: FileNode, target: OpenedRedirect, content: string): void {
   if (!target.path) return;
   const node = getNodeAtPath(fs, target.path, false);
   if (node && node.type === 'file') writeFileContent(node, content, target.append);
+}
+
+/** Where a file descriptor points: the stage's stdout (pipe or terminal), the terminal's stderr, or a file. */
+type Sink = { kind: 'out' } | { kind: 'err' } | { kind: 'file'; file: OpenedRedirect };
+
+/** The expander bash uses for one command: variables, ~, and $(...) / `...` run in a subshell. */
+function makeExpander(
+  env: { cwd: string; fs: FileNode; state: SystemState; depth: number },
+  errors: string[]
+): Expander {
+  return {
+    lookup: name => shellVariable(name, env.cwd, env.fs, env.state),
+    assign: (name, value) => { env.state = { ...env.state, envVars: { ...env.state.envVars, [name]: value } }; },
+    home: user => (user === '' ? shellVariable('HOME', env.cwd, env.fs, env.state) : homeOf(env.fs, user)),
+    substitute: src => {
+      if (env.depth >= 8) throw new ExpansionError('bash: maximum nesting level exceeded');
+      // A subshell: file changes are real, but its variables and directory do not come back
+      const res = runLinuxLine(src, env.cwd, env.fs, env.state, env.depth + 1);
+      env.fs = res.newFs;
+      if (res.stderr) errors.push(res.stderr);
+      return res.stdout;
+    },
+  };
 }
 
 /**
@@ -107,7 +156,7 @@ function executeLinuxPipeline(
   state: SystemState,
   depth: number
 ): LinuxExecutionResult {
-  const stages = parsePipelinedLine(pipelineStr);
+  const stages = parseBashPipeline(pipelineStr);
   let input = '';
   let activeFs = cloneFileSystem(fs);
   let activeState = cloneState(state);
@@ -118,66 +167,126 @@ function executeLinuxPipeline(
   const notes: string[] = [];
 
   for (const stage of stages) {
-    let stdoutTarget: OpenedRedirect | undefined;
-    let stderrTarget: OpenedRedirect | undefined;
-    let res: StageResult;
+    let fd1: Sink = { kind: 'out' };
+    let fd2: Sink = { kind: 'err' };
+    let stdin = input;
+    const expandErrors: string[] = [];
+    const envRef = { cwd: currentCwd, fs: activeFs, state: activeState, depth };
+    const ex = makeExpander(envRef, expandErrors);
+    const fail = (stderr: string, code: number, explanation?: string): StageResult => {
+      const r: StageResult = { stdout: '', stderr, exitCode: code, newCwd: currentCwd, newFs: activeFs, newState: activeState };
+      if (explanation) r.explanation = explanation;
+      return r;
+    };
+    /** Expands a word, keeping the file system and variables a substitution or ${X:=y} changed. */
+    const expanding = <T>(fn: () => T): T | StageResult => {
+      try {
+        return fn();
+      } catch (e) {
+        if (e instanceof ExpansionError) return fail(e.message, 1);
+        throw e;
+      } finally {
+        activeFs = envRef.fs;
+        activeState = envRef.state;
+      }
+    };
+    const isResult = (v: unknown): v is StageResult => typeof v === 'object' && v !== null && 'exitCode' in v;
 
-    const redirectError = (() => {
-      const er = stage.stderrRedirect;
-      if (er && er.type !== 'merge') {
-        const o = openRedirect(er.target, er.type, currentCwd, activeFs, activeState);
-        if (!o.opened) return o;
-        stderrTarget = o.opened;
+    const res = ((): StageResult => {
+      // Expansion: leading NAME=value words, then the command words, then redirect targets
+      const assignments: { name: string; value: string }[] = [];
+      const fields: Field[] = [];
+      const words = expanding(() => {
+        let i = 0;
+        for (; i < stage.words.length; i++) {
+          const a = assignmentOf(stage.words[i]);
+          if (!a) break;
+          assignments.push({ name: a.name, value: expandToString(a.value, ex) });
+        }
+        for (; i < stage.words.length; i++) fields.push(...expandWord(stage.words[i], ex));
+        return true;
+      });
+      if (isResult(words)) return words;
+
+      for (const r of stage.redirs) {
+        let target = '';
+        if (r.op !== '>&') {
+          if (!r.target) return fail("bash: syntax error near unexpected token `newline'", 2);
+          const word = r.target;
+          const t = expanding(() => expandToString(word, ex));
+          if (isResult(t)) return t;
+          target = t;
+        }
+        if (r.op === '<') {
+          const o = openInput(target, currentCwd, activeFs, activeState);
+          if (o.error) return fail(o.error, 1, o.explanation);
+          if (o.isDir) return fail(`${fields[0]?.text ?? 'bash'}: -: Is a directory`, 1);
+          if (r.fd === 0) stdin = o.text ?? '';
+        } else if (r.op === '<<<') {
+          if (r.fd === 0) stdin = target;
+        } else if (r.op === '>&') {
+          const from: Sink | null = r.dupFrom === 1 ? fd1 : r.dupFrom === 2 ? fd2 : null;
+          if (!from) return fail(`bash: ${r.dupFrom}: Bad file descriptor`, 1);
+          if (r.fd === 1) fd1 = from;
+          else if (r.fd === 2) fd2 = from;
+        } else {
+          const o = openRedirect(target, r.op === '>>' || r.op === '&>>' ? '>>' : '>', currentCwd, activeFs, activeState);
+          if (!o.opened) return fail(o.error!, 1, o.explanation);
+          const sink: Sink = { kind: 'file', file: o.opened };
+          if (r.op === '&>' || r.op === '&>>') { fd1 = sink; fd2 = sink; }
+          else if (r.fd === 1) fd1 = sink;
+          else if (r.fd === 2) fd2 = sink;
+        }
       }
-      if (stage.redirect) {
-        const o = openRedirect(stage.redirect.target, stage.redirect.type, currentCwd, activeFs, activeState);
-        if (!o.opened) return o;
-        stdoutTarget = o.opened;
+      if (stage.pipeStderr) fd2 = fd1;
+
+      if (fields.length === 0) {
+        // Only assignments (or a bare redirect such as "> file"): set the variables in this shell
+        if (assignments.length) {
+          activeState = { ...activeState, envVars: { ...activeState.envVars } };
+          for (const a of assignments) activeState.envVars[a.name] = a.value;
+        }
+        return { stdout: '', stderr: '', exitCode: 0, newCwd: currentCwd, newFs: activeFs, newState: activeState };
       }
-      return null;
+      const rest = fields.slice(1);
+      const cmd: ParsedCommand = {
+        raw: pipelineStr,
+        name: fields[0].text,
+        args: rest.map(f => f.text),
+        argGlobs: rest.some(f => f.glob) ? rest.map(f => f.glob) : undefined,
+      };
+      if (!assignments.length) return runLinuxCommand(cmd, currentCwd, activeFs, activeState, stdin, depth);
+      // NAME=value cmd: the variables are set for this command only
+      const saved = activeState.envVars;
+      const runState = { ...activeState, envVars: { ...saved, ...Object.fromEntries(assignments.map(a => [a.name, a.value])) } };
+      const out = runLinuxCommand(cmd, currentCwd, activeFs, runState, stdin, depth);
+      return { ...out, newState: { ...out.newState, envVars: saved } };
     })();
 
-    if (redirectError) {
-      // The shell could not open a redirect, so the command never runs
-      res = { stdout: '', stderr: redirectError.error!, exitCode: 1, newCwd: currentCwd, newFs: activeFs, newState: activeState };
-      if (redirectError.explanation) res.explanation = redirectError.explanation;
-    } else {
-      res = runLinuxCommand(stage, currentCwd, activeFs, activeState, input, depth);
-    }
     currentCwd = res.newCwd;
     activeFs = res.newFs;
     activeState = res.newState;
     exitCode = res.exitCode;
+    errors.push(...expandErrors);
 
-    let out = res.stdout;
-    let err = res.stderr;
-    let note = res.explanation;
-    const merge = stage.stderrRedirect?.type === 'merge' ? stage.stderrRedirect : undefined;
-    if (merge && stdoutTarget && !merge.afterStdoutRedirect) {
-      // 2>&1 > file: stderr took stdout's original target (terminal or pipe) before stdout moved to the file
-      writeRedirect(activeFs, stdoutTarget, out);
-      out = err;
-      err = '';
-    } else {
-      if (merge) {
-        // 2>&1 with stdout already redirected, or not redirected at all: stderr follows stdout
-        out = [out, err].filter(Boolean).join('\n');
-        err = '';
-      } else if (stderrTarget) {
-        writeRedirect(activeFs, stderrTarget, err);
-        err = '';
-        note = undefined; // the learner never sees the message, so no note either
-      }
-      if (stdoutTarget) {
-        writeRedirect(activeFs, stdoutTarget, out);
-        out = '';
-      }
-    }
-    // The message went to a file, so the learner never sees it, and there is nothing to explain
-    if (merge && stdoutTarget && merge.afterStdoutRedirect) note = undefined;
-    if (err) errors.push(err);
+    // Route the command's output to where its descriptors point
+    const toOut: string[] = [];
+    const toErr: string[] = [];
+    const toFile = new Map<OpenedRedirect, string[]>();
+    const send = (sink: Sink, text: string) => {
+      if (!text) return;
+      if (sink.kind === 'out') toOut.push(text);
+      else if (sink.kind === 'err') toErr.push(text);
+      else toFile.set(sink.file, [...(toFile.get(sink.file) ?? []), text]);
+    };
+    send(fd1, res.stdout);
+    send(fd2, res.stderr);
+    for (const [file, texts] of toFile) writeRedirect(activeFs, file, texts.join('\n'));
+    // A message that went to a file is never seen, so there is nothing to explain
+    const note = fd2.kind === 'file' ? undefined : res.explanation;
+    if (toErr.length) errors.push(toErr.join('\n'));
     if (note && !notes.includes(note)) notes.push(note);
-    input = out;
+    input = toOut.join('\n');
   }
 
   const result: LinuxExecutionResult = {
@@ -264,13 +373,7 @@ function runLinuxCommand(
 
   const ctx = new LinuxContext(name, args, stdin, cwd, fs, runState, isSudo);
   ctx.depth = depth;
-  if (!name) return ctx.ok(); // a bare redirect such as "> file"
-  const assignment = name.match(/^([A-Za-z_]\w*)=(.*)$/s);
-  if (assignment && args.length === 0) {
-    // NAME=value sets a shell variable (kept with the environment so echo $NAME sees it)
-    ctx.state.envVars = { ...ctx.state.envVars, [assignment[1]]: assignment[2] };
-    return ctx.ok();
-  }
+  if (!name) return ctx.fail('bash: : command not found', 127);
 
   let res: StageResult;
   const binHelp = /^\/(usr\/)?s?bin\/[^/]+$/.test(name) ? helpOptionOutput(name.slice(name.lastIndexOf('/') + 1), args) : null;
@@ -280,7 +383,10 @@ function runLinuxCommand(
     res = runScriptFile(ctx, name, true);
   } else {
     const handler = linuxCommands.get(name);
-    if (!handler) return ctx.fail(`bash: ${name}: command not found`, 127);
+    if (!handler) {
+      if (isNotSimulatedLinux(name)) return ctx.fail(`bash: ${name}: this command exists on real systems but is not simulated here`, 127);
+      return ctx.fail(`bash: ${name}: command not found`, 127);
+    }
     // --help is answered here, from the docs, so the command itself never runs
     const help = helpOptionOutput(name, args);
     res = help ? ctx.result(help.stdout, help.stderr, help.exitCode) : handler(ctx);
