@@ -154,6 +154,107 @@ export function checkNodePermission(
 }
 
 /**
+ * Result of a permission check. On denial, `error` is the errno text the command prints
+ * ("Permission denied", "Operation not permitted", ...) and `explanation` is one plain
+ * sentence for learners saying which check failed and why.
+ */
+export interface AccessCheck {
+  ok: boolean;
+  error?: string;
+  explanation?: string;
+}
+
+type PermMode = 'r' | 'w' | 'x';
+
+const PERM_NAME: Record<PermMode, string> = { r: 'read (r)', w: 'write (w)', x: 'execute (x)' };
+
+/** "drwx------ (700)" style rendering of a node's mode. */
+export function describeMode(node: FileNode): string {
+  const type = node.type === 'directory' ? 'd' : '-';
+  return `${type}${node.permissions.slice(-9)} (${modeBits(node).toString(8).padStart(3, '0')})`;
+}
+
+/** "You are 'student' (groups: student, adm, sudo)." */
+export function describeIdentity(user: string, groups: string[]): string {
+  return `You are '${user}' (groups: ${groups.join(', ')}).`;
+}
+
+/**
+ * Which permission triplet applies to the user (owner, group or other) and a phrase saying why.
+ * Like the kernel, only the first matching class is used, even if a later one would allow more.
+ */
+function permissionClass(node: FileNode, user: string, groups: string[]): { bits: string; phrase: string } {
+  const p = node.permissions.slice(-9);
+  if (user === node.owner) {
+    return { bits: p.slice(0, 3), phrase: 'you are its owner, so the owner bits' };
+  }
+  if (groups.includes(node.group)) {
+    return { bits: p.slice(3, 6), phrase: `you are not its owner but you are in group '${node.group}', so the group bits` };
+  }
+  return { bits: p.slice(6, 9), phrase: `you are not its owner and not in group '${node.group}', so the 'other' bits` };
+}
+
+/**
+ * One-sentence explanation of a failed r/w/x check on `node`.
+ * `purpose` (optional) leads the sentence, e.g. "To create /root/x you need write (w) on its directory /root, which".
+ */
+export function explainNodeDenial(
+  node: FileNode,
+  path: string,
+  user: string,
+  groups: string[],
+  mode: PermMode,
+  purpose?: string
+): string {
+  const { bits, phrase } = permissionClass(node, user, groups);
+  const subject = purpose
+    ? `${purpose} is owned by ${node.owner}:${node.group} with mode ${describeMode(node)}`
+    : `${path} is owned by ${node.owner}:${node.group} with mode ${describeMode(node)}`;
+  return `${describeIdentity(user, groups)} ${subject}; ${phrase} (${bits}) apply, and they do not include ${PERM_NAME[mode]}.`;
+}
+
+/**
+ * Finds the first directory on the way to `path` that the user cannot search (x).
+ * The final path component itself is not checked. Returns null when the path is traversable
+ * (or when an intermediate directory is missing, which callers report as "No such file").
+ */
+export function findTraversalDenial(
+  root: FileNode,
+  path: string,
+  user: string,
+  group: string | string[]
+): { path: string; node: FileNode } | null {
+  if (user === 'root') return null;
+  const parts = path.split('/').filter(Boolean);
+  let current: FileNode = root;
+  if (!checkNodePermission(current, user, group, 'x')) return { path: '/', node: current };
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (!current.children || !current.children[parts[i]]) return null;
+    current = current.children[parts[i]];
+    if (current.type === 'directory' && !checkNodePermission(current, user, group, 'x')) {
+      return { path: '/' + parts.slice(0, i + 1).join('/'), node: current };
+    }
+  }
+  return null;
+}
+
+const asGroups = (group: string | string[]) => (Array.isArray(group) ? group : [group]);
+
+function traversalDenied(root: FileNode, path: string, user: string, group: string | string[]): AccessCheck | null {
+  const blocked = findTraversalDenial(root, path, user, group);
+  if (!blocked) return null;
+  const groups = asGroups(group);
+  return {
+    ok: false,
+    error: 'Permission denied',
+    explanation: explainNodeDenial(blocked.node, blocked.path, user, groups, 'x',
+      `To reach ${path} you need execute (x) on every directory along the path, but ${blocked.path}`),
+  };
+}
+
+const parentOf = (path: string) => '/' + path.split('/').filter(Boolean).slice(0, -1).join('/');
+
+/**
  * Checks if a path can be traversed (x permission on all parent directories)
  */
 export function checkPathTraversal(
@@ -163,24 +264,63 @@ export function checkPathTraversal(
   group: string | string[],
   isWindows = false
 ): boolean {
-  if (isWindows || user === 'root') return true;
+  if (isWindows) return true;
+  return findTraversalDenial(root, path, user, group) === null;
+}
 
-  const parts = path.split('/').filter(Boolean);
-  let current: FileNode = root;
+/**
+ * Checks one permission on a node the caller already found, with an explanation on denial.
+ * `purpose` is passed to explainNodeDenial (see there).
+ */
+export function checkAccess(
+  node: FileNode,
+  path: string,
+  user: string,
+  group: string | string[],
+  mode: PermMode,
+  purpose?: string
+): AccessCheck {
+  if (checkNodePermission(node, user, group, mode)) return { ok: true };
+  const check: AccessCheck = { ok: false, error: 'Permission denied' };
+  if (user !== 'root') check.explanation = explainNodeDenial(node, path, user, asGroups(group), mode, purpose);
+  return check;
+}
 
-  // Root directory traversal
-  if (!checkNodePermission(current, user, group, 'x')) return false;
+/**
+ * Size of a file in bytes as shown by ls/dir. Content is the source of truth, so the
+ * size stays right after redirects and edits.
+ */
+export function fileSize(node: FileNode): number {
+  if (node.type === 'directory') return node.size || 4096;
+  return node.content !== undefined ? node.content.length : (node.size ?? 0);
+}
 
-  for (let i = 0; i < parts.length - 1; i++) {
-    const seg = parts[i];
-    if (!current.children || !current.children[seg]) return true; // caller reports "No such file or directory"
-    current = current.children[seg];
-    if (current.type === 'directory' && !checkNodePermission(current, user, group, 'x')) {
-      return false;
-    }
-  }
+/**
+ * Replaces or appends file content, keeping size and modification time in sync.
+ * Appending joins with `separator` when both sides are non-empty (contents are stored
+ * without a trailing newline).
+ */
+export function writeFileContent(node: FileNode, content: string, append = false, separator = '\n'): void {
+  const prev = node.content || '';
+  node.content = append ? prev + (prev && content ? separator : '') + content : content;
+  node.size = node.content.length;
+  node.updatedAt = new Date().toISOString();
+}
 
-  return true;
+/**
+ * Permission bits of a node as a real number (e.g. 0o4755), read from its symbolic string.
+ */
+export function modeBits(node: FileNode): number {
+  const sym = node.permissions.slice(-9);
+  const base = parseInt(String(symbolicToOctal(sym)).padStart(3, '0'), 8);
+  return (getSpecialBits(sym) << 9) | base;
+}
+
+/**
+ * Converts real mode bits (e.g. 0o640) to the decimal-looking octal field FileNode uses (640).
+ */
+export function toOctalField(mode: number): number {
+  return parseInt(mode.toString(8), 10);
 }
 
 /**
@@ -369,21 +509,18 @@ export function canReadNode(
   user: string,
   group: string | string[],
   isWindows = false
-): { ok: boolean; error?: string } {
+): AccessCheck {
   if (isWindows || user === 'root') return { ok: true };
-  if (!checkPathTraversal(root, path, user, group, isWindows)) {
-    return { ok: false, error: 'Permission denied' };
-  }
+  const blocked = traversalDenied(root, path, user, group);
+  if (blocked) return blocked;
   const node = getNodeAtPath(root, path, isWindows);
   if (!node) return { ok: false, error: 'No such file or directory' };
-  if (!checkNodePermission(node, user, group, 'r')) {
-    return { ok: false, error: 'Permission denied' };
-  }
-  return { ok: true };
+  return checkAccess(node, path, user, group, 'r');
 }
 
 /**
- * Validates write access on a path for a given user/group
+ * Validates write access on a path for a given user/group. For a path that does not exist
+ * yet, checks that the parent directory allows creating entries (w and x).
  */
 export function canWriteNode(
   root: FileNode,
@@ -391,30 +528,20 @@ export function canWriteNode(
   user: string,
   group: string | string[],
   isWindows = false
-): { ok: boolean; error?: string } {
+): AccessCheck {
   if (isWindows || user === 'root') return { ok: true };
-  if (!checkPathTraversal(root, path, user, group, isWindows)) {
-    return { ok: false, error: 'Permission denied' };
-  }
+  const blocked = traversalDenied(root, path, user, group);
+  if (blocked) return blocked;
   const node = getNodeAtPath(root, path, isWindows);
-  if (node) {
-    if (!checkNodePermission(node, user, group, 'w')) {
-      return { ok: false, error: 'Permission denied' };
-    }
-    return { ok: true };
-  }
+  if (node) return checkAccess(node, path, user, group, 'w');
 
-  // File does not exist yet: check parent directory write and search permissions
-  const parts = path.split('/').filter(Boolean);
-  const parentPath = '/' + parts.slice(0, parts.length - 1).join('/');
+  const parentPath = parentOf(path);
   const parent = getNodeAtPath(root, parentPath, isWindows);
   if (!parent || parent.type !== 'directory') {
     return { ok: false, error: 'No such file or directory' };
   }
-  if (!checkNodePermission(parent, user, group, 'w')) {
-    return { ok: false, error: 'Permission denied' };
-  }
-  return { ok: true };
+  return checkAccess(parent, parentPath, user, group, 'w',
+    `To create ${path} you need write (w) on its directory, but ${parentPath}`);
 }
 
 /**
@@ -426,436 +553,36 @@ export function canDeleteNode(
   user: string,
   group: string | string[],
   isWindows = false
-): { ok: boolean; error?: string } {
+): AccessCheck {
   if (isWindows || user === 'root') return { ok: true };
   const parts = path.split('/').filter(Boolean);
   if (parts.length === 0) return { ok: false, error: 'Cannot remove root directory' };
 
-  const parentPath = '/' + parts.slice(0, parts.length - 1).join('/');
+  const blocked = traversalDenied(root, path, user, group);
+  if (blocked) return blocked;
+  const parentPath = parentOf(path);
   const parent = getNodeAtPath(root, parentPath, isWindows);
   if (!parent || parent.type !== 'directory') {
     return { ok: false, error: 'No such file or directory' };
   }
 
-  if (!checkNodePermission(parent, user, group, 'w')) {
-    return { ok: false, error: 'Permission denied' };
-  }
+  const writable = checkAccess(parent, parentPath, user, group, 'w',
+    `Removing ${path} needs write (w) on the directory that contains it, but ${parentPath}`);
+  if (!writable.ok) return writable;
 
   const node = getNodeAtPath(root, path, isWindows);
   if (!node) return { ok: false, error: 'No such file or directory' };
 
   // Sticky bit (t) on parent directory: only file owner or directory owner (or root) may delete
   const isSticky = parent.permissions.endsWith('t') || parent.permissions.endsWith('T');
-  if (isSticky) {
-    if (user !== node.owner && user !== parent.owner) {
-      return { ok: false, error: 'Operation not permitted' };
-    }
+  if (isSticky && user !== node.owner && user !== parent.owner) {
+    return {
+      ok: false,
+      error: 'Operation not permitted',
+      explanation: `${describeIdentity(user, asGroups(group))} ${parentPath} has the sticky bit set (${describeMode(parent)}), so even though you may write to it, only the file's owner (${node.owner}), the directory's owner (${parent.owner}) or root may delete ${path}.`,
+    };
   }
-
   return { ok: true };
 }
 
-/**
- * Creates default Linux root filesystem
- */
-export function createDefaultLinuxFs(): FileNode {
-  return {
-    name: '/',
-    type: 'directory',
-    permissions: 'rwxr-xr-x',
-    octal: 755,
-    owner: 'root',
-    group: 'root',
-    updatedAt: '2026-10-19T00:00:00Z',
-    children: {
-      bin: {
-        name: 'bin',
-        type: 'directory',
-        permissions: 'rwxr-xr-x',
-        octal: 755,
-        owner: 'root',
-        group: 'root',
-        updatedAt: '2026-10-19T00:00:00Z',
-        children: {
-          bash: { name: 'bash', type: 'file', content: '#!/bin/bash binary', permissions: 'rwxr-xr-x', octal: 755, owner: 'root', group: 'root', updatedAt: '2026-10-19T00:00:00Z' },
-          ls: { name: 'ls', type: 'file', content: 'ls binary', permissions: 'rwxr-xr-x', octal: 755, owner: 'root', group: 'root', updatedAt: '2026-10-19T00:00:00Z' },
-          cat: { name: 'cat', type: 'file', content: 'cat binary', permissions: 'rwxr-xr-x', octal: 755, owner: 'root', group: 'root', updatedAt: '2026-10-19T00:00:00Z' },
-          systemctl: { name: 'systemctl', type: 'file', content: 'systemctl binary', permissions: 'rwxr-xr-x', octal: 755, owner: 'root', group: 'root', updatedAt: '2026-10-19T00:00:00Z' }
-        }
-      },
-      etc: {
-        name: 'etc',
-        type: 'directory',
-        permissions: 'rwxr-xr-x',
-        octal: 755,
-        owner: 'root',
-        group: 'root',
-        updatedAt: '2026-10-19T00:00:00Z',
-        children: {
-          passwd: {
-            name: 'passwd',
-            type: 'file',
-            permissions: 'rw-r--r--',
-            octal: 644,
-            owner: 'root',
-            group: 'root',
-            updatedAt: '2026-10-19T00:00:00Z',
-            content: `root:x:0:0:root:/root:/bin/bash\ndaemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin\nbin:x:2:2:bin:/bin:/usr/sbin/nologin\nsys:x:3:3:sys:/dev:/usr/sbin/nologin\nstudent:x:1000:1000:Student User,,,:/home/student:/bin/bash\nnginx:x:1001:1001:Nginx Web Server,,,:/var/www:/usr/sbin/nologin`
-          },
-          group: {
-            name: 'group',
-            type: 'file',
-            permissions: 'rw-r--r--',
-            octal: 644,
-            owner: 'root',
-            group: 'root',
-            updatedAt: '2026-10-19T00:00:00Z',
-            content: `root:x:0:\nadm:x:4:syslog,student\nsudo:x:27:student\nstudent:x:1000:\nfinance:x:1002:\ndevelopers:x:1003:\nnginx:x:1001:`
-          },
-          shadow: {
-            name: 'shadow',
-            type: 'file',
-            permissions: '----------',
-            octal: 0,
-            owner: 'root',
-            group: 'shadow',
-            updatedAt: '2026-10-19T00:00:00Z',
-            content: `root:$6$rounds=4096$salt$hashedpassword:19000:0:99999:7:::\nstudent:$6$rounds=4096$salt$studentpasshash:19000:0:99999:7:::\nnginx:*:19000:0:99999:7:::`
-          },
-          fstab: {
-            name: 'fstab',
-            type: 'file',
-            permissions: 'rw-r--r--',
-            octal: 644,
-            owner: 'root',
-            group: 'root',
-            updatedAt: '2026-10-19T00:00:00Z',
-            content: `UUID=8d6a8f1e-3a9b-4c22-b5e1-8f432176b912 / ext4 defaults,noatime 0 1\nUUID=4a7b9c1d-2e3f-4a5b-6c7d-8e9f0a1b2c3d /boot ext4 defaults 0 2\nUUID=12345678-90ab-cdef-1234-567890abcdef swap swap defaults 0 0`
-          },
-          resolv: {
-            name: 'resolv.conf',
-            type: 'file',
-            permissions: 'rw-r--r--',
-            octal: 644,
-            owner: 'root',
-            group: 'root',
-            updatedAt: '2026-10-19T00:00:00Z',
-            content: `nameserver 1.1.1.1\nnameserver 8.8.8.8\nsearch corp.internal`
-          },
-          hosts: {
-            name: 'hosts',
-            type: 'file',
-            permissions: 'rw-r--r--',
-            octal: 644,
-            owner: 'root',
-            group: 'root',
-            updatedAt: '2026-10-19T00:00:00Z',
-            content: `127.0.0.1 localhost\n127.0.1.1 lpi-lab\n192.168.1.10 gateway.corp.internal\n192.168.1.50 fileserver.corp.internal`
-          }
-        }
-      },
-      home: {
-        name: 'home',
-        type: 'directory',
-        permissions: 'rwxr-xr-x',
-        octal: 755,
-        owner: 'root',
-        group: 'root',
-        updatedAt: '2026-10-19T00:00:00Z',
-        children: {
-          student: {
-            name: 'student',
-            type: 'directory',
-            permissions: 'rwxr-xr-x',
-            octal: 755,
-            owner: 'student',
-            group: 'student',
-            updatedAt: '2026-10-19T00:00:00Z',
-            children: {
-              'notes.txt': {
-                name: 'notes.txt',
-                type: 'file',
-                permissions: 'rw-r--r--',
-                octal: 644,
-                owner: 'student',
-                group: 'student',
-                updatedAt: '2026-10-19T00:00:00Z',
-                content: `LPIC-1 Study Notes:\n- Remember: chmod 755 gives rwxr-xr-x\n- Umask 022 gives default 755 for dirs and 644 for files\n- Tar syntax: c=create, x=extract, v=verbose, z=gzip, f=file`
-              },
-              scripts: {
-                name: 'scripts',
-                type: 'directory',
-                permissions: 'rwxr-xr-x',
-                octal: 755,
-                owner: 'student',
-                group: 'student',
-                updatedAt: '2026-10-19T00:00:00Z',
-                children: {
-                  'backup.sh': {
-                    name: 'backup.sh',
-                    type: 'file',
-                    permissions: 'rwxr-xr-x',
-                    octal: 755,
-                    owner: 'student',
-                    group: 'student',
-                    updatedAt: '2026-10-19T00:00:00Z',
-                    content: `#!/bin/bash\necho "Running nightly backup..."\ntar -czf /tmp/backup.tar.gz /home/student/notes.txt`
-                  }
-                }
-              }
-            }
-          }
-        }
-      },
-      var: {
-        name: 'var',
-        type: 'directory',
-        permissions: 'rwxr-xr-x',
-        octal: 755,
-        owner: 'root',
-        group: 'root',
-        updatedAt: '2026-10-19T00:00:00Z',
-        children: {
-          log: {
-            name: 'log',
-            type: 'directory',
-            permissions: 'rwxr-xr-x',
-            octal: 755,
-            owner: 'root',
-            group: 'root',
-            updatedAt: '2026-10-19T00:00:00Z',
-            children: {
-              'syslog': {
-                name: 'syslog',
-                type: 'file',
-                permissions: 'rw-r-----',
-                octal: 640,
-                owner: 'root',
-                group: 'adm',
-                updatedAt: '2026-10-19T00:00:00Z',
-                content: `Oct 19 10:14:02 lpi-lab systemd[1]: Started Daily apt upgrade and clean activities.\nOct 19 10:15:30 lpi-lab kernel: [ 45.120] e1000e: eth0 NIC Link is Up 1000 Mbps Full Duplex\nOct 19 10:20:11 lpi-lab sshd[2410]: Server listening on 0.0.0.0 port 22.\nOct 19 10:21:44 lpi-lab nginx[3100]: [error] 3100#3100: bind() to 0.0.0.0:80 failed (98: Address already in use)`
-              },
-              'auth.log': {
-                name: 'auth.log',
-                type: 'file',
-                permissions: 'rw-r-----',
-                octal: 640,
-                owner: 'root',
-                group: 'adm',
-                updatedAt: '2026-10-19T00:00:00Z',
-                content: `Oct 19 09:00:01 lpi-lab CRON[1844]: pam_unix(cron:session): session opened for user root\nOct 19 09:12:33 lpi-lab sshd[1902]: Failed password for invalid user admin from 198.51.100.44 port 54122 ssh2\nOct 19 09:12:35 lpi-lab sshd[1904]: Failed password for invalid user admin from 198.51.100.44 port 54124 ssh2\nOct 19 09:12:38 lpi-lab sshd[1906]: Failed password for root from 198.51.100.44 port 54128 ssh2\nOct 19 09:15:20 lpi-lab sudo: student : TTY=pts/0 ; PWD=/home/student ; USER=root ; COMMAND=/usr/bin/apt update`
-              }
-            }
-          }
-        }
-      },
-      root: {
-        name: 'root',
-        type: 'directory',
-        permissions: 'rwx------',
-        octal: 700,
-        owner: 'root',
-        group: 'root',
-        updatedAt: '2026-10-19T00:00:00Z',
-        children: {
-          '.bashrc': {
-            name: '.bashrc',
-            type: 'file',
-            permissions: 'rw-r--r--',
-            octal: 644,
-            owner: 'root',
-            group: 'root',
-            updatedAt: '2026-10-19T00:00:00Z',
-            content: '# ~/.bashrc: executed by bash(1) for non-login shells.\nexport PATH=$PATH:/usr/sbin',
-          }
-        }
-      },
-      tmp: {
-        name: 'tmp',
-        type: 'directory',
-        permissions: 'rwxrwxrwt',
-        octal: 1777,
-        owner: 'root',
-        group: 'root',
-        updatedAt: '2026-10-19T00:00:00Z',
-        children: {}
-      }
-    }
-  };
-}
-
-/**
- * Creates default Windows root filesystem
- */
-export function createDefaultWindowsFs(): FileNode {
-  return {
-    name: 'C:',
-    type: 'directory',
-    permissions: 'rwxr-xr-x',
-    octal: 755,
-    owner: 'SYSTEM',
-    group: 'Administrators',
-    updatedAt: '2026-10-19T00:00:00Z',
-    children: {
-      Windows: {
-        name: 'Windows',
-        type: 'directory',
-        permissions: 'rwxr-xr-x',
-        octal: 755,
-        owner: 'SYSTEM',
-        group: 'Administrators',
-        updatedAt: '2026-10-19T00:00:00Z',
-        children: {
-          System32: {
-            name: 'System32',
-            type: 'directory',
-            permissions: 'rwxr-xr-x',
-            octal: 755,
-            owner: 'SYSTEM',
-            group: 'Administrators',
-            updatedAt: '2026-10-19T00:00:00Z',
-            children: {
-              drivers: {
-                name: 'drivers',
-                type: 'directory',
-                permissions: 'rwxr-xr-x',
-                octal: 755,
-                owner: 'SYSTEM',
-                group: 'Administrators',
-                updatedAt: '2026-10-19T00:00:00Z',
-                children: {
-                  etc: {
-                    name: 'etc',
-                    type: 'directory',
-                    permissions: 'rwxr-xr-x',
-                    octal: 755,
-                    owner: 'SYSTEM',
-                    group: 'Administrators',
-                    updatedAt: '2026-10-19T00:00:00Z',
-                    children: {
-                      hosts: {
-                        name: 'hosts',
-                        type: 'file',
-                        permissions: 'rw-r--r--',
-                        octal: 644,
-                        owner: 'SYSTEM',
-                        group: 'Administrators',
-                        updatedAt: '2026-10-19T00:00:00Z',
-                        content: `# Copyright (c) 1993-2009 Microsoft Corp.\n127.0.0.1       localhost\n::1             localhost\n192.168.1.10    dc01.corp.local`
-                      }
-                    }
-                  }
-                }
-              },
-              GroupPolicy: {
-                name: 'GroupPolicy',
-                type: 'directory',
-                permissions: 'rwxr-xr-x',
-                octal: 755,
-                owner: 'SYSTEM',
-                group: 'Administrators',
-                updatedAt: '2026-10-19T00:00:00Z',
-                children: {
-                  'gpt.ini': {
-                    name: 'gpt.ini',
-                    type: 'file',
-                    permissions: 'rw-r--r--',
-                    octal: 644,
-                    owner: 'SYSTEM',
-                    group: 'Administrators',
-                    updatedAt: '2026-10-19T00:00:00Z',
-                    content: `[General]\nVersion=65538\ndisplayName=Default Domain Policy`
-                  }
-                }
-              }
-            }
-          }
-        }
-      },
-      Users: {
-        name: 'Users',
-        type: 'directory',
-        permissions: 'rwxr-xr-x',
-        octal: 755,
-        owner: 'SYSTEM',
-        group: 'Administrators',
-        updatedAt: '2026-10-19T00:00:00Z',
-        children: {
-          Administrator: {
-            name: 'Administrator',
-            type: 'directory',
-            permissions: 'rwx------',
-            octal: 700,
-            owner: 'Administrator',
-            group: 'Administrators',
-            updatedAt: '2026-10-19T00:00:00Z',
-            children: {}
-          },
-          Student: {
-            name: 'Student',
-            type: 'directory',
-            permissions: 'rwxr-xr-x',
-            octal: 755,
-            owner: 'Student',
-            group: 'Users',
-            updatedAt: '2026-10-19T00:00:00Z',
-            children: {
-              Desktop: {
-                name: 'Desktop',
-                type: 'directory',
-                permissions: 'rwxr-xr-x',
-                octal: 755,
-                owner: 'Student',
-                group: 'Users',
-                updatedAt: '2026-10-19T00:00:00Z',
-                children: {
-                  'TroubleTicket.txt': {
-                    name: 'TroubleTicket.txt',
-                    type: 'file',
-                    permissions: 'rw-r--r--',
-                    octal: 644,
-                    owner: 'Student',
-                    group: 'Users',
-                    updatedAt: '2026-10-19T00:00:00Z',
-                    content: `TICKET #8491: Sales Workstation Network Unreachable\nPriority: High\nUser reported intermittent error connecting to internal ERP server.\nPlease review IP configuration, gateway, DNS settings, and verify connectivity.`
-                  }
-                }
-              },
-              Documents: {
-                name: 'Documents',
-                type: 'directory',
-                permissions: 'rwxr-xr-x',
-                octal: 755,
-                owner: 'Student',
-                group: 'Users',
-                updatedAt: '2026-10-19T00:00:00Z',
-                children: {}
-              }
-            }
-          }
-        }
-      },
-      Logs: {
-        name: 'Logs',
-        type: 'directory',
-        permissions: 'rwxr-xr-x',
-        octal: 755,
-        owner: 'SYSTEM',
-        group: 'Administrators',
-        updatedAt: '2026-10-19T00:00:00Z',
-        children: {
-          'CBS.log': {
-            name: 'CBS.log',
-            type: 'file',
-            permissions: 'rw-r--r--',
-            octal: 644,
-            owner: 'SYSTEM',
-            group: 'Administrators',
-            updatedAt: '2026-10-19T00:00:00Z',
-            content: `2026-10-19 09:30:11, Info CBS Starting TrustedInstaller initialization.\n2026-10-19 09:30:14, Info CBS Loaded Servicing Stack v10.0.22621.1\n2026-10-19 09:30:18, Info CBS Checking System File Catalog integrity.`
-          }
-        }
-      }
-    }
-  };
-}
+export { createDefaultLinuxFs, createDefaultWindowsFs } from './defaultFs';
