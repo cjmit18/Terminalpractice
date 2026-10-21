@@ -170,6 +170,11 @@ function copyItem(ctx: WindowsContext): WindowsResult {
   if (!node) return ctx.fail(pathNotFound(ctx.raw, name, srcAbs));
   let destAbs = ctx.resolve(dest);
   if (ctx.node(destAbs)?.type === 'directory') destAbs = join(destAbs, leaf(srcAbs));
+  const from = srcAbs.replace(/\\+$/, '').toLowerCase();
+  const to = destAbs.replace(/\\+$/, '').toLowerCase();
+  if (node.type === 'directory' && (to === from || to.startsWith(`${from}\\`))) {
+    return ctx.fail(psError(ctx.raw, name, `Cannot copy '${srcAbs}' into itself or a subdirectory.`, 'WriteError', srcAbs, 'IOException', 'CopyItemIOError'));
+  }
   if (!ctx.node(parentOf(destAbs))) return ctx.fail(psError(ctx.raw, name, `Could not find a part of the path '${destAbs}'.`, 'WriteError', destAbs, 'DirectoryNotFoundException', 'CopyItemIOError'));
   const why = ctx.protectedReason(destAbs, 'write') ?? ctx.protectedReason(srcAbs, 'read');
   if (why) return ctx.fail(accessDenied(ctx.raw, name, destAbs), 1, why);
