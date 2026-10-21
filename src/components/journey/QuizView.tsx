@@ -251,7 +251,7 @@ const QuestionBlock: React.FC<QuestionBlockProps> = ({
             <label
               key={i}
               className={cx(
-                'flex flex-wrap items-center gap-x-3 gap-y-1 min-h-12 px-4 py-2.5 rounded-md border text-[15px] transition-colors',
+                'flex flex-wrap items-center gap-x-3 gap-y-1 min-h-12 px-4 py-2.5 rounded-md border text-[15px]',
                 checked ? 'cursor-default' : 'cursor-pointer',
                 tone,
               )}

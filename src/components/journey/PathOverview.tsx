@@ -24,11 +24,13 @@ interface PathOverviewProps {
   path: LearningPath;
   src: CompletionSource;
   modulesById: Map<string, ExamModule>;
+  /** Lab progress, to show "1 of 4 tasks done" on a lab you have started */
+  progress: Record<string, string[]>;
   onReset: () => void;
 }
 
 /** #/learn/<pathId>: the syllabus. */
-export const PathOverview: React.FC<PathOverviewProps> = ({ path, src, modulesById, onReset }) => {
+export const PathOverview: React.FC<PathOverviewProps> = ({ path, src, modulesById, progress, onReset }) => {
   const current = currentStageIndex(path, src);
   const next = nextStep(path, src);
   const started = pathStarted(path, src);
@@ -106,6 +108,7 @@ export const PathOverview: React.FC<PathOverviewProps> = ({ path, src, modulesBy
             onToggle={() => toggle(stage.id)}
             src={src}
             modulesById={modulesById}
+            progress={progress}
           />
         ))}
       </ol>
@@ -134,9 +137,10 @@ interface StageItemProps {
   onToggle: () => void;
   src: CompletionSource;
   modulesById: Map<string, ExamModule>;
+  progress: Record<string, string[]>;
 }
 
-const StageItem: React.FC<StageItemProps> = ({ path, stage, index, isCurrent, open, onToggle, src, modulesById }) => {
+const StageItem: React.FC<StageItemProps> = ({ path, stage, index, isCurrent, open, onToggle, src, modulesById, progress }) => {
   const unlocked = stageUnlocked(path, index, src);
   const done = stageComplete(path.id, stage, src);
   const doneCount = stage.steps.filter(s => stepComplete(path.id, s, src)).length;
@@ -203,7 +207,12 @@ const StageItem: React.FC<StageItemProps> = ({ path, stage, index, isCurrent, op
             const Icon = KIND_ICON[step.kind];
             const complete = stepComplete(path.id, step, src);
             const title = stepTitle(step, modulesById);
-            const meta = `${KIND_LABEL[step.kind]} · ${stepMinutes(step, modulesById)} min`;
+            let meta = `${KIND_LABEL[step.kind]} · ${stepMinutes(step, modulesById)} min`;
+            const mod = step.kind === 'lab' ? modulesById.get(step.moduleId) : undefined;
+            if (mod && !complete) {
+              const tasksDone = mod.objectives.filter(o => progress[mod.id]?.includes(o.id)).length;
+              if (tasksDone > 0) meta += ` · ${tasksDone} of ${mod.objectives.length} tasks done`;
+            }
             const inner = (
               <>
                 <Icon className={`w-4 h-4 mt-1 shrink-0 ${unlocked ? 'text-muted' : 'text-subtle'}`} aria-hidden="true" />

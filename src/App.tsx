@@ -322,6 +322,7 @@ export default function App() {
             path={activePath}
             src={src}
             modulesById={MODULES_BY_ID}
+            progress={progress}
             onReset={() => setJourney(j => resetPath(j, activePath.id))}
           />
         )}
