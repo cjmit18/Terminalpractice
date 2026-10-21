@@ -93,7 +93,7 @@ The app is static and works without any server. On Cloudflare, a small Worker ad
 
 ### Cloudflare Workers
 
-On this branch (`site/wayne-mitchell`), `wrangler.jsonc` describes the Worker `terminus-wm`, which serves https://terminus.wayne-mitchell.com (main deploys `terminuscli` for https://terminuscli.com): it serves `dist/` as static assets and runs `worker/index.ts` only for `/api/*` (`run_worker_first`), with a D1 database (`DB`) for accounts. Cloudflare Workers Builds is connected to this repository and builds on every push.
+On this branch (`site/wayne-mitchell`), `wrangler.jsonc` describes the Worker `terminus-wm`, which serves https://terminus.wayne-mitchell.com (main deploys `terminuscli` for https://terminuscli.com). This site keeps its own accounts database (`terminalpractice`): it serves `dist/` as static assets and runs `worker/index.ts` only for `/api/*` (`run_worker_first`), with a D1 database (`DB`) for accounts. Cloudflare Workers Builds is connected to this repository and builds on every push.
 
 - `npm run deploy`: applies new database migrations (`migrations/`) to the remote D1 database, then `wrangler deploy` (which runs `npm run build` first). Run `npx wrangler login` once before deploying from your machine. Set the same command as the **Deploy command** in the Workers Builds settings.
 - `npm run dev:cf`: the full stack locally (static app, Worker and a local D1 copy) at <http://localhost:8787>.
