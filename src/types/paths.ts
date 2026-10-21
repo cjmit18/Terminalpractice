@@ -4,7 +4,10 @@
  *
  * Rules the UI relies on:
  * - Path ids, stage ids and step ids are stable (they key saved progress). Step ids are unique within a path.
- * - A stage unlocks when every step of the previous stage is complete. Steps inside a stage can be done in any order.
+ * - Stages have a suggested order: a stage is suggested once every step of the previous stage is complete.
+ *   Nothing is locked; a later stage says "Suggested after ..." and can be opened anyway. Steps inside a stage
+ *   can be done in any order. Passing a stage's checkpoint marks that stage's lessons as known.
+ * - Question ids are unique within a path (they key the review queue's saved answers).
  * - A lesson is complete once the learner marks it read; a lab once all its objectives pass;
  *   a quiz once the learner scores at least `passMark` (fraction of questions, 0-1).
  */

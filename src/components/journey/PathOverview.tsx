@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ArrowRight, Check, ChevronDown, Lock } from 'lucide-react';
+import { ArrowRight, Check, ChevronDown } from 'lucide-react';
 import { ExamModule } from '../../types/modules';
 import { LearningPath, PathStage } from '../../types/paths';
 import {
@@ -11,7 +11,7 @@ import {
   pathPercent,
   pathStarted,
   stageComplete,
-  stageUnlocked,
+  stageSuggested,
   stepComplete,
   stepMinutes,
   stepTitle,
@@ -145,7 +145,8 @@ interface StageItemProps {
 }
 
 const StageItem: React.FC<StageItemProps> = ({ path, stage, index, isCurrent, open, onToggle, src, modulesById, progress }) => {
-  const unlocked = stageUnlocked(path, index, src);
+  // Ahead of the suggested order: shown a little quieter, but every step is open
+  const suggested = stageSuggested(path, index, src);
   const done = stageComplete(path.id, stage, src);
   const doneCount = stage.steps.filter(s => stepComplete(path.id, s, src)).length;
   const prevStage = index > 0 ? path.stages[index - 1] : null;
@@ -157,13 +158,6 @@ const StageItem: React.FC<StageItemProps> = ({ path, stage, index, isCurrent, op
       <span className="inline-flex items-center gap-1 font-medium text-ok">
         <Check className="w-4 h-4" aria-hidden="true" />
         Done
-      </span>
-    );
-  } else if (!unlocked) {
-    status = (
-      <span className="inline-flex items-center gap-1 text-muted">
-        <Lock className="w-3.5 h-3.5" aria-hidden="true" />
-        Locked
       </span>
     );
   } else {
@@ -189,7 +183,7 @@ const StageItem: React.FC<StageItemProps> = ({ path, stage, index, isCurrent, op
         >
           <span className="min-w-0">
             <span className="block text-sm text-muted">Stage {index + 1}</span>
-            <span className={`block text-base font-semibold ${unlocked ? 'text-text' : 'text-muted'}`}>{stage.title}</span>
+            <span className={`block text-base font-semibold ${suggested ? 'text-text' : 'text-muted'}`}>{stage.title}</span>
           </span>
           <span className="flex items-center gap-3 text-sm whitespace-nowrap self-start pt-0.5">
             {status}
@@ -199,8 +193,10 @@ const StageItem: React.FC<StageItemProps> = ({ path, stage, index, isCurrent, op
             />
           </span>
           <span className="col-span-2 block text-sm text-muted max-w-prose">{stage.goal}</span>
-          {!unlocked && prevStage && (
-            <span className="col-span-2 block text-sm text-muted">Finish {prevStage.title} to unlock.</span>
+          {!suggested && !done && prevStage && (
+            <span className="col-span-2 block text-sm text-muted">
+              Suggested after {prevStage.title}. Go ahead if you know it already.
+            </span>
           )}
         </button>
       </h3>
@@ -219,9 +215,9 @@ const StageItem: React.FC<StageItemProps> = ({ path, stage, index, isCurrent, op
             }
             const inner = (
               <>
-                <Icon className={`w-4 h-4 mt-1 shrink-0 ${unlocked ? 'text-muted' : 'text-subtle'}`} aria-hidden="true" />
+                <Icon className="w-4 h-4 mt-1 shrink-0 text-muted" aria-hidden="true" />
                 <span className="min-w-0 flex-1">
-                  <span className={`block text-[15px] ${unlocked ? 'text-text group-hover:text-accent' : 'text-muted'}`}>
+                  <span className="block text-[15px] text-text group-hover:text-accent">
                     {title}
                   </span>
                   <span className="block text-sm text-muted">{meta}</span>
@@ -232,27 +228,18 @@ const StageItem: React.FC<StageItemProps> = ({ path, stage, index, isCurrent, op
                       <Check className="w-4 h-4" aria-hidden="true" />
                       Done
                     </span>
-                  ) : !unlocked ? (
-                    <>
-                      <Lock className="w-4 h-4 text-subtle" aria-hidden="true" />
-                      <span className="sr-only">Locked</span>
-                    </>
                   ) : null}
                 </span>
               </>
             );
             return (
               <li key={step.id}>
-                {unlocked ? (
-                  <a
-                    href={learnHref(path.id, step.id)}
-                    className="group flex items-start gap-3 min-h-11 px-2 py-2.5 rounded-md hover:bg-surface-2 transition-colors"
-                  >
-                    {inner}
-                  </a>
-                ) : (
-                  <div className="flex items-start gap-3 min-h-11 px-2 py-2.5">{inner}</div>
-                )}
+                <a
+                  href={learnHref(path.id, step.id)}
+                  className="group flex items-start gap-3 min-h-11 px-2 py-2.5 rounded-md hover:bg-surface-2 transition-colors"
+                >
+                  {inner}
+                </a>
               </li>
             );
           })}
