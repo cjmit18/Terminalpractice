@@ -2,7 +2,7 @@ import { SystemState, WindowsService } from '../../../types/terminal';
 import { describeIdentity } from '../../filesystem';
 import { parseOptions, optionValue, padNum } from '../../textUtils';
 import { LinuxContext, LinuxResult, linuxCommands, createInDir } from '../context';
-import { DEFAULT_LINUX_DISKS, KERNEL_RELEASE, KERNEL_VERSION, MEMORY_KIB, MODULES } from '../virtualFs';
+import { DEFAULT_LINUX_DISKS, partitionLayout, KERNEL_RELEASE, KERNEL_VERSION, MEMORY_KIB, MODULES } from '../virtualFs';
 
 // System, hardware, processes, services, packages and archives
 
@@ -273,15 +273,22 @@ function systemctl(ctx: LinuxContext): LinuxResult {
 
 // ---------- disks (derived from state.disks so fdisk, df and lsblk agree) ----------
 
-interface Part { dev: string; sizeMB: number; fsType: string; mount?: string; typeName: string }
+interface Part {
+  dev: string; sizeMB: number; start: number; end: number; sectors: number;
+  fsType: string; mount?: string; typeName: string;
+}
 
 function linuxDisks(ctx: LinuxContext) {
   const disks = ctx.state.disks.length ? ctx.state.disks : DEFAULT_DISKS;
   return disks.map(d => {
     const name = `sd${String.fromCharCode(97 + d.diskNumber)}`;
-    const parts: Part[] = d.partitions.filter(p => p.fsType !== 'Unallocated').map(p => ({
+    const layout = partitionLayout(d);
+    const parts: Part[] = d.partitions.filter(p => p.fsType !== 'Unallocated').map((p, i) => ({
       dev: `/dev/${name}${p.id}`,
-      sizeMB: p.sizeMB,
+      sizeMB: layout[i].sectors / 2048,
+      start: layout[i].start,
+      end: layout[i].end,
+      sectors: layout[i].sectors,
       fsType: p.fsType === 'swap' ? 'swap' : p.fsType.toLowerCase(),
       mount: p.fsType === 'swap' ? '[SWAP]' : p.mountPoint,
       typeName: p.fsType === 'swap' ? 'Linux swap' : p.fsType === 'FAT32' || p.mountPoint === '/boot/efi' ? 'EFI System' : 'Linux filesystem',
@@ -292,14 +299,24 @@ function linuxDisks(ctx: LinuxContext) {
 
 const DEFAULT_DISKS = DEFAULT_LINUX_DISKS;
 
-/** Human-readable size like df -h / lsblk (1024-based, one decimal under 10). */
+/** Size as lsblk and fdisk print it: 1024-based, one decimal unless whole (512M, 4G, 45.5G). */
 function human(mb: number, suffix = ''): string {
   const units = ['M', 'G', 'T'];
   let v = mb;
   let i = 0;
   while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
-  const s = v < 10 && !Number.isInteger(v) ? v.toFixed(1) : String(Math.round(v));
-  return `${s}${units[i]}${suffix}`;
+  const r = Math.round(v * 10) / 10;
+  return `${Number.isInteger(r) ? String(r) : r.toFixed(1)}${units[i]}${suffix}`;
+}
+
+/** Size as df -h prints it: rounded up, one decimal below 10 (4.0K, 497M, 45G). */
+function dfHuman(kib: number): string {
+  if (kib === 0) return '0';
+  const units = ['K', 'M', 'G', 'T'];
+  let v = kib;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return v < 10 ? `${(Math.ceil(v * 10) / 10).toFixed(1)}${units[i]}` : `${Math.ceil(v)}${units[i]}`;
 }
 
 function fdisk(ctx: LinuxContext): LinuxResult {
@@ -327,18 +344,14 @@ function fdisk(ctx: LinuxContext): LinuxResult {
   }
   const blocks = (known ? [known] : disks).map(d => {
     const bytes = d.sizeMB * 1024 * 1024;
-    let start = 2048;
-    const rows = d.parts.map(p => {
-      const sectors = p.sizeMB * 2048;
-      const row = `${p.dev.padEnd(10)} ${String(start).padStart(9)} ${String(start + sectors - 1).padStart(9)} ${String(sectors).padStart(9)} ${human(p.sizeMB).padStart(5)} ${p.typeName}`;
-      start += sectors;
-      return row;
-    });
+    const rows = d.parts.map(p =>
+      `${p.dev.padEnd(10)} ${String(p.start).padStart(9)} ${String(p.end).padStart(9)} ${String(p.sectors).padStart(9)} ${human(p.sizeMB).padStart(5)} ${p.typeName}`);
     return [
       `Disk ${d.dev}: ${human(d.sizeMB).replace(/([MGT])$/, ' $1iB')}, ${bytes} bytes, ${bytes / 512} sectors`,
       `Disk model: ${d.model}`,
       'Units: sectors of 1 * 512 = 512 bytes',
       'Sector size (logical/physical): 512 bytes / 512 bytes',
+      'I/O size (minimum/optimal): 512 bytes / 512 bytes',
       `Disklabel type: ${d.gpt ? 'gpt' : 'dos'}`,
       'Disk identifier: B7413988-E29B-4D14-884E-512E098F03C1',
       ...(rows.length ? ['', 'Device         Start       End   Sectors  Size Type', ...rows] : []),
@@ -347,39 +360,105 @@ function fdisk(ctx: LinuxContext): LinuxResult {
   return ctx.ok(blocks.join('\n\n'));
 }
 
+/** Pads a table like df: text columns left-aligned, numeric ones right-aligned, one space apart. */
+function alignTable(rows: string[][], rightAligned: boolean[], minWidths: number[] = []): string[] {
+  const widths = rows[0].map((_, c) => Math.max(minWidths[c] ?? 0, ...rows.map(r => r[c].length)));
+  return rows.map(r => r.map((cell, c) => {
+    if (c === r.length - 1) return cell;
+    return rightAligned[c] ? cell.padStart(widths[c]) : cell.padEnd(widths[c]);
+  }).join(' '));
+}
+
 function df(ctx: LinuxContext): LinuxResult {
-  const opts = parseOptions(ctx.args, 't', { 'human-readable': 'h', 'print-type': 'T' });
-  const h = opts.flags.has('h');
-  const showType = opts.flags.has('T') || h;
-  const rows: string[][] = [];
+  const opts = parseOptions(ctx.args, 't', { 'human-readable': 'h', 'print-type': 'T', inodes: 'i', type: 't', all: 'a' });
+  const f = opts.flags;
+  const h = f.has('h');
+  const showType = f.has('T');
+  const inodes = f.has('i');
+  interface Fs { dev: string; type: string; kib: number; usedKib: number; inodes: number; iused: number; mount: string }
+  const all: Fs[] = [];
   for (const d of linuxDisks(ctx)) {
     for (const p of d.parts) {
       if (!p.mount || p.mount === '[SWAP]') continue;
-      const used = Math.round(p.sizeMB * (p.mount === '/' ? 0.31 : 0.24));
-      const avail = Math.round(p.sizeMB * 0.95) - used;
-      rows.push([p.dev, p.fsType, p.sizeMB, used, avail, p.mount] as unknown as string[]);
+      // ext4 keeps part of the partition for its own tables and journal, so df shows a bit less
+      const kib = Math.floor(p.sectors / 2 * 0.97);
+      const usedKib = Math.round(kib * (p.mount === '/' ? 0.31 : 0.24));
+      const total = Math.floor(p.sectors * 512 / 16384);
+      all.push({ dev: p.dev, type: p.fsType, kib, usedKib, inodes: total, iused: p.mount === '/' ? 312455 : 320, mount: p.mount });
     }
   }
-  rows.push(['tmpfs', 'tmpfs', 3994, 0, 3994, '/dev/shm'] as unknown as string[]);
-  const fmt = (mb: unknown) => (h ? (Number(mb) === 0 ? '0' : human(Number(mb))) : String(Number(mb) * 1024));
-  const header = `${'Filesystem'.padEnd(14)} ${showType ? 'Type  ' : ''}${h ? ' Size  Used Avail' : '1K-blocks     Used Available'} Use% Mounted on`;
-  const lines = rows.map(([dev, type, size, used, avail, mount]) => {
-    const pct = Number(size) ? Math.ceil((Number(used) / (Number(used) + Number(avail))) * 100) : 0;
-    const cols = h
-      ? `${fmt(size).padStart(5)} ${fmt(used).padStart(5)} ${fmt(avail).padStart(5)}`
-      : `${fmt(size).padStart(9)} ${fmt(used).padStart(8)} ${fmt(avail).padStart(9)}`;
-    return `${String(dev).padEnd(14)} ${showType ? String(type).padEnd(6) : ''}${cols} ${`${pct}%`.padStart(4)} ${mount}`;
+  all.push({ dev: 'tmpfs', type: 'tmpfs', kib: 4074116, usedKib: 0, inodes: 1018529, iused: 1, mount: '/dev/shm' });
+  const typeFilter = opts.values.get('t');
+  let shown = typeFilter ? all.filter(x => typeFilter.includes(x.type)) : all;
+
+  // Operands: the file system each named file lives on (the longest matching mount point)
+  const errors: string[] = [];
+  if (opts.operands.length) {
+    shown = [];
+    for (const op of opts.operands) {
+      const path = ctx.resolve(op);
+      if (!ctx.node(path)) { errors.push(`df: ${op}: No such file or directory`); continue; }
+      const dev = all.find(x => x.dev === path);
+      const fsFor = dev ?? [...all].filter(x => path === x.mount || path.startsWith(x.mount === '/' ? '/' : `${x.mount}/`))
+        .sort((a, b) => b.mount.length - a.mount.length)[0];
+      if (fsFor) shown.push(fsFor);
+    }
+  }
+
+  const header = ['Filesystem', ...(showType ? ['Type'] : []),
+    ...(inodes ? ['Inodes', 'IUsed', 'IFree', 'IUse%'] : h ? ['Size', 'Used', 'Avail', 'Use%'] : ['1K-blocks', 'Used', 'Available', 'Use%']),
+    'Mounted on'];
+  const num = (n: number) => String(n);
+  const rows = shown.map(x => {
+    const cols: string[] = [x.dev, ...(showType ? [x.type] : [])];
+    if (inodes) {
+      const ifree = x.inodes - x.iused;
+      const pct = x.inodes ? `${Math.ceil(x.iused / x.inodes * 100)}%` : '-';
+      const fmt = (n: number) => (h ? (n < 1024 ? String(n) : dfHuman(n / 1024).replace(/[KMGT]$/, c => c)) : num(n));
+      cols.push(fmt(x.inodes), fmt(x.iused), fmt(ifree), pct);
+    } else {
+      const avail = Math.round(x.kib * 0.95) - x.usedKib;
+      const pct = x.kib ? `${Math.ceil(x.usedKib / (x.usedKib + avail) * 100)}%` : '-';
+      const fmt = (k: number) => (h ? dfHuman(k) : num(k));
+      cols.push(fmt(x.kib), fmt(x.usedKib), fmt(Math.max(0, avail)), pct);
+    }
+    cols.push(x.mount);
+    return cols;
   });
-  return ctx.ok([header, ...lines].join('\n'));
+  const right = header.map((col, i) => i > (showType ? 1 : 0) && col !== 'Mounted on');
+  // GNU df gives human-readable number columns at least 5 characters, and the device column 14 or more
+  const mins = header.map((col, i) => (i === 0 ? 14 : h && right[i] && col !== 'Use%' && col !== 'IUse%' ? 5 : 0));
+  const lines = alignTable([header, ...rows], right, mins);
+  return ctx.result(rows.length || !errors.length ? lines.join('\n') : '', errors.join('\n'), errors.length ? 1 : 0);
 }
 
 function lsblk(ctx: LinuxContext): LinuxResult {
+  const opts = parseOptions(ctx.args, '', { fs: 'f' });
+  const withFs = opts.flags.has('f');
+  const disks = linuxDisks(ctx);
+  if (withFs) {
+    const uuids: Record<string, string> = {
+      '/': '8d6a8f1e-3a9b-4c22-b5e1-8f432176b912', '/boot': '4a7b9c1d-2e3f-4a5b-6c7d-8e9f0a1b2c3d', '[SWAP]': '12345678-90ab-cdef-1234-567890abcdef',
+    };
+    const rows: string[][] = [['NAME', 'FSTYPE', 'FSVER', 'LABEL', 'UUID', 'FSAVAIL', 'FSUSE%', 'MOUNTPOINTS']];
+    for (const d of disks) {
+      rows.push([d.name, '', '', '', '', '', '', '']);
+      d.parts.forEach((p, j) => {
+        const branch = j === d.parts.length - 1 ? '└─' : '├─';
+        const isSwap = p.mount === '[SWAP]';
+        const avail = p.mount && !isSwap ? dfHuman(Math.round(p.sectors / 2 * 0.97 * (p.mount === '/' ? 0.64 : 0.71))) : '';
+        rows.push([branch + p.dev.slice(5), p.fsType, isSwap ? '1' : '1.0', '', uuids[p.mount ?? ''] ?? '', avail,
+          p.mount && !isSwap ? (p.mount === '/' ? '31%' : '24%') : '', p.mount ?? '']);
+      });
+    }
+    return ctx.ok(alignTable(rows, rows[0].map(() => false)).map(l => l.trimEnd()).join('\n'));
+  }
   const lines = ['NAME   MAJ:MIN RM  SIZE RO TYPE MOUNTPOINTS'];
-  linuxDisks(ctx).forEach((d, i) => {
-    lines.push(`${d.name.padEnd(6)}   8:${i * 16}    0 ${human(d.sizeMB).padStart(4)}  0 disk `);
+  disks.forEach((d, i) => {
+    lines.push(`${d.name.padEnd(6)}   8:${i * 16}    0 ${human(d.sizeMB).padStart(5)}  0 disk `);
     d.parts.forEach((p, j) => {
       const branch = j === d.parts.length - 1 ? '└─' : '├─';
-      lines.push(`${(branch + p.dev.slice(5)).padEnd(6)}   8:${i * 16 + j + 1}    0 ${human(p.sizeMB).padStart(4)}  0 part ${p.mount ?? ''}`);
+      lines.push(`${(branch + p.dev.slice(5)).padEnd(6)}   8:${i * 16 + j + 1}    0 ${human(p.sizeMB).padStart(5)}  0 part ${p.mount ?? ''}`);
     });
   });
   return ctx.ok(lines.join('\n'));

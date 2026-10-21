@@ -19,7 +19,7 @@ export function deviceNumbers(node: FileNode): [number, number] | null {
 }
 
 /** A stable fake inode number for a path. */
-function inode(path: string): number {
+export function inode(path: string): number {
   let h = 2166136261;
   for (const c of path) h = Math.imul(h ^ c.charCodeAt(0), 16777619) >>> 0;
   return path === '/' ? 2 : 131072 + (h % 3000000);

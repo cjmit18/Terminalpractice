@@ -214,13 +214,23 @@ test('systemctl: status from state, get-default, enable --now, is-active', () =>
 test('Storage and hardware listings agree with each other', () => {
   const run = linuxSession();
   const fdisk = run('sudo fdisk -l').stdout;
-  const df = run('df -h').stdout;
+  const df = run('df -hT').stdout;
   const lsblk = run('lsblk').stdout;
   assert.match(fdisk, /\/dev\/sda1 .* 512M Linux filesystem/);
   assert.match(fdisk, /\/dev\/sda2 .* 4G Linux swap/);
-  assert.match(fdisk, /\/dev\/sda3 .* Linux filesystem/);
-  assert.match(df, /^\/dev\/sda1 +ext4 +512M .* \/boot$/m);
-  assert.match(df, /^\/dev\/sda3 +ext4 +46G .* \/$/m);
+  // GPT keeps the last 33 sectors for its backup table, so sda3 ends at sector 104857566
+  assert.match(fdisk, /^\/dev\/sda3 +9439232 104857566 +95418335 45\.5G Linux filesystem$/m);
+  assert.match(fdisk, /^I\/O size \(minimum\/optimal\): 512 bytes \/ 512 bytes$/m);
+  assert.match(df, /^\/dev\/sda1 +ext4 +497M .* \/boot$/m);
+  assert.match(df, /^\/dev\/sda3 +ext4 +45G .* \/$/m);
+  assert.match(lsblk, /^└─sda3 +8:3 +0 45\.5G  0 part \/$/m);
+  assert.match(run('cat /proc/partitions').stdout, / 47709167 sda3$/m);
+  // Without -T there is no Type column; -i shows inodes; an operand picks its file system
+  assert.match(run('df -h').stdout, /^Filesystem +Size +Used Avail Use% Mounted on\n\/dev\/sda1 +497M /);
+  assert.match(run('df -i').stdout, /^Filesystem +Inodes +IUsed +IFree IUse% Mounted on$/m);
+  assert.deepEqual(run('df -h /boot').stdout.split('\n').map(l => l.split(/ +/)[0]), ['Filesystem', '/dev/sda1']);
+  assert.match(run('df /home/student').stdout, /\n\/dev\/sda3 .* \/$/);
+  assert.match(run('lsblk -f').stdout, /^NAME +FSTYPE +FSVER +LABEL +UUID +FSAVAIL +FSUSE% +MOUNTPOINTS\n/);
   assert.ok(!df.includes('sdb'), 'no disk that fdisk does not know about');
   assert.match(lsblk, /sda2 .* part \[SWAP\]/);
   assert.match(run('df').stdout, /^Filesystem +1K-blocks +Used Available Use% Mounted on/);

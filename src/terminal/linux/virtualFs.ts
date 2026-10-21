@@ -33,18 +33,37 @@ export const MODULES: [string, number, number, string[]][] = [
   ['libahci', 49152, 1, ['ahci']],
 ];
 
-/** Block devices for the lab's disks: sda, sda1 ... */
+/**
+ * Sector layout of a disk's partitions, as fdisk lays them out: the first starts at sector 2048,
+ * each follows the previous one, and none may run past the last usable sector. On GPT that is
+ * total - 34, because the backup partition table fills the disk's last 33 sectors.
+ */
+export function partitionLayout(disk: SystemState['disks'][number]) {
+  const total = disk.totalSizeMB * 2048;
+  const lastUsable = disk.partitionTable === 'GPT' ? total - 34 : total - 1;
+  let start = 2048;
+  return disk.partitions.filter(p => p.fsType !== 'Unallocated').map(p => {
+    const end = Math.min(start + p.sizeMB * 2048 - 1, lastUsable);
+    const row = { id: p.id, start, end, sectors: end - start + 1 };
+    start = end + 1;
+    return row;
+  });
+}
+
+/** Block devices for the lab's disks: sda, sda1 ... (sizes in MiB follow the sector layout) */
 export function blockDevices(state: SystemState) {
   const disks = state.disks.length ? state.disks : DEFAULT_LINUX_DISKS;
   return disks.map(d => {
     const name = `sd${String.fromCharCode(97 + d.diskNumber)}`;
+    const layout = partitionLayout(d);
     return {
       name,
       major: 8,
       minor: d.diskNumber * 16,
       sizeMB: d.totalSizeMB,
-      parts: d.partitions.filter(p => p.fsType !== 'Unallocated').map(p => ({
-        name: `${name}${p.id}`, minor: d.diskNumber * 16 + p.id, sizeMB: p.sizeMB, fsType: p.fsType.toLowerCase(), mount: p.mountPoint,
+      parts: d.partitions.filter(p => p.fsType !== 'Unallocated').map((p, i) => ({
+        name: `${name}${p.id}`, minor: d.diskNumber * 16 + p.id, sizeMB: layout[i].sectors / 2048, sectors: layout[i].sectors,
+        fsType: p.fsType.toLowerCase(), mount: p.mountPoint,
       })),
     };
   });
@@ -88,7 +107,7 @@ function meminfo(): string {
 function partitions(state: SystemState): string {
   const rows = blockDevices(state).flatMap(d => [
     [d.major, d.minor, d.sizeMB * 1024, d.name] as const,
-    ...d.parts.map(p => [d.major, p.minor, p.sizeMB * 1024, p.name] as const),
+    ...d.parts.map(p => [d.major, p.minor, Math.floor(p.sectors / 2), p.name] as const),
   ]);
   return ['major minor  #blocks  name', '', ...rows.map(([ma, mi, b, n]) => `${String(ma).padStart(4)} ${String(mi).padStart(7)} ${String(b).padStart(10)} ${n}`)].join('\n');
 }
@@ -132,7 +151,7 @@ export function syncKernelFiles(fs: FileNode, state: SystemState): void {
     modules: kernelFile('modules', modules()),
     cmdline: kernelFile('cmdline', `BOOT_IMAGE=/vmlinuz-${KERNEL_RELEASE} root=UUID=8d6a8f1e-3a9b-4c22-b5e1-8f432176b912 ro quiet splash`),
     swaps: kernelFile('swaps', ['Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority',
-      ...blockDevices(state).flatMap(d => d.parts.filter(p => p.fsType === 'swap').map(p => `/dev/${p.name}                               partition\t${p.sizeMB * 1024}\t\t0\t\t-2`))].join('\n')),
+      ...blockDevices(state).flatMap(d => d.parts.filter(p => p.fsType === 'swap').map(p => `/dev/${p.name}                               partition\t${Math.floor(p.sectors / 2)}\t\t0\t\t-2`))].join('\n')),
   };
   root.proc = dir('proc', 555, proc);
 
