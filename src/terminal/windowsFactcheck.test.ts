@@ -114,14 +114,14 @@ test('E (E-20): Where-Object, Select-Object, Select-String, Measure-Object and p
   assert.match(busy, /svchost_update$/m);
   assert.equal(busy.split('\n').length, 3, 'only the busy process');
   assert.match(run("Get-Process | Where-Object {$_.CPU -lt 50 -and $_.Name -like 'ls*'}").stdout, /lsass$/m);
-  assert.equal(run('Get-Service | Where-Object Status -eq Stopped').stdout.split('\n').length, 4);
+  assert.equal(run('Get-Service | Where-Object Status -eq Stopped').stdout.split('\n').length, 2 + run.state().services.filter(s => s.status === 'Stopped').length);
   const cols = run('Get-Service | Select-Object Name,Status').stdout;
   assert.match(cols, /^\nName +Status\n----/);
   assert.doesNotMatch(cols, /DisplayName/);
   assert.equal(run('Get-Service W32Time | Select-Object -ExpandProperty Status').stdout, 'Stopped');
   const hosts = run('Get-Content C:\\Windows\\System32\\drivers\\etc\\hosts | Select-String localhost').stdout;
   assert.ok(hosts.split('\n').every(l => /localhost/.test(l)), 'only matching lines');
-  assert.match(run('Get-Service | Measure-Object').stdout, /Count +: 7/);
+  assert.match(run('Get-Service | Measure-Object').stdout, new RegExp(`Count +: ${run.state().services.length}\n`));
   assert.equal(run('Get-Service W32Time | Start-Service').exitCode, 0);
   assert.equal(run.state().services.find(s => s.name === 'W32Time')?.status, 'Running');
   assert.match(run('Get-Service | Where-Object {$_.Name.Length -gt 3}').stderr, /not supported/);
@@ -334,6 +334,15 @@ test('F (W-12): net use maps, lists and deletes network drives', () => {
   assert.doesNotMatch(run('net use').stdout, /Z:/);
   assert.doesNotMatch(run('set').stdout, /NetUse/);
   assert.match(windowsSession('cmd')('net use Z: \\\\fs01\\share').stderr, /System error 53/);
+});
+
+test('PowerShell redirection: > file, 2>$null, 2>&1, and > inside quotes or blocks is text', () => {
+  const run = windowsSession('powershell');
+  assert.equal(run('Get-Service W32Time > s.txt').stdout, '');
+  assert.match(run('Get-Content s.txt').stdout, /W32Time +Windows Time/);
+  assert.equal(run('Get-Process nope 2>$null').stderr, '');
+  assert.match(run('Get-Process nope 2>&1').stdout, /Cannot find a process with the name "nope"/);
+  assert.equal(run('Write-Output "a > b"').stdout, 'a > b');
 });
 
 test('H-3: every listed Windows command without a handler gives the not-simulated message', () => {

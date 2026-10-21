@@ -207,6 +207,46 @@ export function psSplitPipeline(line: string): string[] {
   return stages.filter(Boolean);
 }
 
+export interface PsRedirect { stdout?: { target: string; append: boolean }; stderr?: 'null' | 'merge' | { target: string; append: boolean } }
+
+/**
+ * Removes the redirections at the end of a PowerShell line (> file, >> file, 2> file, 2>&1,
+ * 2>$null, *> file) and returns them with the rest of the line.
+ */
+export function psExtractRedirects(line: string): { body: string; redirect: PsRedirect } {
+  const redirect: PsRedirect = {};
+  let body = line;
+  for (;;) {
+    const m = body.match(/\s+([12*]?)(>>?)\s*(&1|\$null|"[^"]*"|'[^']*'|[^\s"'|>]+)\s*$/);
+    if (!m || inQuotesOrGroup(body, m.index!)) break;
+    const stream = m[1] || '1';
+    const target = m[3].replace(/^["'](.*)["']$/, '$1');
+    const append = m[2] === '>>';
+    if (stream === '2') redirect.stderr = target === '&1' ? 'merge' : /^\$null$/i.test(target) ? 'null' : { target, append };
+    else if (/^\$null$/i.test(target)) redirect.stdout = { target: 'NUL', append };
+    else {
+      redirect.stdout = { target, append };
+      if (stream === '*') redirect.stderr = 'merge';
+    }
+    body = body.slice(0, m.index);
+  }
+  return { body, redirect };
+}
+
+function inQuotesOrGroup(text: string, index: number): boolean {
+  let q: string | null = null;
+  let depth = 0;
+  for (let i = 0; i < index; i++) {
+    const c = text[i];
+    if (c === '`') { i++; continue; }
+    if (q) { if (c === q) q = null; continue; }
+    if (c === '"' || c === "'") q = c;
+    else if (c === '(' || c === '{') depth++;
+    else if ((c === ')' || c === '}') && depth > 0) depth--;
+  }
+  return q !== null || depth > 0;
+}
+
 export interface PsStage { name: string; args: string[]; tokens: PsToken[]; raw: string }
 
 export function psStage(text: string): PsStage {

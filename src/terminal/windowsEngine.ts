@@ -9,7 +9,7 @@ import './windows/powershell';
 import './windows/psSystem';
 import { runPowerShellPipeline } from './windows/psPipeline';
 import { expandCmdVariables, expandPowerShellEnv, setErrorLevel } from './windows/env';
-import { psNotRecognized, psNotSimulated, psSplitPipeline, psStage } from './windows/psUtil';
+import { psExtractRedirects, psNotRecognized, psNotSimulated, psSplitPipeline, psStage } from './windows/psUtil';
 import { isNotSimulatedWindows } from './notSimulated';
 import './windows/psFiles';
 import './windows/cmd/files';
@@ -178,7 +178,24 @@ function executePowerShellCommand(
   fs: FileNode,
   state: SystemState
 ): WindowsExecutionResult {
-  const line = expandPowerShellEnv(rawLine, state);
+  const { body, redirect } = psExtractRedirects(expandPowerShellEnv(rawLine, state));
+  let res = runPowerShellLine(body, cwd, fs, state);
+  if (redirect.stderr === 'null') res = { ...res, stderr: '' };
+  if (redirect.stderr === 'merge') res = { ...res, stdout: [res.stdout, res.stderr].filter(Boolean).join('\n'), stderr: '' };
+  for (const [stream, target] of [['stdout', redirect.stdout], ['stderr', typeof redirect.stderr === 'object' ? redirect.stderr : undefined]] as const) {
+    if (!target) continue;
+    const write = writeWindowsFile(res.newFs, res.newState, normalizePath(target.target, res.newCwd, true), res[stream], target.append);
+    res = write ? { ...res, [stream]: '', stderr: write.error, exitCode: 1, explanation: write.explanation } : { ...res, [stream]: '' };
+  }
+  return res;
+}
+
+function runPowerShellLine(
+  line: string,
+  cwd: string,
+  fs: FileNode,
+  state: SystemState
+): WindowsExecutionResult {
   const stages = psSplitPipeline(line).map(psStage);
   const first = stages[0];
   const ctx = new WindowsContext(first?.name ?? '', first?.args ?? [], '', line, cwd, cloneFileSystem(fs), cloneState(state));
