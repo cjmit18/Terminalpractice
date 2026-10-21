@@ -23,7 +23,9 @@ export function bindParams(args: string[], spec: Record<string, 'value' | 'switc
     const candidates = exact ? [exact] : names.filter(n => n.toLowerCase().startsWith(typed));
     if (candidates.length !== 1) return m[1];
     const canonical = aliases[candidates[0]] ?? candidates[0];
-    if (spec[canonical] === 'switch') named.set(canonical, true);
+    if (spec[canonical] === 'switch') {
+      if (!/^\$?false$/i.test(m[2] ?? '')) named.set(canonical, true);
+    }
     else named.set(canonical, m[2] ?? args[++i] ?? '');
   }
   return { named, positional };
