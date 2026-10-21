@@ -6,8 +6,17 @@ import {
   Activity,
   CommandOutcome,
   EMPTY_ACTIVITY,
+  addDays,
   addFacts,
+  addPractice,
   classifyCommand,
+  countSandboxCommand,
+  dayRecap,
+  localeWeekStart,
+  markGoalWeek,
+  recapIsEmpty,
+  weekDays,
+  weekGoal,
   clearActivity,
   earnBadges,
   editDistance,
@@ -186,6 +195,114 @@ test('classifyCommand: only the simulator\'s own names, from commands that thems
   const sandbox = classifier('bash');
   const names = new Set(['aa', 'bb', 'cc', 'dd', 'ee'].flatMap(n => sandboxFacts(sandbox(`${n} || true`))).filter(f => f.startsWith('sandbox:')));
   assert.deepEqual([...names], ['sandbox:bash:true']);
+});
+
+test('First-seen days: kept per fact, earliest wins in a merge, merge idempotent and order-free', () => {
+  let a = addFacts(EMPTY_ACTIVITY, ['cmd:bash:ls'], '2026-10-19');
+  a = addFacts(a, ['cmd:bash:ls', 'cmd:bash:grep'], '2026-10-20');
+  assert.deepEqual(a.firstSeen, { 'cmd:bash:grep': '2026-10-20', 'cmd:bash:ls': '2026-10-19' });
+  const b = addFacts(EMPTY_ACTIVITY, ['cmd:bash:grep', 'pipe'], '2026-10-18');
+  const m = mergeActivity(a, b);
+  assert.deepEqual(m.firstSeen, { 'cmd:bash:grep': '2026-10-18', 'cmd:bash:ls': '2026-10-19', pipe: '2026-10-18' });
+  assert.deepEqual(mergeActivity(b, a), m);
+  assert.deepEqual(mergeActivity(m, m), m);
+  assert.deepEqual(mergeActivity(m, a), m);
+  // A first-seen day for a fact that is not there is dropped
+  assert.equal(parseActivity(JSON.stringify({ facts: ['pipe'], days: [], badges: {}, firstSeen: { pipe: '2026-10-01', x: '2026-10-01' } })).firstSeen?.x, undefined);
+});
+
+test('Practice days: tasks, lessons and quiz attempts count; three Sandbox commands make a day', () => {
+  let a = addPractice(EMPTY_ACTIVITY, ['task:m/o'], '2026-10-19');
+  assert.deepEqual(a.practice, ['2026-10-19']);
+  a = countSandboxCommand(a, '2026-10-20');
+  a = countSandboxCommand(a, '2026-10-20');
+  assert.deepEqual(a.practice, ['2026-10-19']);
+  a = countSandboxCommand(a, '2026-10-20');
+  assert.deepEqual(a.practice, ['2026-10-19', '2026-10-20']);
+  assert.equal(countSandboxCommand(a, '2026-10-20'), a, 'capped: nothing changes after three');
+  // The larger count wins, so a tab that saw two and a tab that saw three agree on three
+  const other = countSandboxCommand(countSandboxCommand(EMPTY_ACTIVITY, '2026-10-20'), '2026-10-20');
+  const m = mergeActivity(a, other);
+  assert.equal(m.sandbox?.['2026-10-20'], 3);
+  assert.deepEqual(mergeActivity(other, a), m);
+  assert.deepEqual(mergeActivity(m, m), m);
+  // Only recent Sandbox counts are kept
+  const old = parseActivity(JSON.stringify({ facts: [], days: [], badges: {}, sandbox: { '2026-01-01': 2, '2026-10-20': 1 } }));
+  assert.deepEqual(old.sandbox, { '2026-10-20': 1 });
+});
+
+test('Weeks: start from the locale (Monday by default), seven days, crossing months', () => {
+  assert.deepEqual(weekDays('2026-10-21', 1), ['2026-10-19', '2026-10-20', '2026-10-21', '2026-10-22', '2026-10-23', '2026-10-24', '2026-10-25']);
+  assert.equal(weekDays('2026-10-21', 0)[0], '2026-10-18');
+  assert.equal(weekDays('2026-10-18', 1)[0], '2026-10-12', 'a Sunday belongs to the week before when weeks start on Monday');
+  assert.equal(weekDays('2026-11-01', 1)[6], '2026-11-01');
+  assert.equal(addDays('2026-12-31', 1), '2027-01-01');
+  assert.equal(localeWeekStart('xx-invalid-'), 1);
+  const us = localeWeekStart('en-US');
+  assert.ok(us === 0 || us === 1, 'Sunday where the browser knows, else Monday');
+});
+
+test('Weekly goal: off by default; counts this week; weeks met only grow', () => {
+  const today = '2026-10-21';
+  let a = addPractice(addPractice(EMPTY_ACTIVITY, [], '2026-10-19'), [], '2026-10-21');
+  assert.equal(weekGoal(a, today, 1), null);
+  a = setPrefs(a, { weeklyGoal: 3 }, 1);
+  let w = weekGoal(a, today, 1)!;
+  assert.equal(w.count, 2);
+  assert.equal(w.met, false);
+  assert.deepEqual(w.practised, [true, false, true, false, false, false, false]);
+  assert.equal(w.weeksMet, 0);
+  a = addPractice(a, [], '2026-10-22');
+  w = weekGoal(a, '2026-10-22', 1)!;
+  assert.equal(w.met, true);
+  assert.equal(w.weeksMet, 1);
+  a = markGoalWeek(a, w.days[0]);
+  assert.equal(markGoalWeek(a, w.days[0]), a);
+  // Next week: nothing practised yet, and the total stays
+  w = weekGoal(a, '2026-10-27', 1)!;
+  assert.equal(w.count, 0);
+  assert.equal(w.weeksMet, 1);
+  // Old practice days are pruned with age, goal weeks are not
+  const later = addPractice(a, [], '2027-06-01');
+  assert.ok(!later.practice?.includes('2026-10-19'));
+  assert.deepEqual(later.goalWeeks, ['2026-10-19']);
+  // Merges keep every week either copy met
+  const m = mergeActivity(later, markGoalWeek(EMPTY_ACTIVITY, '2026-09-07'));
+  assert.deepEqual(m.goalWeeks, ['2026-09-07', '2026-10-19']);
+  // Prefs: 0 means off, anything outside 0-7 is dropped
+  assert.equal(parseActivity(JSON.stringify({ facts: [], days: [], badges: {}, prefs: { weeklyGoal: 9 } })).prefs, undefined);
+});
+
+test('Today recap: tasks, lessons, checkpoints and commands new today', () => {
+  let a = addFacts(EMPTY_ACTIVITY, ['cmd:bash:ls', 'cmd:bash:ping'], '2026-10-20');
+  a = addPractice(a, ['task:lab/a', 'task:lab/b', 'pass:p/q', 'read:p/l', 'lab:lab'], '2026-10-21');
+  a = addFacts(a, ['cmd:bash:grep', 'cmd:bash:cut', 'cmd:cmd:ping', 'cmd:bash:ls', 'help:linux:ls'], '2026-10-21');
+  const r = dayRecap(a, '2026-10-21');
+  assert.deepEqual(r, { tasks: 2, labs: 1, lessons: 1, checkpoints: 1, commands: ['cut', 'grep'] });
+  assert.equal(recapIsEmpty(dayRecap(a, '2026-10-22')), true);
+});
+
+test('Sandbox looks: hostname and styles are validated', () => {
+  const a = setPrefs(EMPTY_ACTIVITY, { sandboxHost: 'my-box', promptStyle: 'bracket', bannerLine: 'calm' }, 1);
+  assert.deepEqual(parseActivity(serializeActivity(a)).prefs, { sandboxHost: 'my-box', promptStyle: 'bracket', bannerLine: 'calm' });
+  const bad = parseActivity(JSON.stringify({ facts: [], days: [], badges: {}, prefs: { sandboxHost: 'Bad Name!', promptStyle: 'neon' } }));
+  assert.equal(bad.prefs, undefined);
+});
+
+test('Privacy holds for the new records: first-seen days, the day recap and practice keep registry names only', () => {
+  const bash = classifier('bash');
+  let a = EMPTY_ACTIVITY;
+  for (const line of ['private-token || echo ok', 'hunter2 | cat', 'MyPassw0rd ; ls', 'FOO=secret cat /etc/hosts'])
+    a = addPractice(a, sandboxFacts(bash(line)), '2026-10-21');
+  for (let i = 0; i < 3; i++) a = countSandboxCommand(a, '2026-10-21');
+  const text = serializeActivity(a) ?? '';
+  assert.ok(!/private|hunter2|passw0rd|secret/i.test(text), text);
+  assert.deepEqual(Object.keys(a.firstSeen ?? {}).sort(), [...a.facts].sort(), 'first-seen days only for stored facts');
+  assert.deepEqual(dayRecap(a, '2026-10-21').commands, ['cat', 'echo', 'ls']);
+  // A first-seen key or a Sandbox day that is not well-formed is dropped when read back
+  const read = parseActivity(JSON.stringify({ ...a, firstSeen: { ...a.firstSeen, 'typed words': '2026-10-21' }, sandbox: { 'not a day': 3 } }));
+  assert.equal(read.firstSeen?.['typed words'], undefined);
+  assert.equal(read.sandbox, undefined);
 });
 
 test('editDistance', () => {

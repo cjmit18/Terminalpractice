@@ -43,6 +43,7 @@ const lpic101: LearningPath = {
         {
           kind: 'lesson',
           id: 'how-linux-sees-hardware',
+          objectives: ['101.1'],
           title: 'How Linux sees hardware',
           minutes: 4,
           blocks: [
@@ -97,6 +98,7 @@ const lpic101: LearningPath = {
         {
           kind: 'lesson',
           id: 'from-power-on-to-login',
+          objectives: ['101.2', '101.3'],
           title: 'From power on to login',
           minutes: 3,
           blocks: [
@@ -134,7 +136,7 @@ const lpic101: LearningPath = {
             exam(`Know the shutdown forms: shutdown -h now halts or powers off, shutdown -r +5 "Rebooting for updates" reboots in five minutes and warns logged-in users, and shutdown -c cancels a pending shutdown. wall sends a message to every terminal without shutting anything down.`),
           ],
         },
-        { kind: 'lab', id: 'lab-hardware', moduleId: 'lpi-101-1-system-architecture', note: 'Use lspci, lsmod and dmesg to check the hardware of a newly delivered server.' },
+        { kind: 'lab', id: 'lab-hardware', objectives: ['101.1'], moduleId: 'lpi-101-1-system-architecture', note: 'Use lspci, lsmod and dmesg to check the hardware of a newly delivered server.' },
         {
           kind: 'quiz',
           id: 'quiz-hardware',
@@ -143,6 +145,7 @@ const lpic101: LearningPath = {
           questions: [
             {
               id: 'q-modprobe-deps',
+              objectives: ['101.1'],
               prompt: 'A storage driver module depends on two other modules. Which command loads it together with its dependencies?',
               choices: ['insmod', 'lsmod', 'modinfo', 'modprobe'],
               answer: 3,
@@ -150,6 +153,7 @@ const lpic101: LearningPath = {
             },
             {
               id: 'q-dmesg-case',
+              objectives: ['101.2'],
               prompt: 'You know the server has a SATA controller, but this command prints nothing. Why?',
               code: 'dmesg | grep sata',
               choices: [
@@ -163,6 +167,7 @@ const lpic101: LearningPath = {
             },
             {
               id: 'q-set-default',
+              objectives: ['101.3'],
               prompt: 'A server boots to a graphical login. You want it to boot to a text login from now on, without switching the running system. What do you run?',
               choices: [
                 'systemctl isolate multi-user.target',
@@ -175,6 +180,7 @@ const lpic101: LearningPath = {
             },
             {
               id: 'q-lsmod-usedby',
+              objectives: ['101.1'],
               prompt: 'What does this lsmod line tell you?',
               code: 'Module                  Size  Used by\nlibahci                 49152  1 ahci',
               choices: [
@@ -188,6 +194,7 @@ const lpic101: LearningPath = {
             },
             {
               id: 'q-proc-cpu',
+              objectives: ['101.1'],
               prompt: 'You need the CPU model and the flags it supports. Which file do you read?',
               choices: ['/dev/cpu', '/etc/cpuinfo', '/proc/cpuinfo', '/sys/cpuinfo'],
               answer: 2,
@@ -205,6 +212,7 @@ const lpic101: LearningPath = {
         {
           kind: 'lesson',
           id: 'filters',
+          objectives: ['103.2'],
           title: 'Filters: grep, cut, sort, uniq and friends',
           minutes: 4,
           blocks: [
@@ -263,6 +271,7 @@ const lpic101: LearningPath = {
         {
           kind: 'lesson',
           id: 'pipes-and-redirection',
+          objectives: ['103.4'],
           title: 'Pipes and redirection',
           minutes: 3,
           blocks: [
@@ -300,6 +309,7 @@ const lpic101: LearningPath = {
         {
           kind: 'lesson',
           id: 'processes-and-signals',
+          objectives: ['103.5', '103.6'],
           title: 'Processes and signals',
           minutes: 4,
           blocks: [
@@ -336,7 +346,7 @@ const lpic101: LearningPath = {
             tip(`In top, the NI column is the niceness and PR the kernel priority derived from it.`),
           ],
         },
-        { kind: 'lab', id: 'lab-text', moduleId: 'lpi-103-2-text-processing', note: 'Turn an SSH log into a count of failed logins per IP address with one pipeline.' },
+        { kind: 'lab', id: 'lab-text', objectives: ['103.2'], moduleId: 'lpi-103-2-text-processing', note: 'Turn an SSH log into a count of failed logins per IP address with one pipeline.' },
         {
           kind: 'quiz',
           id: 'quiz-text-streams',
@@ -345,6 +355,7 @@ const lpic101: LearningPath = {
           questions: [
             {
               id: 'q-uniq-unsorted',
+              objectives: ['103.2'],
               prompt: 'access.log contains requests from 10.0.0.5 on lines 1, 2 and 5, and from 10.0.0.9 on lines 3 and 4. What does this print?',
               code: 'cut -d" " -f1 access.log | uniq -c',
               choices: [
@@ -358,6 +369,7 @@ const lpic101: LearningPath = {
             },
             {
               id: 'q-redirect-order',
+              objectives: ['103.4'],
               prompt: 'You want both the output and the error messages of a backup script in backup.log. Which command does that?',
               choices: [
                 './backup.sh > backup.log 2>&1',
@@ -370,6 +382,7 @@ const lpic101: LearningPath = {
             },
             {
               id: 'q-cut-shell',
+              objectives: ['103.2'],
               prompt: 'Which command prints each user name with its login shell from /etc/passwd?',
               choices: [
                 'cut -f1,7 /etc/passwd',
@@ -382,6 +395,7 @@ const lpic101: LearningPath = {
             },
             {
               id: 'q-kill-default',
+              objectives: ['103.5'],
               prompt: 'You run kill 4721. Which signal does the process receive?',
               choices: ['SIGKILL (9)', 'SIGHUP (1)', 'SIGINT (2)', 'SIGTERM (15)'],
               answer: 3,
@@ -389,6 +403,7 @@ const lpic101: LearningPath = {
             },
             {
               id: 'q-renice-user',
+              objectives: ['103.6'],
               prompt: 'As a normal user you ran renice -n 15 -p 4721 on your own job. Now you try renice -n 0 -p 4721. What happens?',
               choices: [
                 'It fails, because only root can lower a niceness value',
@@ -401,6 +416,7 @@ const lpic101: LearningPath = {
             },
             {
               id: 'q-stderr-pipe',
+              objectives: ['103.4'],
               prompt: 'find / -name "*.conf" | grep -v "Permission denied" still fills the screen with Permission denied messages. Why?',
               choices: [
                 'grep -v only removes lines that start with the pattern',
@@ -423,6 +439,7 @@ const lpic101: LearningPath = {
         {
           kind: 'lesson',
           id: 'partition-tables',
+          objectives: ['102.1', '104.1'],
           title: 'Partition tables: MBR and GPT',
           minutes: 3,
           blocks: [
@@ -467,6 +484,7 @@ const lpic101: LearningPath = {
         {
           kind: 'lesson',
           id: 'filesystems-and-mounting',
+          objectives: ['104.1', '104.2', '104.3'],
           title: 'Filesystems, mounting and fstab',
           minutes: 4,
           blocks: [
@@ -517,7 +535,7 @@ const lpic101: LearningPath = {
             warn(`Running fsck on a mounted, writable filesystem can corrupt it. Unmount it first, or for the root filesystem, check it at boot or from a rescue system.`),
           ],
         },
-        { kind: 'lab', id: 'lab-disk-layout', moduleId: 'lpi-102-1-disk-partitioning', note: 'Read a GPT partition table and match each partition to its mount point.' },
+        { kind: 'lab', id: 'lab-disk-layout', objectives: ['102.1'], moduleId: 'lpi-102-1-disk-partitioning', note: 'Read a GPT partition table and match each partition to its mount point.' },
         {
           kind: 'quiz',
           id: 'quiz-disks',
@@ -526,6 +544,7 @@ const lpic101: LearningPath = {
           questions: [
             {
               id: 'q-mbr-logical',
+              objectives: ['104.1'],
               prompt: 'An MBR disk has primary partitions sda1 and sda2 and an extended partition sda3. You create the first logical partition. What is it called?',
               choices: ['sda4', 'sda5', 'sda3.1', 'sdb1'],
               answer: 1,
@@ -533,6 +552,7 @@ const lpic101: LearningPath = {
             },
             {
               id: 'q-fstab-pass',
+              objectives: ['104.3'],
               prompt: 'You add a data filesystem to /etc/fstab and want it checked at boot after the root filesystem. What goes in the last field?',
               code: 'UUID=7c1e...  /srv/data  ext4  defaults  0  ?',
               choices: ['0', '1', '2', '9'],
@@ -541,6 +561,7 @@ const lpic101: LearningPath = {
             },
             {
               id: 'q-df-inodes',
+              objectives: ['104.2'],
               prompt: 'Users get "No space left on device" when they create files in /var, but df -h shows /var only 40% full. What do you check next?',
               choices: [
                 'df -i, because the filesystem may have run out of inodes',
@@ -553,6 +574,7 @@ const lpic101: LearningPath = {
             },
             {
               id: 'q-umount-busy',
+              objectives: ['104.3'],
               prompt: 'umount /mnt/data fails with "target is busy". What is the likely cause?',
               choices: [
                 'The filesystem has errors, and umount refuses until fsck has checked it',
@@ -565,6 +587,7 @@ const lpic101: LearningPath = {
             },
             {
               id: 'q-gpt-fact',
+              objectives: ['104.1'],
               prompt: 'Which statement about GPT is true?',
               choices: [
                 'It allows four primary partitions and one extended partition',
@@ -587,6 +610,7 @@ const lpic101: LearningPath = {
         {
           kind: 'lesson',
           id: 'reading-and-setting-permissions',
+          objectives: ['104.5'],
           title: 'Reading and setting permissions',
           minutes: 4,
           blocks: [
@@ -633,6 +657,7 @@ const lpic101: LearningPath = {
         {
           kind: 'lesson',
           id: 'umask-and-special-bits',
+          objectives: ['104.5'],
           title: 'The umask and the special bits',
           minutes: 3,
           blocks: [
@@ -672,7 +697,7 @@ const lpic101: LearningPath = {
             tip(`Use umask 027 on servers where files should stay inside a team, and 077 for accounts that handle secrets.`),
           ],
         },
-        { kind: 'lab', id: 'lab-permissions', moduleId: 'lpi-104-5-permissions', note: 'Lock down a world-writable finance folder with chmod, chown and umask.' },
+        { kind: 'lab', id: 'lab-permissions', objectives: ['104.5'], moduleId: 'lpi-104-5-permissions', note: 'Lock down a world-writable finance folder with chmod, chown and umask.' },
         {
           kind: 'quiz',
           id: 'quiz-permissions',
@@ -681,6 +706,7 @@ const lpic101: LearningPath = {
           questions: [
             {
               id: 'q-umask-027',
+              objectives: ['104.5'],
               prompt: 'Your umask is 027. You create a regular file with touch. What mode does it get?',
               choices: ['637', '750', '640', '644'],
               answer: 2,
@@ -688,6 +714,7 @@ const lpic101: LearningPath = {
             },
             {
               id: 'q-read-mode',
+              objectives: ['104.5'],
               prompt: 'What can members of the group "web" do with this directory?',
               code: 'drwxr-x--- 2 alice web 4096 Oct 19 10:00 site',
               choices: [
@@ -701,6 +728,7 @@ const lpic101: LearningPath = {
             },
             {
               id: 'q-delete-readonly',
+              objectives: ['104.5'],
               prompt: 'notes.txt is mode 444 and owned by bob. Its directory is mode 777. Can another user, carol, delete notes.txt?',
               choices: [
                 'No, because the file is read-only',
@@ -713,6 +741,7 @@ const lpic101: LearningPath = {
             },
             {
               id: 'q-chown-order',
+              objectives: ['104.5'],
               prompt: 'As student (with sudo), you run these two commands on a directory you own. The second one fails. Why?',
               code: 'sudo chown root:finance /home/student/finance\nchmod 750 /home/student/finance',
               choices: [
@@ -726,6 +755,7 @@ const lpic101: LearningPath = {
             },
             {
               id: 'q-capital-s',
+              objectives: ['104.5'],
               prompt: 'ls -l shows -rwSr--r-- for a program. What does the capital S mean?',
               choices: [
                 'SUID is set and the owner can execute it',
@@ -738,6 +768,7 @@ const lpic101: LearningPath = {
             },
             {
               id: 'q-sgid-dir',
+              objectives: ['104.5'],
               prompt: 'A team shares /srv/projects. You want every new file created there to belong to the projects group, whoever creates it. What do you set on the directory?',
               choices: ['The sticky bit (chmod +t)', 'The SGID bit (chmod g+s)', 'The SUID bit (chmod u+s)', 'A umask of 002'],
               answer: 1,
@@ -784,6 +815,7 @@ const lpic101: LearningPath = {
           questions: [
             {
               id: 'f101-lspci-driver',
+              objectives: ['101.1'],
               prompt: 'A network card is listed by lspci, but you want to know which kernel driver is handling it. What do you run?',
               choices: ['lsmod -v', 'dmesg -k', 'modinfo -a', 'lspci -k'],
               answer: 3,
@@ -791,6 +823,7 @@ const lpic101: LearningPath = {
             },
             {
               id: 'f101-rescue',
+              objectives: ['101.3'],
               prompt: 'Which systemd target corresponds to the old single-user runlevel 1?',
               choices: ['multi-user.target', 'emergency.target', 'basic.target', 'rescue.target'],
               answer: 3,
@@ -798,6 +831,7 @@ const lpic101: LearningPath = {
             },
             {
               id: 'f101-tail-sort',
+              objectives: ['103.2'],
               prompt: 'What does this print?',
               code: 'sort -t: -k3 -n /etc/passwd | tail -n 1 | cut -d: -f1',
               choices: [
@@ -811,6 +845,7 @@ const lpic101: LearningPath = {
             },
             {
               id: 'f101-append',
+              objectives: ['103.4'],
               prompt: 'You want to add the output of a daily check to the end of report.txt without losing what is already there. Which operator?',
               choices: ['>', '2>', '>>', '|'],
               answer: 2,
@@ -818,6 +853,7 @@ const lpic101: LearningPath = {
             },
             {
               id: 'f101-nohup',
+              objectives: ['103.5'],
               prompt: 'You start a long job over SSH and need it to keep running after you log out. Which is the right approach?',
               choices: ['nice -n 19 ./job.sh', 'nohup ./job.sh &', './job.sh 2> /dev/null', 'kill -SIGCONT ./job.sh'],
               answer: 1,
@@ -825,6 +861,7 @@ const lpic101: LearningPath = {
             },
             {
               id: 'f101-mkfs',
+              objectives: ['104.1'],
               prompt: 'Which command creates an ext4 filesystem on the first partition of the second disk?',
               choices: ['mkfs -t ext4 /dev/sdb1', 'mount -t ext4 /dev/sdb1', 'fdisk -t ext4 /dev/sdb', 'mkfs.ext4 /dev/sda2'],
               answer: 0,
@@ -832,6 +869,7 @@ const lpic101: LearningPath = {
             },
             {
               id: 'f101-octal',
+              objectives: ['104.5'],
               prompt: 'Which mode is rwxr-x--x?',
               choices: ['751', '755', '741', '715'],
               answer: 0,
@@ -839,6 +877,7 @@ const lpic101: LearningPath = {
             },
             {
               id: 'f101-umask-dir',
+              objectives: ['104.5'],
               prompt: 'With a umask of 002, what mode does a new directory get?',
               choices: ['664', '777', '755', '775'],
               answer: 3,
@@ -846,6 +885,7 @@ const lpic101: LearningPath = {
             },
             {
               id: 'f101-sticky',
+              objectives: ['104.5'],
               prompt: 'Users of a shared upload directory keep deleting each other\'s files. All of them need to create files there. What fixes it?',
               choices: ['chmod 777 on the directory', 'chmod +t on the directory', 'chmod g+s on the directory', 'chmod 644 on every file'],
               answer: 1,
@@ -853,6 +893,7 @@ const lpic101: LearningPath = {
             },
             {
               id: 'f101-fsck',
+              objectives: ['104.2'],
               prompt: 'What is wrong with running fsck /dev/sda3 while /dev/sda3 is mounted read-write as /?',
               choices: [
                 'Nothing, because fsck locks the filesystem against writes while it works',
@@ -890,6 +931,7 @@ const lpic102: LearningPath = {
         {
           kind: 'lesson',
           id: 'account-files',
+          objectives: ['107.1'],
           title: 'Where accounts live',
           minutes: 3,
           blocks: [
@@ -932,6 +974,7 @@ const lpic102: LearningPath = {
         {
           kind: 'lesson',
           id: 'managing-accounts',
+          objectives: ['107.1'],
           title: 'Creating and changing accounts',
           minutes: 4,
           blocks: [
@@ -978,7 +1021,7 @@ const lpic102: LearningPath = {
             tip(`All of these work in the labs: create a test account with sudo useradd -m, then try sudo passwd -l, sudo chage -l and sudo userdel -r on it.`),
           ],
         },
-        { kind: 'lab', id: 'lab-user-admin', moduleId: 'lpi-107-1-user-administration', note: 'Create an account with a home directory, a shell and a supplementary group, then check the result.' },
+        { kind: 'lab', id: 'lab-user-admin', objectives: ['107.1'], moduleId: 'lpi-107-1-user-administration', note: 'Create an account with a home directory, a shell and a supplementary group, then check the result.' },
         {
           kind: 'quiz',
           id: 'quiz-accounts',
@@ -987,6 +1030,7 @@ const lpic102: LearningPath = {
           questions: [
             {
               id: 'q-usermod-a',
+              objectives: ['107.1'],
               prompt: 'sarah is in the developers and finance groups. You run the command below. Which supplementary groups does she have now?',
               code: 'sudo usermod -G docker sarah',
               choices: ['developers, finance and docker', 'docker only', 'developers and finance only', 'None, because the command fails without -a'],
@@ -995,6 +1039,7 @@ const lpic102: LearningPath = {
             },
             {
               id: 'q-passwd-field',
+              objectives: ['107.1'],
               prompt: 'What does this /etc/passwd line tell you about the account?',
               code: 'backup:x:34:34:backup:/var/backups:/usr/sbin/nologin',
               choices: [
@@ -1008,6 +1053,7 @@ const lpic102: LearningPath = {
             },
             {
               id: 'q-useradd-password',
+              objectives: ['107.1'],
               prompt: 'You created an account with useradd -m dave. Dave says he cannot log in with any password. Why?',
               choices: [
                 'useradd does not set a password; run passwd dave',
@@ -1020,6 +1066,7 @@ const lpic102: LearningPath = {
             },
             {
               id: 'q-all-groups',
+              objectives: ['107.1'],
               prompt: 'Which command shows every group sarah belongs to, including her primary group?',
               choices: ['grep sarah /etc/group', 'cat /etc/passwd | grep sarah', 'getent group sarah', 'id sarah'],
               answer: 3,
@@ -1027,6 +1074,7 @@ const lpic102: LearningPath = {
             },
             {
               id: 'q-chage-force',
+              objectives: ['107.1'],
               prompt: 'A user\'s password may have been seen by someone else. You want them to choose a new one the next time they log in. Which command?',
               choices: ['passwd -l user', 'chage -W 0 user', 'usermod -e 1 user', 'chage -d 0 user'],
               answer: 3,
@@ -1044,6 +1092,7 @@ const lpic102: LearningPath = {
         {
           kind: 'lesson',
           id: 'scheduling-jobs',
+          objectives: ['107.2'],
           title: 'Scheduling jobs',
           minutes: 3,
           blocks: [
@@ -1084,6 +1133,7 @@ const lpic102: LearningPath = {
         {
           kind: 'lesson',
           id: 'logs-and-time',
+          objectives: ['108.1', '108.2'],
           title: 'Logs and system time',
           minutes: 3,
           blocks: [
@@ -1128,6 +1178,7 @@ const lpic102: LearningPath = {
           questions: [
             {
               id: 'q-cron-read',
+              objectives: ['107.2'],
               prompt: 'When does this cron job run?',
               code: '0 4 * * 1 /usr/local/bin/report.sh',
               choices: ['At 01:04 every day', 'At 04:00 on the first of each month', 'At 04:00 every Monday', 'Every 4 hours on Mondays'],
@@ -1136,6 +1187,7 @@ const lpic102: LearningPath = {
             },
             {
               id: 'q-etc-crontab',
+              objectives: ['107.2'],
               prompt: 'You copy a line from your personal crontab into /etc/crontab and it stops working. What is missing?',
               choices: [
                 'The user field between the day of week and the command',
@@ -1148,6 +1200,7 @@ const lpic102: LearningPath = {
             },
             {
               id: 'q-journal-prio',
+              objectives: ['108.2'],
               prompt: 'You only want errors and worse from the current boot. Which command?',
               choices: ['journalctl -b -p warning', 'journalctl -k -p err', 'journalctl -b -u err', 'journalctl -b -p err'],
               answer: 3,
@@ -1155,6 +1208,7 @@ const lpic102: LearningPath = {
             },
             {
               id: 'q-at-list',
+              objectives: ['107.2'],
               prompt: 'You scheduled a job with at and now want to cancel it. What do you run first to find its number?',
               choices: ['crontab -l', 'atq', 'jobs', 'systemctl list-timers'],
               answer: 1,
@@ -1162,6 +1216,7 @@ const lpic102: LearningPath = {
             },
             {
               id: 'q-hwclock',
+              objectives: ['108.1'],
               prompt: 'NTP has set the system clock correctly, but after every reboot the time is wrong again until NTP catches up. Which command saves the correct time to the hardware clock?',
               choices: ['hwclock --hctosys', 'date --sync', 'hwclock --systohc', 'timedatectl set-local-rtc 1'],
               answer: 2,
@@ -1179,6 +1234,7 @@ const lpic102: LearningPath = {
         {
           kind: 'lesson',
           id: 'addresses-and-ports',
+          objectives: ['109.1'],
           title: 'Addresses, subnets and ports',
           minutes: 3,
           blocks: [
@@ -1221,6 +1277,7 @@ const lpic102: LearningPath = {
         {
           kind: 'lesson',
           id: 'linux-network-config',
+          objectives: ['109.2', '109.3', '109.4'],
           title: 'Configuring and testing the network',
           minutes: 4,
           blocks: [
@@ -1276,6 +1333,7 @@ const lpic102: LearningPath = {
           questions: [
             {
               id: 'q-listen-loopback',
+              objectives: ['109.3'],
               prompt: 'Users cannot reach the database on this server from their PCs, but it works from the server itself. What does this output show?',
               code: 'ss -tln\nState  Recv-Q Send-Q Local Address:Port Peer Address:Port\nLISTEN 0      128          0.0.0.0:22        0.0.0.0:*\nLISTEN 0      80         127.0.0.1:3306      0.0.0.0:*',
               choices: [
@@ -1289,6 +1347,7 @@ const lpic102: LearningPath = {
             },
             {
               id: 'q-hosts-vs-dig',
+              objectives: ['109.4'],
               prompt: 'ping fileserver works, but dig fileserver returns no answer. What is the most likely explanation?',
               choices: [
                 'The name is in /etc/hosts, which dig does not read',
@@ -1301,6 +1360,7 @@ const lpic102: LearningPath = {
             },
             {
               id: 'q-hosts-per-26',
+              objectives: ['109.1'],
               prompt: 'How many hosts can you address on 192.168.10.64/26?',
               choices: ['64', '30', '126', '62'],
               answer: 3,
@@ -1308,6 +1368,7 @@ const lpic102: LearningPath = {
             },
             {
               id: 'q-port-ldaps',
+              objectives: ['109.1'],
               prompt: 'A firewall rule must allow LDAP over TLS. Which port?',
               choices: ['389', '443', '636', '993'],
               answer: 2,
@@ -1315,6 +1376,7 @@ const lpic102: LearningPath = {
             },
             {
               id: 'q-resolv',
+              objectives: ['109.4'],
               prompt: 'Which file lists the DNS servers a Linux host sends queries to?',
               choices: ['/etc/hosts', '/etc/resolv.conf', '/etc/nsswitch.conf', '/etc/hostname'],
               answer: 1,
@@ -1332,6 +1394,7 @@ const lpic102: LearningPath = {
         {
           kind: 'lesson',
           id: 'host-security',
+          objectives: ['110.1', '110.2'],
           title: 'Checking a host for risks',
           minutes: 3,
           blocks: [
@@ -1368,6 +1431,7 @@ const lpic102: LearningPath = {
         {
           kind: 'lesson',
           id: 'ssh-and-gpg',
+          objectives: ['110.3'],
           title: 'SSH keys and GPG',
           minutes: 4,
           blocks: [
@@ -1418,6 +1482,7 @@ const lpic102: LearningPath = {
           questions: [
             {
               id: 'q-sudoers-edit',
+              objectives: ['110.1'],
               prompt: 'You need to let the ops group run any command as root. How should you make the change?',
               choices: [
                 'Add %ops ALL=(ALL:ALL) ALL using visudo',
@@ -1430,6 +1495,7 @@ const lpic102: LearningPath = {
             },
             {
               id: 'q-ssh-perms',
+              objectives: ['110.3'],
               prompt: 'You copied your public key to a server, but SSH still asks for a password. On the server you see this. What is wrong?',
               code: 'ls -ld ~/.ssh ~/.ssh/authorized_keys\ndrwxrwxrwx 2 dev dev 4096 Oct 21 09:10 /home/dev/.ssh\n-rw-rw-rw- 1 dev dev  101 Oct 21 09:10 /home/dev/.ssh/authorized_keys',
               choices: [
@@ -1443,6 +1509,7 @@ const lpic102: LearningPath = {
             },
             {
               id: 'q-gpg-encrypt',
+              objectives: ['110.3'],
               prompt: 'You want to send Sarah a file that only she can read. Which key do you encrypt it with?',
               choices: ['Your private key', 'Sarah\'s private key', 'Sarah\'s public key', 'Your public key'],
               answer: 2,
@@ -1450,6 +1517,7 @@ const lpic102: LearningPath = {
             },
             {
               id: 'q-nologin',
+              objectives: ['110.2'],
               prompt: 'During maintenance you want to stop all users except root from logging in, and show them a message. What do you do?',
               choices: [
                 'Set every user\'s shell to /bin/false',
@@ -1462,6 +1530,7 @@ const lpic102: LearningPath = {
             },
             {
               id: 'q-suid-find',
+              objectives: ['110.1'],
               prompt: 'What does this command list?',
               code: 'find / -perm -4000 -type f 2> /dev/null',
               choices: [
@@ -1512,6 +1581,7 @@ const lpic102: LearningPath = {
           questions: [
             {
               id: 'f102-skel',
+              objectives: ['107.1'],
               prompt: 'Every new account should start with a company .bashrc. Where do you put it?',
               choices: ['/etc/profile.d', '/etc/skel', '/etc/default/useradd', '/root'],
               answer: 1,
@@ -1519,6 +1589,7 @@ const lpic102: LearningPath = {
             },
             {
               id: 'f102-gid',
+              objectives: ['107.1'],
               prompt: 'In /etc/passwd, which field tells you a user\'s primary group?',
               choices: ['The second field', 'The fifth field', 'The fourth field', 'The member list in /etc/group'],
               answer: 2,
@@ -1526,6 +1597,7 @@ const lpic102: LearningPath = {
             },
             {
               id: 'f102-cron-15',
+              objectives: ['107.2'],
               prompt: 'Which crontab line runs a script every 15 minutes?',
               choices: ['15 * * * * /usr/local/bin/check.sh', '* */15 * * * /usr/local/bin/check.sh', '0 15 * * * /usr/local/bin/check.sh', '*/15 * * * * /usr/local/bin/check.sh'],
               answer: 3,
@@ -1533,6 +1605,7 @@ const lpic102: LearningPath = {
             },
             {
               id: 'f102-cron-allow',
+              objectives: ['107.2'],
               prompt: '/etc/cron.allow exists and contains only root and backup. What happens when student runs crontab -e?',
               choices: [
                 'It is refused, because student is not listed',
@@ -1545,6 +1618,7 @@ const lpic102: LearningPath = {
             },
             {
               id: 'f102-journal-persist',
+              objectives: ['108.2'],
               prompt: 'journalctl -b -1 says there is no previous boot to show. What is the likely reason?',
               choices: [
                 'journald only keeps kernel messages',
@@ -1557,6 +1631,7 @@ const lpic102: LearningPath = {
             },
             {
               id: 'f102-route',
+              objectives: ['109.3'],
               prompt: 'A host can ping machines on its own subnet but nothing beyond it. What do you check first?',
               choices: ['/etc/hosts', 'The SSH host keys', 'The DNS search domain in /etc/resolv.conf', 'The default route, with ip route'],
               answer: 3,
@@ -1564,6 +1639,7 @@ const lpic102: LearningPath = {
             },
             {
               id: 'f102-private',
+              objectives: ['109.1'],
               prompt: 'Which address is a private (RFC 1918) address?',
               choices: ['172.32.10.5', '169.254.10.5', '172.20.10.5', '192.169.10.5'],
               answer: 2,
@@ -1571,6 +1647,7 @@ const lpic102: LearningPath = {
             },
             {
               id: 'f102-ss-flags',
+              objectives: ['110.1'],
               prompt: 'Which command lists listening TCP and UDP ports with numbers instead of service names?',
               choices: ['ss -tuln', 'ss -an', 'ip -s link', 'netstat -r'],
               answer: 0,
@@ -1578,6 +1655,7 @@ const lpic102: LearningPath = {
             },
             {
               id: 'f102-lock-ssh',
+              objectives: ['110.1'],
               prompt: 'You ran passwd -l on a leaver\'s account, but they can still log in over SSH. Why?',
               choices: [
                 'passwd -l only takes effect after a reboot',
@@ -1590,6 +1668,7 @@ const lpic102: LearningPath = {
             },
             {
               id: 'f102-ssh-hostkey',
+              objectives: ['110.3'],
               prompt: 'SSH warns that the remote host identification for a server has changed. What is the right first step?',
               choices: [
                 'Delete ~/.ssh/known_hosts and reconnect',
@@ -1627,6 +1706,7 @@ const aplusCore2: LearningPath = {
         {
           kind: 'lesson',
           id: 'finding-your-way',
+          objectives: ['aplus-1202:1.0'],
           title: 'Finding your way in the command prompt',
           minutes: 4,
           blocks: [
@@ -1677,6 +1757,7 @@ const aplusCore2: LearningPath = {
         {
           kind: 'lesson',
           id: 'who-and-what',
+          objectives: ['aplus-1202:1.0'],
           title: 'Who, what and where: information commands',
           minutes: 3,
           blocks: [
@@ -1722,6 +1803,7 @@ const aplusCore2: LearningPath = {
           questions: [
             {
               id: 'q-robocopy-mir',
+              objectives: ['aplus-1202:1.0'],
               prompt: 'You run the command below to copy new files to a backup drive. Afterwards, files that only existed on the backup drive are gone. Why?',
               code: 'robocopy C:\\Data E:\\Backup /MIR',
               choices: [
@@ -1735,6 +1817,7 @@ const aplusCore2: LearningPath = {
             },
             {
               id: 'q-map-drive',
+              objectives: ['aplus-1202:1.0'],
               prompt: 'A user needs the share \\\\fs01\\finance available as drive F:. Which command?',
               choices: ['net user F: \\\\fs01\\finance', 'net share F: \\\\fs01\\finance', 'net use F: \\\\fs01\\finance', 'map F: \\\\fs01\\finance'],
               answer: 2,
@@ -1742,6 +1825,7 @@ const aplusCore2: LearningPath = {
             },
             {
               id: 'q-cd-drive',
+              objectives: ['aplus-1202:1.0'],
               prompt: 'Your prompt is C:\\Users\\Student. You type cd D:\\Logs and the prompt does not change. What happened?',
               choices: [
                 'D:\\Logs does not exist',
@@ -1754,6 +1838,7 @@ const aplusCore2: LearningPath = {
             },
             {
               id: 'q-whoami-groups',
+              objectives: ['aplus-1202:1.0'],
               prompt: 'You want to check which groups are in your current access token, for example to see whether the prompt is elevated. Which command?',
               choices: ['net user %USERNAME%', 'systeminfo', 'hostname /groups', 'whoami /groups'],
               answer: 3,
@@ -1761,6 +1846,7 @@ const aplusCore2: LearningPath = {
             },
             {
               id: 'q-rmdir',
+              objectives: ['aplus-1202:1.0'],
               prompt: 'rmdir C:\\Temp\\Old fails with "The directory is not empty." Which command removes the folder and everything in it?',
               choices: ['rmdir /s C:\\Temp\\Old', 'del C:\\Temp\\Old', 'rmdir /f C:\\Temp\\Old', 'md /d C:\\Temp\\Old'],
               answer: 0,
@@ -1778,6 +1864,7 @@ const aplusCore2: LearningPath = {
         {
           kind: 'lesson',
           id: 'partition-styles-and-filesystems',
+          objectives: ['aplus-1202:1.0'],
           title: 'Partition styles and file systems',
           minutes: 3,
           blocks: [
@@ -1806,6 +1893,7 @@ const aplusCore2: LearningPath = {
         {
           kind: 'lesson',
           id: 'diskpart-step-by-step',
+          objectives: ['aplus-1202:1.0'],
           title: 'diskpart step by step',
           minutes: 4,
           blocks: [
@@ -1850,7 +1938,7 @@ const aplusCore2: LearningPath = {
             tip(`Run list volume after assign to confirm the new volume has its letter, and detail disk (with a disk selected) to see the volumes on it. The Simulator tab draws the same layout as a disk map.`),
           ],
         },
-        { kind: 'lab', id: 'lab-diskpart', moduleId: 'win-pbq-diskpart-partitioning', note: 'Partition, format and letter a new SSD with diskpart, as in a performance-based question.' },
+        { kind: 'lab', id: 'lab-diskpart', objectives: ['aplus-1202:1.0'], moduleId: 'win-pbq-diskpart-partitioning', note: 'Partition, format and letter a new SSD with diskpart, as in a performance-based question.' },
         {
           kind: 'quiz',
           id: 'quiz-disks',
@@ -1859,6 +1947,7 @@ const aplusCore2: LearningPath = {
           questions: [
             {
               id: 'q-fat32-limit',
+              objectives: ['aplus-1202:1.0'],
               prompt: 'A 64 GB USB stick shows 50 GB free, but copying a 7 GB file fails with "The file is too large for the destination file system." What is the cause?',
               choices: [
                 'The stick is formatted MBR instead of GPT',
@@ -1871,6 +1960,7 @@ const aplusCore2: LearningPath = {
             },
             {
               id: 'q-diskpart-focus',
+              objectives: ['aplus-1202:1.0'],
               prompt: 'In diskpart you run list disk, then format fs=ntfs quick. diskpart reports that there is no volume selected. What did you miss?',
               choices: [
                 'Running exit first, because diskpart only applies the changes when it closes',
@@ -1883,6 +1973,7 @@ const aplusCore2: LearningPath = {
             },
             {
               id: 'q-diskpart-size',
+              objectives: ['aplus-1202:1.0'],
               prompt: 'Which command creates a 50 GB primary partition on the selected disk?',
               choices: ['create partition primary size=50', 'create partition primary size=50GB', 'create volume size=50000', 'create partition primary size=51200'],
               answer: 3,
@@ -1890,6 +1981,7 @@ const aplusCore2: LearningPath = {
             },
             {
               id: 'q-convert-gpt',
+              objectives: ['aplus-1202:1.0'],
               prompt: 'You need to change a data disk from MBR to GPT with diskpart. What must be true first?',
               choices: [
                 'The disk must be empty, with no partitions',
@@ -1902,6 +1994,7 @@ const aplusCore2: LearningPath = {
             },
             {
               id: 'q-quick-vs-full',
+              objectives: ['aplus-1202:1.0'],
               prompt: 'You are giving away an old data drive and want the files not to be recoverable with ordinary tools. Which format do you choose in Windows 10 or 11?',
               choices: ['A quick format', 'A full format', 'Either, they do the same', 'Neither: a format never touches the data area'],
               answer: 1,
@@ -1919,6 +2012,7 @@ const aplusCore2: LearningPath = {
         {
           kind: 'lesson',
           id: 'sfc-dism-chkdsk',
+          objectives: ['aplus-1202:1.0', 'aplus-1202:3.0'],
           title: 'SFC, DISM and chkdsk',
           minutes: 4,
           blocks: [
@@ -1964,6 +2058,7 @@ const aplusCore2: LearningPath = {
         {
           kind: 'lesson',
           id: 'when-windows-will-not-start',
+          objectives: ['aplus-1202:3.0'],
           title: 'When Windows will not start',
           minutes: 3,
           blocks: [
@@ -1988,7 +2083,7 @@ const aplusCore2: LearningPath = {
             tip(`Within Windows, msconfig's Boot tab can set Safe boot for the next restart. Remember to clear it afterwards, or the PC keeps starting in Safe Mode.`),
           ],
         },
-        { kind: 'lab', id: 'lab-sfc-dism', moduleId: 'win-pbq-sfc-dism-recovery', note: 'Repair corrupted system files with SFC, and the component store with DISM when SFC cannot finish.' },
+        { kind: 'lab', id: 'lab-sfc-dism', objectives: ['aplus-1202:1.0', 'aplus-1202:3.0'], moduleId: 'win-pbq-sfc-dism-recovery', note: 'Repair corrupted system files with SFC, and the component store with DISM when SFC cannot finish.' },
         {
           kind: 'quiz',
           id: 'quiz-repair',
@@ -1997,6 +2092,7 @@ const aplusCore2: LearningPath = {
           questions: [
             {
               id: 'q-sfc-next',
+              objectives: ['aplus-1202:3.0'],
               prompt: 'sfc /scannow reports the message below. What do you do next?',
               code: 'Windows Resource Protection found corrupt files but was unable to fix some\nof them.',
               choices: [
@@ -2010,6 +2106,7 @@ const aplusCore2: LearningPath = {
             },
             {
               id: 'q-sfc-elevated',
+              objectives: ['aplus-1202:1.0'],
               prompt: 'A technician runs sfc /scannow and is told "You must be an administrator running a console session in order to use the sfc utility." What is the fix?',
               choices: [
                 'Run the command from a prompt opened with Run as administrator',
@@ -2022,6 +2119,7 @@ const aplusCore2: LearningPath = {
             },
             {
               id: 'q-system-restore',
+              objectives: ['aplus-1202:3.0'],
               prompt: 'A user installed a new graphics driver yesterday and now Windows crashes after sign-in. What is the least disruptive fix that keeps their files?',
               choices: ['Reset this PC with Keep my files, which reinstalls Windows', 'System Restore to a point before the driver install', 'Format C: and reinstall', 'Run DISM /CheckHealth'],
               answer: 1,
@@ -2029,6 +2127,7 @@ const aplusCore2: LearningPath = {
             },
             {
               id: 'q-chkdsk-r',
+              objectives: ['aplus-1202:1.0'],
               prompt: 'Which command checks drive D: for file system errors and bad sectors, and fixes what it finds?',
               choices: ['chkdsk D:', 'sfc /scannow D:', 'dism /scanhealth D:', 'chkdsk D: /r'],
               answer: 3,
@@ -2036,6 +2135,7 @@ const aplusCore2: LearningPath = {
             },
             {
               id: 'q-dism-offline',
+              objectives: ['aplus-1202:3.0'],
               prompt: 'A PC has no internet access, and DISM /RestoreHealth fails because it cannot download repair files. What do you do?',
               choices: [
                 'Run DISM /CheckHealth instead',
@@ -2058,6 +2158,7 @@ const aplusCore2: LearningPath = {
         {
           kind: 'lesson',
           id: 'managing-services',
+          objectives: ['aplus-1202:1.0'],
           title: 'Managing services',
           minutes: 3,
           blocks: [
@@ -2096,6 +2197,7 @@ const aplusCore2: LearningPath = {
         {
           kind: 'lesson',
           id: 'first-network-checks',
+          objectives: ['aplus-1202:1.0'],
           title: 'First network checks',
           minutes: 4,
           blocks: [
@@ -2134,7 +2236,7 @@ const aplusCore2: LearningPath = {
             tip(`Some firewalls drop ping. A failed ping to a web server does not prove the server is down; a browser or Test-NetConnection with -Port 443 tests the service itself.`),
           ],
         },
-        { kind: 'lab', id: 'lab-services', moduleId: 'win-pbq-powershell-automation', note: 'Find the stopped Windows Time service and start it with PowerShell.' },
+        { kind: 'lab', id: 'lab-services', objectives: ['aplus-1202:1.0'], moduleId: 'win-pbq-powershell-automation', note: 'Find the stopped Windows Time service and start it with PowerShell.' },
         {
           kind: 'quiz',
           id: 'quiz-services-network',
@@ -2143,6 +2245,7 @@ const aplusCore2: LearningPath = {
           questions: [
             {
               id: 'q-service-reboot',
+              objectives: ['aplus-1202:1.0'],
               prompt: 'You start the Print Spooler with net start spooler and printing works, but after every restart it is stopped again. What do you change?',
               choices: [
                 'Set its startup type to Automatic',
@@ -2155,6 +2258,7 @@ const aplusCore2: LearningPath = {
             },
             {
               id: 'q-apipa',
+              objectives: ['aplus-1202:1.0'],
               prompt: 'What does this ipconfig output tell you?',
               code: 'Autoconfiguration IPv4 Address. . : 169.254.17.40\nSubnet Mask . . . . . . . . . . . : 255.255.0.0\nDefault Gateway . . . . . . . . . :',
               choices: [
@@ -2168,6 +2272,7 @@ const aplusCore2: LearningPath = {
             },
             {
               id: 'q-dns-vs-route',
+              objectives: ['aplus-1202:1.0'],
               prompt: 'ping 8.8.8.8 gets four replies, but ping www.example.com says it could not find the host. Where is the problem?',
               choices: ['The default gateway', 'Name resolution (DNS)', 'The network cable', 'The DHCP lease'],
               answer: 1,
@@ -2175,6 +2280,7 @@ const aplusCore2: LearningPath = {
             },
             {
               id: 'q-ps-stopped',
+              objectives: ['aplus-1202:1.0'],
               prompt: 'Which PowerShell command lists only the services that are stopped?',
               choices: [
                 'Get-Service -Stopped',
@@ -2187,6 +2293,7 @@ const aplusCore2: LearningPath = {
             },
             {
               id: 'q-tracert-use',
+              objectives: ['aplus-1202:1.0'],
               prompt: 'Users at a branch office can reach the local file server but a cloud application times out. You want to see where along the route traffic stops. Which tool?',
               choices: ['ipconfig /all', 'nslookup', 'netstat -an', 'tracert'],
               answer: 3,
@@ -2236,6 +2343,7 @@ const aplusCore2: LearningPath = {
           questions: [
             {
               id: 'f1202-diskpart-order',
+              objectives: ['aplus-1202:1.0'],
               prompt: 'A new disk is Disk 2 in list disk. Which sequence prepares it as drive G: with NTFS?',
               choices: [
                 'select disk 2, format fs=ntfs quick, create partition primary, assign letter=G',
@@ -2248,6 +2356,7 @@ const aplusCore2: LearningPath = {
             },
             {
               id: 'f1202-exfat',
+              objectives: ['aplus-1202:1.0'],
               prompt: 'A photographer needs a USB drive that works on both Windows and macOS and holds video files over 4 GB. Which file system?',
               choices: ['FAT32', 'NTFS', 'ReFS', 'exFAT'],
               answer: 3,
@@ -2255,6 +2364,7 @@ const aplusCore2: LearningPath = {
             },
             {
               id: 'f1202-sfc-dism-order',
+              objectives: ['aplus-1202:3.0'],
               prompt: 'What does DISM /Online /Cleanup-Image /CheckHealth do?',
               choices: [
                 'Reports whether corruption in the component store has already been recorded, and changes nothing',
@@ -2267,6 +2377,7 @@ const aplusCore2: LearningPath = {
             },
             {
               id: 'f1202-whoami',
+              objectives: ['aplus-1202:1.0'],
               prompt: 'On a remote session you are not sure which account you are using. Which command tells you?',
               choices: ['hostname', 'net use', 'whoami', 'systeminfo /user'],
               answer: 2,
@@ -2274,6 +2385,7 @@ const aplusCore2: LearningPath = {
             },
             {
               id: 'f1202-net-use',
+              objectives: ['aplus-1202:1.0'],
               prompt: 'A mapped drive Z: points to an old server. Which command removes the mapping?',
               choices: ['net user Z: /delete', 'net use Z: /delete', 'del Z:', 'rmdir Z:\\'],
               answer: 1,
@@ -2281,6 +2393,7 @@ const aplusCore2: LearningPath = {
             },
             {
               id: 'f1202-safe-mode',
+              objectives: ['aplus-1202:3.0'],
               prompt: 'Windows crashes during normal startup after a driver update, so you cannot run anything. How do you get to a point where you can roll the driver back?',
               choices: [
                 'Run gpupdate /force at the sign-in screen',
@@ -2293,6 +2406,7 @@ const aplusCore2: LearningPath = {
             },
             {
               id: 'f1202-sc-config',
+              objectives: ['aplus-1202:1.0'],
               prompt: 'What is wrong with this command?',
               code: 'sc config W32Time start=auto',
               choices: [
@@ -2306,6 +2420,7 @@ const aplusCore2: LearningPath = {
             },
             {
               id: 'f1202-flushdns',
+              objectives: ['aplus-1202:1.0'],
               prompt: 'A website moved to a new address an hour ago. Other PCs reach it, but one PC still goes to the old address. Which command should you try first?',
               choices: ['ipconfig /release', 'ipconfig /flushdns', 'tracert', 'netstat -an'],
               answer: 1,
@@ -2313,6 +2428,7 @@ const aplusCore2: LearningPath = {
             },
             {
               id: 'f1202-restart-service',
+              objectives: ['aplus-1202:1.0'],
               prompt: 'Which PowerShell command stops and then starts the Print Spooler in one step?',
               choices: ['Start-Service Spooler -Force', 'Set-Service Spooler -Restart', 'Restart-Service Spooler', 'Get-Service Spooler | Start-Service'],
               answer: 2,
@@ -2345,6 +2461,7 @@ const netsecWindows: LearningPath = {
         {
           kind: 'lesson',
           id: 'dhcp-and-apipa',
+          objectives: ['n10-009:1.0', 'n10-009:5.0'],
           title: 'DHCP, APIPA and reading ipconfig /all',
           minutes: 4,
           blocks: [
@@ -2392,6 +2509,7 @@ const netsecWindows: LearningPath = {
         {
           kind: 'lesson',
           id: 'troubleshooting-method',
+          objectives: ['n10-009:5.0'],
           title: 'A method for network problems',
           minutes: 4,
           blocks: [
@@ -2440,7 +2558,7 @@ const netsecWindows: LearningPath = {
             exam(`"Verify full system functionality" comes after implementing the fix and before documenting. A question that asks what to do right after a fix is applied usually wants verification, not documentation.`),
           ],
         },
-        { kind: 'lab', id: 'lab-network', moduleId: 'win-pbq-network-troubleshoot', note: 'Diagnose an APIPA address, renew the lease, flush DNS and prove connectivity.' },
+        { kind: 'lab', id: 'lab-network', objectives: ['n10-009:5.0'], moduleId: 'win-pbq-network-troubleshoot', note: 'Diagnose an APIPA address, renew the lease, flush DNS and prove connectivity.' },
         {
           kind: 'quiz',
           id: 'quiz-client-network',
@@ -2449,6 +2567,7 @@ const netsecWindows: LearningPath = {
           questions: [
             {
               id: 'q-many-apipa',
+              objectives: ['n10-009:5.0'],
               prompt: 'At 9:00, twenty PCs on the same VLAN all show 169.254.x.x addresses. What is the most likely cause?',
               choices: [
                 'Their DNS cache is out of date',
@@ -2461,6 +2580,7 @@ const netsecWindows: LearningPath = {
             },
             {
               id: 'q-ping-order',
+              objectives: ['n10-009:5.0'],
               prompt: 'A PC can ping its own address and 127.0.0.1 but not its default gateway. Where do you look?',
               choices: ['DNS settings', 'The routes beyond the gateway, with tracert to find the hop that fails', 'The local link: cable, switch port, VLAN or the gateway', 'The TCP/IP stack on the PC'],
               answer: 2,
@@ -2468,6 +2588,7 @@ const netsecWindows: LearningPath = {
             },
             {
               id: 'q-next-step',
+              objectives: ['n10-009:5.0'],
               prompt: 'You replaced a faulty patch cable and the user can browse again. According to the CompTIA troubleshooting method, what do you do next?',
               choices: [
                 'Document the findings, actions and outcomes, and then close the ticket',
@@ -2480,6 +2601,7 @@ const netsecWindows: LearningPath = {
             },
             {
               id: 'q-port-test',
+              objectives: ['n10-009:5.0'],
               prompt: 'A web server does not answer ping, but users say the site is up. Which command checks the service itself from a Windows client?',
               choices: ['Test-NetConnection web01 -Port 443', 'Test-Connection web01 -Count 4 -Quiet', 'ipconfig /displaydns', 'tracert -d web01'],
               answer: 0,
@@ -2487,6 +2609,7 @@ const netsecWindows: LearningPath = {
             },
             {
               id: 'q-dora',
+              objectives: ['n10-009:1.0'],
               prompt: 'Put the DHCP lease messages in order.',
               choices: [
                 'Request, Offer, Discover, Acknowledge',
@@ -2509,6 +2632,7 @@ const netsecWindows: LearningPath = {
         {
           kind: 'lesson',
           id: 'ad-building-blocks',
+          objectives: ['sy0-701:4.0'],
           title: 'Domains, OUs and groups',
           minutes: 3,
           blocks: [
@@ -2537,6 +2661,7 @@ const netsecWindows: LearningPath = {
         {
           kind: 'lesson',
           id: 'ad-powershell',
+          objectives: ['sy0-701:4.0'],
           title: 'Account work in PowerShell',
           minutes: 3,
           blocks: [
@@ -2575,7 +2700,7 @@ const netsecWindows: LearningPath = {
             tip(`Try it in the lab: Get-ADUser -Identity jdoe -Properties LockedOut shows the lockout before you unlock him, and the same command afterwards shows LockedOut : False.`),
           ],
         },
-        { kind: 'lab', id: 'lab-active-directory', moduleId: 'win-pbq-active-directory-mgmt', note: 'Unlock a locked-out user, create an admin account and add it to Domain Admins.' },
+        { kind: 'lab', id: 'lab-active-directory', objectives: ['sy0-701:4.0'], moduleId: 'win-pbq-active-directory-mgmt', note: 'Unlock a locked-out user, create an admin account and add it to Domain Admins.' },
         {
           kind: 'quiz',
           id: 'quiz-active-directory',
@@ -2584,6 +2709,7 @@ const netsecWindows: LearningPath = {
           questions: [
             {
               id: 'q-locked-vs-disabled',
+              objectives: ['sy0-701:4.0'],
               prompt: 'What does this output tell you about the account?',
               code: 'Enabled           : True\nLockedOut         : True\nSamAccountName    : jdoe',
               choices: [
@@ -2597,6 +2723,7 @@ const netsecWindows: LearningPath = {
             },
             {
               id: 'q-helpdesk-reset',
+              objectives: ['sy0-701:4.0'],
               prompt: 'Help desk staff need to reset passwords for users in the Sales OU. What follows least privilege?',
               choices: [
                 'Add them to Domain Admins',
@@ -2609,6 +2736,7 @@ const netsecWindows: LearningPath = {
             },
             {
               id: 'q-new-user-disabled',
+              objectives: ['sy0-701:4.0'],
               prompt: 'You created a user with the command below. The user cannot sign in. Why?',
               code: 'New-ADUser -SamAccountName pjones -Name "Pat Jones" -Path "OU=Sales,DC=corp,DC=local"',
               choices: [
@@ -2622,6 +2750,7 @@ const netsecWindows: LearningPath = {
             },
             {
               id: 'q-group-type',
+              objectives: ['sy0-701:4.0'],
               prompt: 'You need a group to grant read access to a shared folder. Which group type must it be?',
               choices: ['Distribution', 'Security', 'Universal distribution', 'Organizational unit'],
               answer: 1,
@@ -2629,6 +2758,7 @@ const netsecWindows: LearningPath = {
             },
             {
               id: 'q-leaver',
+              objectives: ['sy0-701:4.0'],
               prompt: 'An employee leaves today. What should happen to their AD account first?',
               choices: [
                 'Delete it immediately',
@@ -2651,6 +2781,7 @@ const netsecWindows: LearningPath = {
         {
           kind: 'lesson',
           id: 'how-group-policy-applies',
+          objectives: ['sy0-701:4.0'],
           title: 'How Group Policy reaches a computer',
           minutes: 4,
           blocks: [
@@ -2694,7 +2825,7 @@ const netsecWindows: LearningPath = {
             exam(`For domain accounts, password and account lockout policy comes from a GPO linked at the domain level, normally the Default Domain Policy. The same settings linked to an OU do not change domain account passwords. Fine-grained password policies are the supported way to give some users different rules.`),
           ],
         },
-        { kind: 'lab', id: 'lab-group-policy', moduleId: 'win-pbq-group-policy-mgmt', note: 'Force a policy refresh and use gpresult to prove the new baseline applied.' },
+        { kind: 'lab', id: 'lab-group-policy', objectives: ['sy0-701:4.0'], moduleId: 'win-pbq-group-policy-mgmt', note: 'Force a policy refresh and use gpresult to prove the new baseline applied.' },
         {
           kind: 'quiz',
           id: 'quiz-group-policy',
@@ -2703,6 +2834,7 @@ const netsecWindows: LearningPath = {
           questions: [
             {
               id: 'q-gpo-now',
+              objectives: ['sy0-701:4.0'],
               prompt: 'A GPO was changed ten minutes ago. The auditor wants to see the setting on a workstation now. What do you run on the workstation?',
               choices: ['gpresult /r', 'gpupdate /force', 'gpedit.msc', 'net stop gpsvc'],
               answer: 1,
@@ -2710,6 +2842,7 @@ const netsecWindows: LearningPath = {
             },
             {
               id: 'q-lsdou',
+              objectives: ['sy0-701:4.0'],
               prompt: 'The domain GPO sets the desktop wallpaper to blue. A GPO linked to the Sales OU sets it to green. Neither link is enforced. What does a Sales user get?',
               choices: ['Blue', 'Whichever GPO was created first', 'Green', 'No wallpaper, because the settings conflict'],
               answer: 2,
@@ -2717,6 +2850,7 @@ const netsecWindows: LearningPath = {
             },
             {
               id: 'q-gpo-group',
+              objectives: ['sy0-701:4.0'],
               prompt: 'A junior admin tries to link a GPO to the "Finance Users" security group, and it is not possible. How should the GPO be targeted at those users?',
               choices: [
                 'Link it to the OU that holds the users, and use security filtering for Finance Users if needed',
@@ -2729,6 +2863,7 @@ const netsecWindows: LearningPath = {
             },
             {
               id: 'q-gpo-missing',
+              objectives: ['sy0-701:4.0'],
               prompt: 'gpresult /r on a laptop does not list the Workstation Security Baseline GPO, which is linked to the Workstations OU. What do you check first?',
               choices: [
                 'Whether the laptop has the latest Windows updates and has restarted since',
@@ -2751,6 +2886,7 @@ const netsecWindows: LearningPath = {
         {
           kind: 'lesson',
           id: 'incident-response-process',
+          objectives: ['sy0-701:4.0'],
           title: 'The incident response process',
           minutes: 3,
           blocks: [
@@ -2783,6 +2919,7 @@ const netsecWindows: LearningPath = {
         {
           kind: 'lesson',
           id: 'trace-connection-to-process',
+          objectives: ['sy0-701:2.0', 'sy0-701:4.0'],
           title: 'Tracing a connection to a process',
           minutes: 3,
           blocks: [
@@ -2819,7 +2956,7 @@ const netsecWindows: LearningPath = {
             warn(`Killing the process ends the connection, not the infection. Look for how it gets started again: Run keys in the registry, scheduled tasks (schtasks /query), and new services. Until those are removed, the host is not clean.`),
           ],
         },
-        { kind: 'lab', id: 'lab-incident-response', moduleId: 'win-pbq-incident-response-taskkill', note: 'Trace a connection to port 4444 to its process with netstat and tasklist, then stop it.' },
+        { kind: 'lab', id: 'lab-incident-response', objectives: ['sy0-701:4.0'], moduleId: 'win-pbq-incident-response-taskkill', note: 'Trace a connection to port 4444 to its process with netstat and tasklist, then stop it.' },
         {
           kind: 'quiz',
           id: 'quiz-incident-response',
@@ -2828,6 +2965,7 @@ const netsecWindows: LearningPath = {
           questions: [
             {
               id: 'q-netstat-pid',
+              objectives: ['sy0-701:4.0'],
               prompt: 'Which process owns the suspicious connection?',
               code: '  TCP    192.168.1.145:49811    203.0.113.88:4444      ESTABLISHED     3892\n  TCP    192.168.1.145:49668    192.168.1.10:389       ESTABLISHED     1120',
               choices: ['The process with PID 49811', 'The process with PID 1120', 'The process with PID 3892', 'The process listening on port 4444 on this PC'],
@@ -2836,6 +2974,7 @@ const netsecWindows: LearningPath = {
             },
             {
               id: 'q-ir-first',
+              objectives: ['sy0-701:4.0'],
               prompt: 'Analysis confirms a workstation is infected and talking to an attacker\'s server. What should you do next?',
               choices: [
                 'Isolate the workstation from the network',
@@ -2848,6 +2987,7 @@ const netsecWindows: LearningPath = {
             },
             {
               id: 'q-volatility',
+              objectives: ['sy0-701:4.0'],
               prompt: 'Which of these should you collect first?',
               choices: ['The contents of the hard disk', 'Firewall logs on the log server', 'Last night\'s backup', 'The contents of memory'],
               answer: 3,
@@ -2855,6 +2995,7 @@ const netsecWindows: LearningPath = {
             },
             {
               id: 'q-taskkill-tree',
+              objectives: ['sy0-701:4.0'],
               prompt: 'A malicious process keeps child processes running after you kill it. Which command ends the process and its children?',
               choices: ['taskkill /PID 3892', 'taskkill /F /T /PID 3892', 'tasklist /svc /PID 3892', 'Stop-Service -Id 3892'],
               answer: 1,
@@ -2862,6 +3003,7 @@ const netsecWindows: LearningPath = {
             },
             {
               id: 'q-chain-custody',
+              objectives: ['sy0-701:4.0'],
               prompt: 'Which record shows who collected a disk image, when, and everyone who has handled it since?',
               choices: ['Legal hold', 'Order of volatility', 'Chain of custody', 'Lessons learned report'],
               answer: 2,
@@ -2911,6 +3053,7 @@ const netsecWindows: LearningPath = {
           questions: [
             {
               id: 'fns-one-apipa',
+              objectives: ['n10-009:5.0'],
               prompt: 'Only one PC in an office has a 169.254.x.x address; the rest are fine. What do you check first?',
               choices: ['The DHCP scope size', 'The DNS server', 'That PC\'s cable, switch port or wireless connection', 'The DHCP relay (IP helper) setting on the office router'],
               answer: 2,
@@ -2918,6 +3061,7 @@ const netsecWindows: LearningPath = {
             },
             {
               id: 'fns-flushdns',
+              objectives: ['n10-009:5.0'],
               prompt: 'After a DHCP fix, a PC can ping 8.8.8.8 but still cannot open the intranet by name, while other PCs can. Which command is the likely fix?',
               choices: ['ipconfig /flushdns', 'ipconfig /renew', 'tracert intranet', 'gpupdate /force'],
               answer: 0,
@@ -2925,6 +3069,7 @@ const netsecWindows: LearningPath = {
             },
             {
               id: 'fns-tracert-icmp',
+              objectives: ['n10-009:5.0'],
               prompt: 'What does Windows tracert send by default?',
               choices: ['UDP probes to high ports', 'TCP SYN packets to port 80', 'ARP requests', 'ICMP echo requests'],
               answer: 3,
@@ -2932,6 +3077,7 @@ const netsecWindows: LearningPath = {
             },
             {
               id: 'fns-unlock',
+              objectives: ['sy0-701:4.0'],
               prompt: 'A user was locked out at 9:00 after mistyping their password. The domain\'s account lockout duration is 30 minutes. If nobody does anything, what happens?',
               choices: [
                 'The account stays locked until an administrator unlocks it',
@@ -2944,6 +3090,7 @@ const netsecWindows: LearningPath = {
             },
             {
               id: 'fns-agdlp',
+              objectives: ['sy0-701:4.0'],
               prompt: 'Following AGDLP, where do you assign the permission on a file share?',
               choices: ['To each user account', 'To a global group of users', 'To a domain local group', 'To the OU holding the users'],
               answer: 2,
@@ -2951,6 +3098,7 @@ const netsecWindows: LearningPath = {
             },
             {
               id: 'fns-enforced',
+              objectives: ['sy0-701:4.0'],
               prompt: 'A security baseline GPO is linked at the domain. Some OU administrators keep overriding it with their own GPOs. What stops that?',
               choices: ['Set the domain link to Enforced', 'Enable Block Inheritance on their OUs', 'Run gpupdate /force on every PC', 'Move the baseline to Local Group Policy'],
               answer: 0,
@@ -2958,6 +3106,7 @@ const netsecWindows: LearningPath = {
             },
             {
               id: 'fns-password-policy',
+              objectives: ['sy0-701:4.0'],
               prompt: 'You set a 16-character minimum password length in a GPO linked to the IT OU. IT users can still set 14-character domain passwords. Why?',
               choices: [
                 'gpupdate has not run on the domain controllers',
@@ -2970,6 +3119,7 @@ const netsecWindows: LearningPath = {
             },
             {
               id: 'fns-masquerade',
+              objectives: ['sy0-701:2.0'],
               prompt: 'tasklist shows a process named svchost.exe running in the user\'s Console session from C:\\Users\\jdoe\\AppData\\Roaming. What should you conclude?',
               choices: [
                 'It is normal: svchost.exe hosts Windows services',
@@ -2982,6 +3132,7 @@ const netsecWindows: LearningPath = {
             },
             {
               id: 'fns-netstat-b',
+              objectives: ['sy0-701:4.0'],
               prompt: 'netstat -b returns "The requested operation requires elevation." What do you do?',
               choices: ['Use netstat -an instead, which shows the same thing', 'Open the prompt with Run as administrator and run it again', 'Add the user to Domain Admins', 'Run netstat -b /force'],
               answer: 1,
@@ -2989,6 +3140,7 @@ const netsecWindows: LearningPath = {
             },
             {
               id: 'fns-after-kill',
+              objectives: ['sy0-701:2.0', 'sy0-701:4.0'],
               prompt: 'You killed a malicious process and the connection to port 4444 is gone. An hour later it is back. What did you miss?',
               choices: [
                 'Flushing the DNS cache so it can no longer find its server',

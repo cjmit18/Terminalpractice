@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ExamModule, ModuleObjective } from '../../types/modules';
 import { Check, CheckCircle2 } from 'lucide-react';
+import { TicketAsk } from './Ticket';
 
 /**
  * Hints in the data read like `Execute: chmod 750 dir` or `Run "ls -ld dir" to ...`.
@@ -68,6 +69,7 @@ export const TasksPanel: React.FC<TasksPanelProps> = ({ module, completed, onHin
   return (
     <div className="space-y-8 max-w-prose">
       <section className="space-y-3">
+        <TicketAsk ticket={module.ticket} />
         <p className="text-[15px] leading-relaxed">{module.scenarioDescription}</p>
         <p className="text-sm text-muted">{module.systemContext.split(/\s*\|\s*/).join(' · ')}</p>
       </section>

@@ -4,7 +4,11 @@
  *
  * Rules the UI relies on:
  * - Path ids, stage ids and step ids are stable (they key saved progress). Step ids are unique within a path.
- * - A stage unlocks when every step of the previous stage is complete. Steps inside a stage can be done in any order.
+ * - Stages have a suggested order: a stage is suggested once every step of the previous stage is complete
+ *   (alternatives sharing a choiceGroup count as one step: any one of them will do).
+ *   Nothing is locked; a later stage says "Suggested after ..." and can be opened anyway. Steps inside a stage
+ *   can be done in any order. Passing a stage's checkpoint marks that stage's lessons as known.
+ * - Question ids are unique within a path (they key the review queue's saved answers).
  * - A lesson is complete once the learner marks it read; a lab once all its objectives pass;
  *   a quiz once the learner scores at least `passMark` (fraction of questions, 0-1).
  */
@@ -33,6 +37,8 @@ export interface QuizQuestion {
   answer: number;
   /** Why the answer is right (and the tempting wrong one is wrong). Shown after answering. */
   explanation: string;
+  /** Exam objective ids this covers (keys of EXAM_OBJECTIVES in src/data/examObjectives.ts). Optional. */
+  objectives?: string[];
 }
 
 export type PathStep = (
@@ -42,6 +48,8 @@ export type PathStep = (
       title: string;
       minutes: number;
       blocks: LessonBlock[];
+      /** Exam objective ids this covers (keys of EXAM_OBJECTIVES in src/data/examObjectives.ts). Optional. */
+      objectives?: string[];
     }
   | {
       kind: 'lab';
@@ -50,6 +58,8 @@ export type PathStep = (
       moduleId: string;
       /** One sentence on why this lab sits here in the path */
       note?: string;
+      /** Exam objective ids this covers (keys of EXAM_OBJECTIVES in src/data/examObjectives.ts). Optional. */
+      objectives?: string[];
     }
   | {
       kind: 'quiz';
