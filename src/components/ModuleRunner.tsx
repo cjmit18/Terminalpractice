@@ -76,6 +76,28 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
 
   const execute = useCallback((lines: string | string[]) => run(lines, activeShell), [run, activeShell]);
 
+  // Walkthrough steps are written for the lab's default shell; switch to it so they never run in the other one
+  const runStep = useCallback((lines: string | string[]) => {
+    setActiveShell(module.defaultShell);
+    run(lines, module.defaultShell);
+  }, [run, module.defaultShell]);
+
+  const panelRef = useRef<HTMLDivElement>(null);
+  const terminalRef = useRef<HTMLElement>(null);
+
+  // Each tab starts at the top; panels stay mounted so open hints and run marks survive a switch
+  useEffect(() => {
+    if (panelRef.current) panelRef.current.scrollTop = 0;
+  }, [activeTab]);
+
+  const showPane = (pane: 'lab' | 'terminal') => {
+    setMobilePane(pane);
+    // On phones, opening the terminal should let you type straight away
+    if (pane === 'terminal') {
+      requestAnimationFrame(() => terminalRef.current?.querySelector<HTMLInputElement>('input[aria-label="Command"]')?.focus());
+    }
+  };
+
   const handleResetLab = () => {
     // Resetting restores the environment; objectives already earned stay earned
     reset(freshSession(module));
@@ -119,9 +141,15 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
   const currentTab = tabs.some(t => t.id === activeTab) ? activeTab : 'tasks';
 
   const onTabKeyDown = (e: React.KeyboardEvent, idx: number) => {
-    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+    const target =
+      e.key === 'ArrowRight' ? (idx + 1) % tabs.length
+      : e.key === 'ArrowLeft' ? (idx + tabs.length - 1) % tabs.length
+      : e.key === 'Home' ? 0
+      : e.key === 'End' ? tabs.length - 1
+      : null;
+    if (target === null) return;
     e.preventDefault();
-    const next = tabs[(idx + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
+    const next = tabs[target];
     setActiveTab(next.id);
     document.getElementById(`lab-tab-${next.id}`)?.focus();
   };
@@ -148,12 +176,12 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
               key={pane}
               type="button"
               aria-pressed={mobilePane === pane}
-              onClick={() => setMobilePane(pane)}
+              onClick={() => showPane(pane)}
               className={`flex-1 ${segmentClass(mobilePane === pane)}`}
             >
               {pane === 'lab' ? (
                 <>
-                  Lab <span className={mobilePane === pane ? 'text-accent' : 'text-subtle'}>· {done} of {total}</span>
+                  Lab <span className={mobilePane === pane ? 'text-accent' : 'text-muted'}>· {done} of {total}</span>
                 </>
               ) : (
                 'Terminal'
@@ -196,22 +224,23 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
           </div>
 
           <div
-            key={currentTab}
+            ref={panelRef}
             id="lab-panel"
             role="tabpanel"
             aria-labelledby={`lab-tab-${currentTab}`}
             tabIndex={0}
             className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 py-6"
           >
-            {currentTab === 'tasks' && <TasksPanel key={module.id} module={module} completed={completed} />}
-            {currentTab === 'simulator' && renderSimulator()}
-            {currentTab === 'concepts' && <ConceptsPanel module={module} />}
-            {currentTab === 'walkthrough' && <WalkthroughPanel key={module.id} module={module} onRunStep={execute} />}
+            <div hidden={currentTab !== 'tasks'}><TasksPanel key={module.id} module={module} completed={completed} /></div>
+            {module.simType !== 'terminal-only' && <div hidden={currentTab !== 'simulator'} className="h-full">{renderSimulator()}</div>}
+            <div hidden={currentTab !== 'concepts'}><ConceptsPanel module={module} /></div>
+            <div hidden={currentTab !== 'walkthrough'}><WalkthroughPanel key={module.id} module={module} onRunStep={runStep} /></div>
           </div>
         </section>
 
         {/* Right: the terminal */}
         <section
+          ref={terminalRef}
           aria-label="Terminal"
           className={`${mobilePane === 'terminal' ? 'flex' : 'hidden'} lg:flex flex-col min-h-0 overflow-hidden p-3 sm:p-4`}
         >

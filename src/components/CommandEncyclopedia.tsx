@@ -85,7 +85,7 @@ export const CommandEncyclopedia: React.FC<CommandEncyclopediaProps> = ({
               placeholder="Search, e.g. -ano or /flushdns"
               autoComplete="off"
               spellCheck={false}
-              className="min-h-10 w-full rounded-md border border-line-strong bg-surface pl-9 pr-10 text-[15px] text-text placeholder:text-subtle [&::-webkit-search-cancel-button]:hidden"
+              className="min-h-10 w-full rounded-md border border-line-strong bg-surface pl-9 pr-10 text-[15px] text-text placeholder:text-muted [&::-webkit-search-cancel-button]:hidden"
             />
             {search && (
               <button
@@ -172,7 +172,7 @@ export const CommandEncyclopedia: React.FC<CommandEncyclopediaProps> = ({
             </button>
 
             <header>
-              <h1 className="break-words font-mono text-2xl font-semibold">{selected.name}</h1>
+              <h2 className="break-words font-mono text-2xl font-semibold">{selected.name}</h2>
               <p className="mt-1 text-sm text-muted">
                 {PLATFORM_LABEL[selected.platform]} · {selected.category} · {selected.exam}
               </p>

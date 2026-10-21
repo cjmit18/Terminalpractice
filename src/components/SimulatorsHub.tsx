@@ -14,12 +14,12 @@ interface SimulatorsHubProps {
 
 type SimId = 'ad' | 'gpo' | 'disk' | 'network' | 'chmod';
 
-const SIMS: { id: SimId; label: string }[] = [
-  { id: 'ad', label: 'Active Directory' },
-  { id: 'gpo', label: 'Group Policy' },
-  { id: 'disk', label: 'Disk Management' },
+const SIMS: { id: SimId; label: string; short?: string }[] = [
+  { id: 'ad', label: 'Active Directory', short: 'AD' },
+  { id: 'gpo', label: 'Group Policy', short: 'GPO' },
+  { id: 'disk', label: 'Disk Management', short: 'Disks' },
   { id: 'network', label: 'Network' },
-  { id: 'chmod', label: 'File permissions' },
+  { id: 'chmod', label: 'File permissions', short: 'Permissions' },
 ];
 
 export const SimulatorsHub: React.FC<SimulatorsHubProps> = ({
@@ -57,6 +57,7 @@ export const SimulatorsHub: React.FC<SimulatorsHubProps> = ({
             return (
               <button
                 key={s.id}
+                aria-label={s.label}
                 ref={el => {
                   tabRefs.current[s.id] = el;
                 }}
@@ -73,7 +74,14 @@ export const SimulatorsHub: React.FC<SimulatorsHubProps> = ({
                   selected ? 'border-accent text-text' : 'border-transparent text-muted hover:text-text',
                 )}
               >
-                {s.label}
+                {s.short ? (
+                  <>
+                    <span className="sm:hidden">{s.short}</span>
+                    <span className="hidden sm:inline">{s.label}</span>
+                  </>
+                ) : (
+                  s.label
+                )}
               </button>
             );
           })}

@@ -45,10 +45,8 @@ test('after a second online visit the app loads offline', async ({ page, context
   await expectAppOffline(page);
 });
 
-test.fixme('after the first visit the app loads offline', async ({ page, context }) => {
-  // App bug: public/sw.js precaches only index.html, the manifest and icons. The hashed JS/CSS
-  // bundles are fetched before the worker controls the page, so they are never cached and an
-  // offline reload after one visit renders a blank page.
+test('after the first visit the app loads offline', async ({ page, context }) => {
+  // The build writes the hashed bundles into the worker's precache list, so one visit is enough.
   await page.goto('#/linux');
   await expect(page.getByRole('heading', { level: 1, name: 'Linux labs' })).toBeVisible();
   await waitForServiceWorkerControl(page);

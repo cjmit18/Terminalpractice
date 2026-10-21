@@ -414,7 +414,7 @@ export const WINDOWS_PBQS: ExamModule[] = [
     summary: 'Partition, format and assign a drive letter to a new disk with diskpart.',
     difficulty: 'Advanced',
     estimatedMinutes: 20,
-    scenarioDescription: 'A second 256 GB SSD has been fitted to WIN-CLIENT01 and shows up as Disk 1. Use diskpart to create one partition across the whole disk, quick-format it as NTFS, and give it the letter E:. The disk map next to the terminal updates after each command.',
+    scenarioDescription: 'A second 256 GB SSD has been fitted to WIN-CLIENT01 and shows up as Disk 1. Use diskpart to create one partition across the whole disk, quick-format it as NTFS, and give it the letter E:. The Simulator tab shows the disk map after each command.',
     systemContext: 'Host: WIN-CLIENT01 | Disk 0: system disk (C:) | Disk 1: new SSD, unallocated',
     defaultShell: 'cmd',
     allowedShells: ['cmd'],

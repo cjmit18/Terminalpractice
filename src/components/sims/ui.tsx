@@ -203,7 +203,7 @@ export const CodeBlock: React.FC<{ code: string; className?: string }> = ({ code
 
 /** Shared input classes for forms in the simulators. */
 export const inputClass =
-  'rounded-md border border-line-strong bg-surface px-3 text-[15px] text-text placeholder:text-subtle min-h-10 sm:min-h-9';
+  'rounded-md border border-line-strong bg-surface px-3 text-[15px] text-text placeholder:text-muted min-h-10 sm:min-h-9';
 
 /** Tiny table header style (the one place uppercase labels are allowed). */
 export const thClass = 'px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-muted';

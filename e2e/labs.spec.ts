@@ -89,7 +89,7 @@ test('a permission error explains why', async ({ page }) => {
   await expect(commandInput(page)).toBeFocused();
 });
 
-test.fixme('keyboard users can Tab out of the terminal prompt', async ({ page, isMobile }) => {
+test('keyboard users can Tab out of the terminal prompt', async ({ page, isMobile }) => {
   // App bug: TerminalView's onKeyDown calls preventDefault on every Tab (and Shift+Tab) for command
   // completion, and the prompt has autoFocus, so keyboard focus is trapped in it on every lab page.
   test.skip(isMobile, 'keyboard navigation');
@@ -99,7 +99,7 @@ test.fixme('keyboard users can Tab out of the terminal prompt', async ({ page, i
   await expect(commandInput(page)).not.toBeFocused();
 });
 
-test.fixme('walkthrough steps run in the shell they are written for', async ({ page, isMobile }) => {
+test('walkthrough steps run in the shell they are written for', async ({ page, isMobile }) => {
   // App bug: ModuleRunner runs walkthrough steps in the shell picked in the header, so after
   // switching the AD lab to Command Prompt, Run sends PowerShell cmdlets to cmd and they fail.
   test.skip(isMobile, 'same code path on both projects');
