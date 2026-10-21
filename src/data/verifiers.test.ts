@@ -71,7 +71,6 @@ const objective = (labId: string, objId: string) => {
 // Engine behavior that other packages are implementing. These tests keep their assertions and
 // are marked todo until the engine change lands; remove the todo flag once they pass.
 const PENDING_LINUX = { todo: 'needs the Linux engine change (stat, getent)' };
-const PENDING_WINDOWS = { todo: 'needs the Windows engine change (parameter binder / H-2 cmdlets / ping own IP)' };
 
 // ---------------------------------------------------------------------------------------------
 // lpi-103-2: text processing
@@ -316,13 +315,13 @@ test('network lab in the engine: ping 127.0.0.1 before the renew does not finish
   assert.ok(run.done.has('net-verify-ping'));
 });
 
-test('network lab in the engine: the PC answers its own APIPA address, the gateway does not', PENDING_WINDOWS, () => {
+test('network lab in the engine: the PC answers its own APIPA address, the gateway does not', () => {
   const run = labRun(NET);
   assert.match(run('ping 169.254.82.114').stdout, /Reply from 169\.254\.82\.114/);
   assert.match(run('ping 192.168.1.1').stdout, /PING: transmit failed\. General failure\./);
 });
 
-test('network lab in the engine: -all, Clear-DnsClientCache and Test-Connection', PENDING_WINDOWS, () => {
+test('network lab in the engine: -all, Clear-DnsClientCache and Test-Connection', () => {
   const cmd = labRun(NET);
   cmd('ipconfig -all');
   assert.ok(cmd.done.has('net-ipconfig-all'));
@@ -386,7 +385,7 @@ test('AD lab in the engine: the walkthrough forms pass, the wrong OU does not', 
   assert.deepEqual([...ok.done].sort(), ['ad-add-group', 'ad-create-alex', 'ad-unlock-jdoe']);
 });
 
-test('AD lab in the engine: positional, quoted, DN and piped identities', PENDING_WINDOWS, () => {
+test('AD lab in the engine: positional, quoted, DN and piped identities', () => {
   for (const line of ['Unlock-ADAccount jdoe', 'Unlock-ADAccount -Identity "jdoe"', `Unlock-ADAccount -Identity 'jdoe'`,
     'Unlock-ADAccount -Identity "CN=John Doe,OU=Marketing,DC=corp,DC=local"', 'Get-ADUser jdoe | Unlock-ADAccount']) {
     const run = labRun(AD);
@@ -454,7 +453,7 @@ test('incident lab in the engine: base state has a real LAN address and PID 1120
   assert.ok(ps.done.has('sec-taskkill'));
 });
 
-test('incident lab in the engine: PowerShell forms and taskkill without /F', PENDING_WINDOWS, () => {
+test('incident lab in the engine: PowerShell forms and taskkill without /F', () => {
   for (const line of ['Stop-Process -Name svchost_update -Force', 'Get-Process -Id 3892 | Stop-Process -Force']) {
     const run = labRun(IR, 'powershell');
     run(line);
@@ -512,7 +511,7 @@ test('SFC lab in the engine: SFC alone leaves the last objective open; both orde
   assert.equal(objective(SFC, 'sfc-rescan').title, 'Run SFC again');
 });
 
-test('SFC lab in the engine: Repair-WindowsImage counts as DISM', PENDING_WINDOWS, () => {
+test('SFC lab in the engine: Repair-WindowsImage counts as DISM', () => {
   const run = labRun(SFC, 'powershell');
   run('Repair-WindowsImage -Online -RestoreHealth');
   assert.ok(run.done.has('dism-restore'));
@@ -520,7 +519,7 @@ test('SFC lab in the engine: Repair-WindowsImage counts as DISM', PENDING_WINDOW
   assert.ok(run.done.has('sfc-rescan'));
 });
 
-test('SFC lab in the engine: a scan before DISM records the scan but not a repair', PENDING_WINDOWS, () => {
+test('SFC lab in the engine: a scan before DISM records the scan but not a repair', () => {
   const run = labRun(SFC);
   run('sfc /scannow');
   assert.equal(run.state().sfcScanned, true);
