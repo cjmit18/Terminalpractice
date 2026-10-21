@@ -190,3 +190,29 @@ test('A6: journalctl -k shows the kernel ring buffer; dmesg -T prints wall-clock
   assert.equal(run('journalctl -b -1').stderr, 'Specifying boot ID or boot offset has no effect, no persistent journal was found.');
   assert.match(run('systemctl status ssh').stdout, /since Mon 2026-10-19/);
 });
+
+// ---------- A7: /etc/skel, useradd defaults, adduser ----------
+
+test('A7: useradd -m copies /etc/skel; the defaults files exist; adduser is not simulated', () => {
+  const run = linuxSession();
+  assert.equal(run('ls -A /etc/skel').stdout, '.bash_logout  .bashrc  .profile');
+  assert.equal(run('sudo useradd -m sarah').exitCode, 0);
+  const home = run('sudo ls -a /home/sarah');
+  assert.equal(home.stdout, '.  ..  .bash_logout  .bashrc  .profile');
+  assert.match(run('sudo ls -la /home/sarah').stdout, /^-rw-r--r-- 1 sarah sarah +\d+ .* \.profile$/m);
+  assert.match(run('ls -ld /home/sarah').stdout, /^drwxr-x--- \d+ sarah sarah /);
+  assert.equal(run('sudo cat /home/sarah/.profile').stdout, run('cat /etc/skel/.profile').stdout);
+  // Without -m there is no home directory (Ubuntu does not set CREATE_HOME)
+  run('sudo useradd tom');
+  assert.equal(run('ls /home/tom').exitCode, 2);
+  const uidMin = run('grep UID_MIN /etc/login.defs');
+  assert.equal(uidMin.exitCode, 0);
+  assert.match(uidMin.stdout, /^UID_MIN\s+1000$/m);
+  assert.match(run('grep -E "^(PASS_MAX_DAYS|UMASK|HOME_MODE)" /etc/login.defs').stdout, /PASS_MAX_DAYS\t99999[\s\S]*UMASK\t\t022|UMASK\t\t022[\s\S]*PASS_MAX_DAYS\t99999/);
+  assert.equal(run('grep -c CREATE_HOME /etc/login.defs').stdout, '0');
+  assert.equal(run('grep -v "^#" /etc/default/useradd').stdout, 'SHELL=/bin/sh');
+  const add = run('adduser x');
+  assert.equal(add.exitCode, 127);
+  assert.equal(add.stderr, 'bash: adduser: this command exists on real systems but is not simulated here');
+  assert.match(add.explanation ?? '', /useradd -m/);
+});

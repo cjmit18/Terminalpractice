@@ -323,6 +323,11 @@ function executeLinuxPipeline(
 
 setLineRunner(runLinuxLine);
 
+/** What to use instead of a real command the simulator does not have. */
+const NOT_SIMULATED_HINTS: Record<string, string> = {
+  adduser: 'adduser is the Debian/Ubuntu interactive front end to useradd. Here, use sudo useradd -m NAME (it creates the home directory and copies /etc/skel into it), then sudo passwd NAME.',
+};
+
 const SUDO_USAGE = 'usage: sudo -h | -K | -k | -V\nusage: sudo -v [-AknS] [-g group] [-h host] [-p prompt] [-u user]\nusage: sudo -l [-AknS] [-g group] [-h host] [-p prompt] [-U user] [-u user] [command]';
 const SUDO_GROUPS = ['sudo', 'wheel', 'admin'];
 const DENIAL = /Permission denied|Operation not permitted/;
@@ -408,7 +413,7 @@ function runLinuxCommand(
   } else {
     const handler = linuxCommands.get(name);
     if (!handler) {
-      if (isNotSimulatedLinux(name)) return ctx.fail(`bash: ${name}: this command exists on real systems but is not simulated here`, 127);
+      if (isNotSimulatedLinux(name)) return ctx.fail(`bash: ${name}: this command exists on real systems but is not simulated here`, 127, NOT_SIMULATED_HINTS[name]);
       return ctx.fail(`bash: ${name}: command not found`, 127, suggestLinux(name));
     }
     // --help is answered here, from the docs, so the command itself never runs

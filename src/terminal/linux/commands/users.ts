@@ -272,7 +272,20 @@ function useradd(ctx: LinuxContext): LinuxResult {
   }
   // Ubuntu's useradd only creates the home directory with -m (CREATE_HOME is off by default)
   if (opts.flags.has('m') && !ctx.node(home)) {
-    createInDir(ctx.fs, home, 'directory', '', username, primaryName ?? username, 750);
+    const group = primaryName ? db.group(primaryName)?.[0] ?? db.groupByGid(primaryName)?.[0] ?? primaryName : username;
+    // HOME_MODE 0750 in /etc/login.defs
+    createInDir(ctx.fs, home, 'directory', '', username, group, 750);
+    // ...then the skeleton files, owned by the new user (-k picks another skeleton directory)
+    const skelPath = optionValue(opts, 'k') ?? '/etc/skel';
+    const skel = ctx.node(ctx.resolve(skelPath));
+    const copyInto = (src: FileNode, dest: string) => {
+      for (const [name, child] of Object.entries(src.children ?? {})) {
+        const path = `${dest}/${name}`;
+        createInDir(ctx.fs, path, child.type, child.content ?? '', username, group, child.octal);
+        if (child.type === 'directory') copyInto(child, path);
+      }
+    };
+    if (skel?.type === 'directory') copyInto(skel, home);
   }
   return ctx.ok();
 }
