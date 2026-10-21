@@ -98,6 +98,27 @@ export const PathsList: React.FC<PathsListProps> = ({ paths, src, modulesById })
           );
         })}
       </ul>
+
+      <section aria-labelledby="about-heading" className="mt-16 pt-6 border-t border-line text-sm text-muted space-y-2 max-w-prose">
+        <h2 id="about-heading" className="text-base font-semibold text-text">About this project</h2>
+        <p>
+          Terminus CertSim was built with AI assistance: much of its code and lesson content was generated with AI tools
+          working from my direction and review. I maintain and develop it myself as a personal project for my own learning
+          and practice for the LPIC-1 and CompTIA exams.
+        </p>
+        <p>
+          It is a study aid, not official exam material, so check anything important against the official exam
+          objectives. Source code:{' '}
+          <a href="https://github.com/cjmit18/Terminalpractice" className="text-accent underline underline-offset-2">
+            github.com/cjmit18/Terminalpractice
+          </a>
+          .
+        </p>
+        <p>
+          Not affiliated with or endorsed by the Linux Professional Institute (LPI) or CompTIA. LPIC-1, CompTIA, A+,
+          Network+ and Security+ are trademarks of their respective owners.
+        </p>
+      </section>
     </div>
   );
 };

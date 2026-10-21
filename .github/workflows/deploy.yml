@@ -28,6 +28,9 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+        env:
+          # GitHub Pages serves files only; the account API lives on the Cloudflare host
+          VITE_ACCOUNTS: 'off'
 
       - uses: actions/upload-pages-artifact@v3
         with:

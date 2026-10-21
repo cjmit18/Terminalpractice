@@ -15,3 +15,7 @@ public/assets/aistudio/
 /playwright-report/
 /blob-report/
 /playwright/.cache/
+
+# Cloudflare
+.wrangler/
+.dev.vars*

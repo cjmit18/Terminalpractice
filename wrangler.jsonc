@@ -1,0 +1,35 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  // Must match the Worker connected to this repo in the Cloudflare dashboard (Workers Builds)
+  "name": "terminalpractice",
+  "compatibility_date": "2026-10-13",
+  // `wrangler deploy` builds first, so a deploy never ships a stale or missing dist/
+  "build": {
+    // Absolute asset paths: with the SPA fallback, /any/path serves index.html, and its assets must still resolve from /
+    "command": "VITE_BASE=/ npm run build"
+  },
+  // Account API (sign-in, sessions). Only /api/* reaches it; see run_worker_first below.
+  "main": "./worker/index.ts",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    // The app routes with #/ hashes, so this only matters for typed or stale paths: they get the app, not a 404
+    "not_found_handling": "single-page-application",
+    // Everything except the API is served straight from the edge without running Worker code
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "terminalpractice",
+      "database_id": "741adee3-13fb-48e7-90c1-34024d069bfa",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "vars": {
+    // Client ID of the GitHub App used for "Sign in with GitHub" (public, not a secret).
+    // The client secret is set separately: npx wrangler secret put GITHUB_CLIENT_SECRET
+    // While either is missing, the app hides "Sign in" and the API answers 503 for sign-in.
+    "GITHUB_CLIENT_ID": ""
+  }
+}

@@ -1,6 +1,10 @@
 # Terminus CertSim
 
-A browser-based terminal simulator for IT certification practice. It runs entirely on the client: no server, no accounts, no API keys. It installs as an app on phones and desktops and works offline after the first visit.
+A browser-based terminal simulator for IT certification practice. Everything runs in the browser: it installs as an app on phones and desktops and works offline after the first visit. Signing in (with GitHub) is optional.
+
+> **About this project.** Terminus CertSim was built with AI assistance: much of the code and lesson content was generated with AI tools (Google AI Studio, Anthropic's Claude, GitHub Copilot) working from my direction and review. I maintain and develop it myself ([@cjmit18](https://github.com/cjmit18)) as a personal project for my own learning and practice for the LPIC-1 and CompTIA exams. It is a study aid, not official exam material: check anything important against the official objectives.
+>
+> Not affiliated with or endorsed by the Linux Professional Institute (LPI) or CompTIA. LPIC-1, CompTIA, A+, Network+ and Security+ are trademarks of their respective owners.
 
 Covers hands-on objectives for:
 - **LPI Linux** (LPIC-1 101/102): permissions, text processing, system architecture, user administration, disk partitioning
@@ -85,6 +89,27 @@ Add it to `src/data/lpiModules.ts` or `src/data/windowsPbqs.ts`, with a one-sent
 
 ## Deployment
 
-Pushes to `main` run `.github/workflows/deploy.yml`, which tests, builds and publishes `dist/` to GitHub Pages. One-time setup: in the repository settings, under **Pages**, set **Source** to **GitHub Actions**. The build uses a relative base path, so it works from a project URL such as `https://<user>.github.io/<repo>/`.
+The app is static and works without any server. On Cloudflare, a small Worker adds an optional account API (Sign in with GitHub); everywhere else the app simply does not offer sign-in.
 
-CI (`.github/workflows/ci.yml`) runs typecheck, tests and build on every push and pull request.
+### Cloudflare Workers
+
+`wrangler.jsonc` describes the Worker `terminalpractice`: it serves `dist/` as static assets and runs `worker/index.ts` only for `/api/*` (`run_worker_first`), with a D1 database (`DB`) for accounts. Cloudflare Workers Builds is connected to this repository and builds on every push.
+
+- `npm run deploy`: applies new database migrations (`migrations/`) to the remote D1 database, then `wrangler deploy` (which runs `npm run build` first). Run `npx wrangler login` once before deploying from your machine. Set the same command as the **Deploy command** in the Workers Builds settings.
+- `npm run dev:cf`: the full stack locally (static app, Worker and a local D1 copy) at <http://localhost:8787>.
+- Node 22 for Workers Builds comes from `.node-version`.
+- Cloudflare builds use `VITE_BASE=/` (set in `wrangler.jsonc`), so a deep link such as `/old/path` still loads `/assets/...`; the default relative base keeps GitHub Pages' `/<repo>/` path working.
+
+### Accounts (optional sign-in)
+
+- `worker/api.ts`: GitHub sign-in (`/api/auth/github/start`, `/api/auth/github/callback`), `/api/me`, `/api/logout`. Sessions are random tokens in an `HttpOnly; Secure; SameSite=Lax` `__Host-` cookie; D1 stores only their SHA-256.
+- The GitHub token is used once to read the public profile and never stored. No passwords, no email address.
+- Sign-in stays hidden until the GitHub App is configured: see [docs/GITHUB_SIGNIN_SETUP.md](docs/GITHUB_SIGNIN_SETUP.md). The plan for the next phases (progress sync, account page) is in [docs/LOGIN_PLAN.md](docs/LOGIN_PLAN.md).
+- The callback address is built from the address the site was reached on, so moving to a custom domain needs no code change.
+- Tests: `worker/api.test.ts` runs the API against Node's built-in SQLite with the real migration and a fake GitHub; `e2e/account.spec.ts` covers the header control.
+
+### GitHub Pages
+
+Pushes to `main` also run `.github/workflows/deploy.yml`, which tests, builds and publishes `dist/` to GitHub Pages, with `VITE_ACCOUNTS=off` because that host has no account API. One-time setup: in the repository settings, under **Pages**, set **Source** to **GitHub Actions**. The build uses a relative base path, so it works from a project URL such as `https://<user>.github.io/<repo>/`. If Cloudflare becomes the only host, delete that workflow and turn Pages off.
+
+CI (`.github/workflows/ci.yml`) runs typecheck, tests, build and the browser tests on every push and pull request.
