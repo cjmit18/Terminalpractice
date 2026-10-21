@@ -612,6 +612,8 @@ function netUserDomainChange(ctx: WindowsContext, operands: string[], switches: 
   const value = active!.split(':')[1]?.toLowerCase();
   if (value !== undefined && value !== 'yes' && value !== 'no') return ctx.fail(`${cmdDoc('net')!.topics!.user}${helpMsg(3505)}`, 1);
   existing.enabled = value !== 'no';
+  // Writing the account flags with /active:yes also clears a lockout, as Unlock-ADAccount does
+  if (value !== 'no') existing.locked = false;
   return ctx.ok(`${DC_NOTE}\n\n${DONE}`);
 }
 

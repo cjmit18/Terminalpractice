@@ -200,3 +200,15 @@ test('B6 (L2-5, L2-9): gpupdate checks its switches, and gpresult shows when it 
   assert.deepEqual(ps.state().gpApplied, { computer: 4, user: 7 });
   assert.ok(gp.run('gpresult /v').explanation?.includes('not simulated'));
 });
+
+test('B7 (L2-18): net user /active:yes /domain clears the lockout and the disabled flag', () => {
+  const ad = labRun('win-pbq-active-directory-mgmt');
+  const jdoe = () => ad.state().adUsers.find(u => u.sAMAccountName === 'jdoe')!;
+  assert.equal(jdoe().locked, true);
+  ad.run('net user jdoe /active:no /domain');
+  assert.deepEqual([jdoe().enabled, jdoe().locked], [false, true], '/active:no does not unlock');
+  const res = ad.run('net user jdoe /active:yes /domain');
+  assert.equal(res.exitCode, 0);
+  assert.deepEqual([jdoe().enabled, jdoe().locked], [true, false]);
+  assert.ok(ad.done.has(ad.lab.objectives[0].id), `${ad.lab.objectives[0].id} passes`);
+});
