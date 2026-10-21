@@ -270,6 +270,13 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
                 {item.errorOutput && (
                   <pre className="whitespace-pre-wrap break-words font-mono text-term-error">{item.errorOutput}</pre>
                 )}
+                {/* A learning note, not shell output: set apart in the UI font so it never reads as part of the terminal */}
+                {item.explanation && (
+                  <p className="mt-1 mb-2 border-l-2 border-term-line pl-3 font-sans text-[13px] leading-relaxed text-term-muted whitespace-pre-line">
+                    <span className="font-medium text-term-text">Why: </span>
+                    {item.explanation}
+                  </p>
+                )}
               </div>
             );
           })}

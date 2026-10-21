@@ -33,15 +33,16 @@ export function runLine(session: ShellSession, line: string, shell: TerminalShel
   let stdout: string;
   let stderr: string;
   let exitCode: number;
+  let explanation: string | undefined;
   let next: Omit<ShellSession, 'history' | 'lastResult'>;
 
   if (shell === 'bash') {
     const res = executeLinuxLine(line, session.cwd, session.fs, session.state);
-    ({ stdout, stderr, exitCode } = res);
+    ({ stdout, stderr, exitCode, explanation } = res);
     next = { fs: res.newFs, state: res.newState, cwd: res.newCwd, diskpartActive: false };
   } else {
     const res = executeWindowsLine(line, session.cwd, session.fs, session.state, shell, session.diskpartActive);
-    ({ stdout, stderr, exitCode } = res);
+    ({ stdout, stderr, exitCode, explanation } = res);
     next = { fs: res.newFs, state: res.newState, cwd: res.newCwd, diskpartActive: !!res.diskpartActive };
     // The engine ends the DiskPart banner with its own prompt; the terminal draws the live one
     if (next.diskpartActive) stdout = stdout.replace(/\s*DISKPART>\s*$/, '');
@@ -59,6 +60,7 @@ export function runLine(session: ShellSession, line: string, shell: TerminalShel
     output: [stdout, stderr].filter(Boolean).join(shell === 'bash' ? '\n' : '\r\n'),
     errorOutput: stderr || undefined,
     isError: exitCode !== 0,
+    explanation,
     timestamp: new Date().toLocaleTimeString(),
     // The prompt the command was typed at, not the directory it left us in
     cwd: promptCwd,

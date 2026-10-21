@@ -218,7 +218,7 @@ export const WINDOWS_PBQS: ExamModule[] = [
         title: 'Test connectivity',
         description: 'Ping the default gateway and an internet address, or use Test-NetConnection in PowerShell.',
         hint: 'Run ping 192.168.1.1, then ping 8.8.8.8.',
-        verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && (ctx.command.toLowerCase().includes('ping') || ctx.command.toLowerCase().includes('test-netconnection') || ctx.command.toLowerCase().includes('tnc')) && (ctx.stdout.includes('Reply from') || ctx.stdout.includes('PingSucceeded') || ctx.stdout.includes('bytes=')),
+        verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && (ctx.command.toLowerCase().includes('ping') || ctx.command.toLowerCase().includes('test-netconnection') || ctx.command.toLowerCase().includes('tnc')) && (ctx.stdout.includes('Reply from') || ctx.stdout.includes('PingSucceeded') || ctx.stdout.includes('TcpTestSucceeded') || ctx.stdout.includes('bytes=')),
       },
     ],
     initialFs: createDefaultWindowsFs(),
