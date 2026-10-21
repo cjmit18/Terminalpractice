@@ -57,18 +57,32 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
   const [finishedHere, setFinishedHere] = useState(false);
   const lastOutcomeRef = useRef<ShellSession['lastOutcome']>(undefined);
 
+  // Objectives another tab reset while they still pass on this machine: earned again only after
+  // they stop passing once, so the reset is not undone by the work already on the machine
+  const rearmRef = useRef<Set<string>>(new Set());
+
+  const passes = (obj: ExamModule['objectives'][number], s: ShellSession) => {
+    try {
+      return !!obj.verifier(s.fs, s.state, s.lastResult);
+    } catch (err) {
+      // A throwing verifier leaves the objective incomplete; surface it in development
+      if (import.meta.env.DEV) console.error(`Verifier for "${obj.id}" threw`, err);
+      return false;
+    }
+  };
+
   // Checks every open objective against the session a command (or simulator) just produced
   const verify = useCallback((s: ShellSession) => {
     const mod = moduleRef.current;
     const newlyDone: string[] = [];
     for (const obj of mod.objectives) {
       if (completedRef.current.has(obj.id)) continue;
-      try {
-        if (obj.verifier(s.fs, s.state, s.lastResult)) newlyDone.push(obj.id);
-      } catch (err) {
-        // A throwing verifier leaves the objective incomplete; surface it in development
-        if (import.meta.env.DEV) console.error(`Verifier for "${obj.id}" threw`, err);
+      const ok = passes(obj, s);
+      if (rearmRef.current.has(obj.id)) {
+        if (!ok) rearmRef.current.delete(obj.id);
+        continue;
       }
+      if (ok) newlyDone.push(obj.id);
     }
     // A new command produced this session; a simulator panel changes state without one
     const byCommand = s.lastOutcome && s.lastOutcome !== lastOutcomeRef.current ? s.lastOutcome.line : null;
@@ -90,6 +104,7 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
   // Counts resets, so the terminal knows a fresh machine started (and shows its login banner)
   const [resetCount, setResetCount] = useState(0);
   const reset = useCallback((next: ShellSession) => {
+    rearmRef.current = new Set();
     resetSession(next);
     setResetCount(n => n + 1);
   }, [resetSession]);
@@ -104,8 +119,25 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
     setPassedBy({});
     setFinishedHere(false);
     reset(freshSession(module));
-    // completedObjectiveIds is read once per module; App keeps it in step through onObjectiveComplete
+    // completedObjectiveIds is read once per module here; changes to it are synced below
   }, [module.id]);
+
+  // Saved completions can change under the running lab (another tab completes or resets tasks):
+  // follow them, so the checklist is current and a reset lets tasks be earned again, without
+  // restarting the machine. This tab's own completions are already in the saved ids.
+  const savedKey = [...completedObjectiveIds].sort().join('\n');
+  const savedKeyRef = useRef(savedKey);
+  useEffect(() => {
+    if (savedKeyRef.current === savedKey) return;
+    savedKeyRef.current = savedKey;
+    const saved = new Set(completedObjectiveIds);
+    for (const obj of module.objectives) {
+      if (completedRef.current.has(obj.id) && !saved.has(obj.id) && passes(obj, session)) rearmRef.current.add(obj.id);
+      if (saved.has(obj.id)) rearmRef.current.delete(obj.id);
+    }
+    completedRef.current = saved;
+    setCompleted(new Set(completedObjectiveIds));
+  }, [savedKey]);
 
   const execute = useCallback((lines: string | string[]) => run(lines, activeShell), [run, activeShell]);
 

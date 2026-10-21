@@ -51,11 +51,14 @@ export function executeWindowsLine(
   // CMD expands %VAR% once for the whole line, before splitting on & and |
   const expanded = expandCmdVariables(line, state, cwd);
   const stages = splitChainedCommandLine(expanded, 'cmd');
-  const res = stages.length > 1 ? runChain(stages, cwd, fs, state, executeCmdPipeline) : executeCmdPipeline(expanded, cwd, fs, state);
-  // %ERRORLEVEL% reports the exit code of the last command that sets one
-  const lastName = parsePipelinedLine(stages[stages.length - 1]?.commandLine ?? '', 'cmd').pop()?.name ?? '';
-  setErrorLevel(res.newState, lastName, res.exitCode);
-  return res;
+  // %ERRORLEVEL% reports the exit code of the last command that sets one, updated as each
+  // command of the chain actually runs (ones skipped by && or || leave it alone)
+  const runStage = (pipeline: string, dir: string, f: FileNode, s: SystemState) => {
+    const res = executeCmdPipeline(pipeline, dir, f, s);
+    setErrorLevel(res.newState, parsePipelinedLine(pipeline, 'cmd').pop()?.name ?? '', res.exitCode);
+    return res;
+  };
+  return stages.length > 1 ? runChain(stages, cwd, fs, state, runStage) : runStage(expanded, cwd, fs, state);
 }
 
 /** Runs one CMD command against the pipeline's working copies, then applies its 2> redirect. */
@@ -201,7 +204,13 @@ function runPowerShellLine(
   const first = stages[0];
   const ctx = new WindowsContext(first?.name ?? '', first?.args ?? [], '', line, cwd, cloneFileSystem(fs), cloneState(state));
   ctx.tokens = first?.tokens ?? [];
-  const runNative = (cmdLine: string) => executeCmdCommand(cmdLine, cwd, ctx.fs, ctx.state);
+  // A native program's changes (ipconfig /renew, taskkill ...) stick even when its output is piped on
+  const runNative = (cmdLine: string) => {
+    const res = executeCmdCommand(cmdLine, cwd, ctx.fs, ctx.state);
+    ctx.fs = res.newFs;
+    ctx.state = res.newState;
+    return res;
+  };
 
   if (stages.length > 1) return runPowerShellPipeline(ctx, stages, runNative);
   // A value on its own is output, as in PowerShell

@@ -104,6 +104,17 @@ test('printf: %s %d, escapes, width and format reuse', () => {
   assert.equal(bad.exitCode, 1);
 });
 
+test('printf: negative * precision counts as omitted and large precision never throws', () => {
+  const run = linuxSession();
+  assert.equal(run("printf '%.*f' -1 1").stdout, '1.000000');
+  assert.equal(run("printf '%.*s|' -1 abc").stdout, 'abc|');
+  const big = run("printf '%.101f' 1");
+  assert.equal(big.exitCode, 0);
+  assert.match(big.stdout, /^1\.0+$/);
+  assert.equal(run("printf '%.150e' 1").exitCode, 0);
+  assert.equal(run("printf '%.150g' 1").stdout, '1');
+});
+
 test('comments, |& and >&2', () => {
   const run = linuxSession();
   assert.equal(run('echo a # not printed').stdout, 'a');
@@ -136,6 +147,24 @@ test('setgid directories pass their group on, and numeric chmod keeps setgid', (
   // On a regular file a numeric mode does clear the bits
   run('touch g; chmod 2755 g; chmod 755 g');
   assert.match(run('ls -l g').stdout, /^-rwxr-xr-x /);
+});
+
+test('cp -p and -a into a setgid directory keep the source group', () => {
+  const run = linuxSession();
+  run('mkdir proj; sudo chgrp finance proj; sudo chmod 2770 proj');
+  run('touch mine; mkdir tree; touch tree/leaf');
+  const node = (p: string) => getNodeAtPath(run.fs(), `/home/student/${p}`, false)!;
+  run('cp mine proj/plain');
+  assert.equal(node('proj/plain').group, 'finance');
+  run('cp -p mine proj/kept');
+  assert.equal(node('proj/kept').group, 'student');
+  run('cp -a tree proj/tree');
+  assert.equal(node('proj/tree').group, 'student');
+  assert.equal(node('proj/tree/leaf').group, 'student');
+  // root keeps owner and group whatever they are
+  run('sudo touch rootfile; sudo cp -p rootfile proj/rootcopy');
+  assert.equal(node('proj/rootcopy').owner, 'root');
+  assert.equal(node('proj/rootcopy').group, 'root');
 });
 
 test('id -u, -g, -G and -n print one part', () => {

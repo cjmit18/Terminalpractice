@@ -329,6 +329,39 @@ test('network lab in the engine: -all, Clear-DnsClientCache and Test-Connection'
   assert.ok(ps.done.has('net-verify-ping'));
 });
 
+test('network lab in the engine: quoted loopback, the PC\'s own name and -Quiet False do not count', () => {
+  const run = labRun(NET);
+  run('ipconfig /renew');
+  for (const line of ['ping "127.0.0.1"', 'ping WIN-CLIENT01', 'ping win-client01', 'ping -n 2 localhost']) {
+    assert.equal(run(line).exitCode, 0, line);
+    assert.ok(!run.now().includes('net-verify-ping'), line);
+  }
+  const ps = labRun(NET, 'powershell');
+  ps('ipconfig /renew');
+  for (const line of ['Test-Connection WIN-CLIENT01', 'Test-Connection "127.0.0.1" -Quiet', 'Test-NetConnection WIN-CLIENT01']) {
+    ps(line);
+    assert.ok(!ps.now().includes('net-verify-ping'), line);
+  }
+  // DNS is still broken before the flush: -Quiet prints False with exit code 0
+  const quiet = ps('Test-Connection example.com -Quiet');
+  assert.equal(quiet.stdout, 'False');
+  assert.equal(quiet.exitCode, 0);
+  assert.ok(!ps.done.has('net-verify-ping'));
+  ps('Clear-DnsClientCache');
+  assert.equal(ps('Test-Connection example.com -Quiet').stdout, 'True');
+  assert.ok(ps.done.has('net-verify-ping'));
+});
+
+test('net-verify-ping: the address in the output decides, and quiet output must be all True', () => {
+  const fixed = fixedState();
+  assert.ok(!connectivityVerified(fixed, ctx('ping "127.0.0.1"', REPLY('127.0.0.1'))));
+  assert.ok(!connectivityVerified(fixed, ctx('ping WIN-CLIENT01', 'Pinging WIN-CLIENT01 [192.168.1.145] with 32 bytes of data:\nReply from 192.168.1.145: bytes=32 time<1ms TTL=128')));
+  assert.ok(connectivityVerified(fixed, ctx('ping example.com', 'Pinging example.com [93.184.216.34] with 32 bytes of data:\nReply from 93.184.216.34: bytes=32 time=12ms TTL=118')));
+  assert.ok(!connectivityVerified(fixed, ctx('Test-Connection 8.8.8.8 -Quiet', 'False')));
+  assert.ok(!connectivityVerified(fixed, ctx('Test-Connection 8.8.8.8,1.1.1.1 -Quiet', 'True\nFalse')));
+  assert.ok(connectivityVerified(fixed, ctx('Test-Connection 8.8.8.8 -Quiet', 'True')));
+});
+
 // ---------------------------------------------------------------------------------------------
 // win-pbq-active-directory-mgmt
 // ---------------------------------------------------------------------------------------------

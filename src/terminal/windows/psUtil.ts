@@ -100,7 +100,12 @@ export interface PsToken {
   quoted: boolean;
   /** A (subexpression) or {script block}, kept verbatim with its brackets. */
   group?: '(' | '{';
+  /** The array elements when the token has unquoted commas (a,"b,c" is two elements). */
+  items?: string[];
 }
+
+/** A token's array elements: split only on the commas that were outside quotes. */
+export const psTokenItems = (t: PsToken): string[] => (t.items ?? [t.text]).map(x => x.trim()).filter(Boolean);
 
 const BACKTICK: Record<string, string> = { n: '\n', t: '\t' };
 
@@ -115,9 +120,17 @@ export function psTokenize(input: string): PsToken[] {
   let started = false;
   let quoted = false;
   let group: PsToken['group'];
+  let items: string[] | undefined;
+  let seg = '';
   const push = () => {
-    if (started) tokens.push(group ? { text: cur, quoted, group } : { text: cur, quoted });
+    if (started) {
+      const t: PsToken = group ? { text: cur, quoted, group } : { text: cur, quoted };
+      if (items) t.items = [...items, seg];
+      tokens.push(t);
+    }
     cur = '';
+    seg = '';
+    items = undefined;
     started = false;
     quoted = false;
     group = undefined;
@@ -128,6 +141,7 @@ export function psTokenize(input: string): PsToken[] {
     if (ch === '`' && i + 1 < input.length) {
       const next = input[++i];
       cur += BACKTICK[next] ?? next;
+      seg += BACKTICK[next] ?? next;
       started = true;
       continue;
     }
@@ -143,9 +157,11 @@ export function psTokenize(input: string): PsToken[] {
         }
         j++;
       }
+      // Only a token that starts with a quote is a value: -Name:"x" is still a parameter
+      if (!started) quoted = true;
       cur += text;
+      seg += text;
       started = true;
-      quoted = true;
       i = j;
       continue;
     }
@@ -168,6 +184,12 @@ export function psTokenize(input: string): PsToken[] {
       i = j;
       continue;
     }
+    if (ch === ',') {
+      (items ??= []).push(seg);
+      seg = '';
+    } else {
+      seg += ch;
+    }
     cur += ch;
     started = true;
   }
@@ -177,7 +199,7 @@ export function psTokenize(input: string): PsToken[] {
   for (const t of tokens) {
     const prev = merged[merged.length - 1];
     if (prev && !prev.group && !t.group && (prev.text.endsWith(',') || t.text.startsWith(','))) {
-      merged[merged.length - 1] = { text: prev.text + t.text, quoted: prev.quoted || t.quoted };
+      merged[merged.length - 1] = { text: prev.text + t.text, quoted: prev.quoted || t.quoted, items: [...psTokenItems(prev), ...psTokenItems(t)] };
     } else {
       merged.push(t);
     }
@@ -300,6 +322,9 @@ export function bindCmdlet(
       continue;
     }
     let value = m[2];
+    // -Name:a,"b,c": the elements after the -Name: prefix
+    let items = value === undefined ? undefined
+      : psTokenItems(t.items ? { ...t, items: [t.items[0].slice(m[0].length - value.length), ...t.items.slice(1)] } : { text: value, quoted: false });
     if (value === undefined) {
       const next = tokens[i + 1];
       if (!next || (!next.quoted && !next.group && /^-[A-Za-z]/.test(next.text))) {
@@ -307,9 +332,10 @@ export function bindCmdlet(
           'InvalidArgument', '', 'ParameterBindingException', 'MissingArgument');
       }
       value = next.text;
+      items = psTokenItems(next);
       i++;
     }
-    named.set(canonical, kind === 'list' ? splitList(value) : value);
+    named.set(canonical, kind === 'list' ? items! : value);
   }
   const positional = Object.entries(spec).filter(([, s]) => s.position !== undefined).sort((a, b) => a[1].position! - b[1].position!);
   for (const t of loose) {
@@ -317,7 +343,7 @@ export function bindCmdlet(
     if (!slot) {
       return psError(raw, cmdlet, `A positional parameter cannot be found that accepts argument '${t.text}'.`, 'InvalidArgument', '', 'ParameterBindingException', 'PositionalParameterNotFound');
     }
-    named.set(slot[0], slot[1].kind === 'list' ? splitList(t.text) : t.text);
+    named.set(slot[0], slot[1].kind === 'list' ? psTokenItems(t) : t.text);
   }
   return {
     named,

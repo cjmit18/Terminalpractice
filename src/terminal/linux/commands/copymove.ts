@@ -48,6 +48,14 @@ function cp(ctx: LinuxContext): LinuxResult {
   const errors: string[] = [];
   const out: string[] = [];
   const newMode = (node: FileNode) => (preserve ? node.octal : toOctalField(modeBits(node) & 0o777 & ~ctx.state.umask));
+  // -p/-a chown the copy afterwards, so the source group wins over a setgid directory's group.
+  // Only root can give away the owner; anyone can set a group they belong to (other failures are silent).
+  const preserveOwnership = (node: FileNode, destAbs: string) => {
+    const made = preserve ? ctx.node(destAbs) : null;
+    if (!made) return;
+    if (ctx.isRoot) made.owner = node.owner;
+    if (ctx.isRoot || ctx.groups.includes(node.group)) made.group = node.group;
+  };
 
   const copy = (node: FileNode, srcAbs: string, srcLabel: string, destAbs: string, destLabel: string): void => {
     const existing = ctx.node(destAbs);
@@ -71,6 +79,7 @@ function cp(ctx: LinuxContext): LinuxResult {
       } else {
         createInDir(ctx.fs, destAbs, 'file', node.content || '', preserve && ctx.isRoot ? node.owner : ctx.user,
           preserve && ctx.isRoot ? node.group : ctx.group, newMode(node));
+        preserveOwnership(node, destAbs);
       }
     } else {
       if (!recursive) {
@@ -92,6 +101,7 @@ function cp(ctx: LinuxContext): LinuxResult {
           return;
         }
         createInDir(ctx.fs, destAbs, 'directory', '', ctx.user, ctx.group, newMode(node));
+        preserveOwnership(node, destAbs);
       }
       for (const name of Object.keys(node.children ?? {}).sort()) {
         copy(node.children![name], joinLabel(srcAbs, name), joinLabel(srcLabel, name), joinLabel(destAbs, name), joinLabel(destLabel, name));
