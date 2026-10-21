@@ -83,6 +83,30 @@ test('two tabs on one lab: completions and resets from the other tab reach the r
   await tab2.close();
 });
 
+// A command's own result is fresh evidence: when it was this tab's last command at the reset, running
+// it again still earns the task (only unchanged machine state waits to stop passing once)
+test('two tabs on one lab: a reset does not hold back a task whose command was the last one run here', async ({ page, context }) => {
+  const tab1 = page;
+  await tab1.goto(HW_LAB);
+  const tab2 = await context.newPage();
+  await tab2.goto(HW_LAB);
+
+  await showTerminal(tab1);
+  await runCommand(tab1, 'lspci');
+  await expect(headerProgress(tab2)).toHaveText(done(1));
+  await showTerminal(tab2);
+  await runCommand(tab2, 'lspci');
+
+  await tab1.goto('#/linux');
+  tab1.once('dialog', dialog => void dialog.accept());
+  await tab1.getByRole('button', { name: 'Reset progress' }).click();
+  await expect(headerProgress(tab2)).toHaveText(done(0));
+  await runCommand(tab2, 'lspci');
+  await expect(headerProgress(tab2)).toHaveText(done(1));
+  expect((await stored(tab2))['lpi-101-1-system-architecture']).toEqual(['hw-lspci']);
+  await tab2.close();
+});
+
 // Two tabs open on different steps must not keep re-stamping "last step opened" over each other
 test('two tabs on different learning steps settle instead of ping-ponging the last step', async ({ page, context }) => {
   const path = LEARNING_PATHS[0];

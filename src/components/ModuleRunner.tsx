@@ -131,8 +131,11 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
     if (savedKeyRef.current === savedKey) return;
     savedKeyRef.current = savedKey;
     const saved = new Set(completedObjectiveIds);
+    // Judge by machine state only: the last command's result is not evidence that outlives the reset,
+    // so running that command again counts straight away
+    const machine: ShellSession = { ...session, lastResult: undefined };
     for (const obj of module.objectives) {
-      if (completedRef.current.has(obj.id) && !saved.has(obj.id) && passes(obj, session)) rearmRef.current.add(obj.id);
+      if (completedRef.current.has(obj.id) && !saved.has(obj.id) && passes(obj, machine)) rearmRef.current.add(obj.id);
       if (saved.has(obj.id)) rearmRef.current.delete(obj.id);
     }
     completedRef.current = saved;
