@@ -908,3 +908,26 @@ test('Review 8: ls -l on a file you cannot read shows its details', () => {
   assert.ok(run('ls /root').stderr.includes('Permission denied'));
 });
 
+
+test('Walkthrough replay: in the first-steps labs each step finishes its own task, in order', () => {
+  for (const id of ['lpi-000-first-steps', 'win-000-first-steps']) {
+    const m = [...LPI_MODULES, ...WINDOWS_PBQS].find(x => x.id === id);
+    assert.ok(m, `${id} is missing`);
+    let fs = m.initialFs;
+    let state = m.initialState;
+    let cwd = m.track === 'lpi' ? '/home/student' : 'C:\\Users\\Student';
+    const done = new Set<string>();
+    m.solutionWalkthrough.forEach((step, i) => {
+      // One short command per step: nothing a beginner has to split up
+      assert.ok(!step.command.includes('\n'), `${id} step ${step.step}`);
+      const res = m.defaultShell === 'bash'
+        ? executeLinuxLine(step.command, cwd, fs, state)
+        : executeWindowsLine(step.command, cwd, fs, state, m.defaultShell, false);
+      ({ newFs: fs, newState: state, newCwd: cwd } = res);
+      assert.equal(res.exitCode, 0, `${id}: ${step.command}`);
+      const ctx: CommandContext = { command: step.command, exitCode: res.exitCode, stdout: res.stdout };
+      for (const o of m.objectives) if (!done.has(o.id) && o.verifier(fs, state, ctx)) done.add(o.id);
+      assert.deepEqual([...done], m.objectives.slice(0, i + 1).map(o => o.id), `${id} after "${step.command}"`);
+    });
+  }
+});
