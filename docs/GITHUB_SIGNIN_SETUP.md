@@ -2,9 +2,9 @@
 
 The code is in place; sign-in stays hidden until these steps are done. You need: your GitHub account, the Cloudflare dashboard, and about 10 minutes.
 
-## 1. Find your site address
+## 1. Your site address
 
-Cloudflare dashboard → **Workers & Pages** → **terminalpractice**. The address is shown at the top, like `https://terminalpractice.<your-subdomain>.workers.dev`. Below it is written as `https://YOUR-SITE`.
+The site runs on the Worker **terminuscli** at `https://terminuscli.com`. Below it is written as `https://YOUR-SITE`. (The Worker's `workers.dev` address, shown at the top of its page in **Workers & Pages**, works too and is handy for testing.)
 
 ## 2. Create the GitHub App
 
@@ -33,14 +33,14 @@ Click **Create GitHub App**. On the next page:
 
 **Client secret:** add it in Cloudflare yourself, so it never touches the repository:
 
-- Dashboard → **Workers & Pages** → **terminalpractice** → **Settings** → **Variables and Secrets** → **Add** → type **Secret**, name `GITHUB_CLIENT_SECRET`, paste the value, **Deploy**.
+- Dashboard → **Workers & Pages** → **terminuscli** → **Settings** → **Variables and Secrets** → **Add** → type **Secret**, name `GITHUB_CLIENT_SECRET`, paste the value, **Deploy**.
 - Or from a terminal in the project: `npx wrangler secret put GITHUB_CLIENT_SECRET` and paste when asked.
 
 ## 4. Deploy with the database schema
 
 The deploy command now creates the account tables before deploying:
 
-- In the Cloudflare dashboard → **terminalpractice** → **Settings** → **Builds**, set the **Deploy command** to `npm run deploy`.
+- In the Cloudflare dashboard → **terminuscli** → **Settings** → **Builds**, set the **Deploy command** to `npm run deploy`.
 - Or deploy from your computer: `npx wrangler login` once, then `npm run deploy`.
 
 ## 5. Check it
@@ -49,7 +49,7 @@ Open `https://YOUR-SITE`. A **Sign in** button appears at the top right. Sign in
 
 ## When you buy a domain
 
-1. Add it to the Worker: **terminalpractice** → **Settings** → **Domains & Routes** → **Add** → **Custom domain**.
+1. Add it to the Worker: **terminuscli** → **Settings** → **Domains & Routes** → **Add** → **Custom domain**.
 2. In the GitHub App, **add** a callback URL `https://your-domain/api/auth/github/callback` and change the Homepage URL. Keep the `workers.dev` one while you switch over (a GitHub App takes up to 10 callback URLs).
 3. Nothing changes in the code: the server builds its callback address from the address it was reached on.
 
