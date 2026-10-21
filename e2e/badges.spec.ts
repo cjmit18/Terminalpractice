@@ -61,6 +61,22 @@ test('two tabs: clearing badges in one is quiet in the other', async ({ page, co
   await other.close();
 });
 
+test('the note waits while the pointer is over its text, then goes', async ({ page, isMobile }) => {
+  test.skip(isMobile, 'hover');
+  await page.clock.install();
+  await page.goto('#/linux/lpi-101-1-system-architecture');
+  await runCommand(page, 'lspci');
+  await page.clock.runFor(400);
+  const note = page.getByTestId('celebration-note');
+  await expect(note).toBeVisible();
+  await note.getByText('Task 1 of 3 done', { exact: false }).hover();
+  await page.clock.runFor(20_000);
+  await expect(note).toBeVisible();
+  await page.mouse.move(700, 100);
+  await page.clock.runFor(20_000);
+  await expect(note).toHaveCount(0);
+});
+
 test('a lab task passing is announced in the one status region', async ({ page }) => {
   await page.goto('#/linux/lpi-101-1-system-architecture');
   await showTerminal(page);

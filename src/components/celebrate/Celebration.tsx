@@ -10,8 +10,10 @@ const LASTING_NOTE_MS = 15000;
  * The one polite live region for celebrations. It is always in the page (a region added at the
  * same time as its text is often not read), and the latest batch also shows as a one-line note.
  *
- * The note sits at the bottom (left on wide screens, above the phone nav), away from page actions,
- * and only its dismiss button takes clicks: taps on the text reach whatever is underneath.
+ * The note sits at the bottom (left on wide screens, above the phone nav), away from page actions.
+ * With a mouse, the note itself takes the pointer (hovering it keeps it on screen) and the space
+ * around it lets clicks through. On touch screens, where it can cover the terminal's key toolbar,
+ * only the dismiss button takes taps; taps on the text reach whatever is underneath.
  */
 export const Celebration: React.FC<{ note: (Batch & { id: number }) | null; onDismiss: () => void }> = ({ note, onDismiss }) => {
   const [paused, setPaused] = useState(false);
@@ -25,8 +27,6 @@ export const Celebration: React.FC<{ note: (Batch & { id: number }) | null; onDi
   return (
     <div
       className="fixed z-40 inset-x-4 bottom-[calc(60px+env(safe-area-inset-bottom))] md:inset-x-auto md:left-6 md:bottom-6 md:w-[26rem] pointer-events-none"
-      onMouseEnter={() => setPaused(true)}
-      onMouseLeave={() => setPaused(false)}
       onFocus={() => setPaused(true)}
       onBlur={() => setPaused(false)}
     >
@@ -37,7 +37,9 @@ export const Celebration: React.FC<{ note: (Batch & { id: number }) | null; onDi
         <div
           key={note.id}
           data-testid="celebration-note"
-          className="flex items-start gap-3 rounded-md border border-line bg-surface pl-3 pr-1 py-1 shadow-sm"
+          className="[@media(hover:hover)]:pointer-events-auto flex items-start gap-3 rounded-md border border-line bg-surface pl-3 pr-1 py-1 shadow-sm"
+          onMouseEnter={() => setPaused(true)}
+          onMouseLeave={() => setPaused(false)}
         >
           <Check className="size-4 mt-2.5 shrink-0 text-ok" aria-hidden="true" />
           {/* The live region above reads this out; the visible copy is hidden from screen readers so it is not read twice */}
