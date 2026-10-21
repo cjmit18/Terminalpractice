@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { LEARNING_PATHS } from './paths.ts';
+import { FIRST_STEPS_PATH_ID, LEARNING_PATHS } from './paths.ts';
 import { LPI_MODULES } from './lpiModules.ts';
 import { WINDOWS_PBQS } from './windowsPbqs.ts';
 
@@ -29,7 +29,9 @@ test('Learning paths: ids are unique and every step points at real content', () 
         stepIds.add(step.id);
 
         if (step.kind === 'lab') {
-          assert.equal(moduleTrack.get(step.moduleId), path.track, `${where}: unknown lab or wrong track (${step.moduleId})`);
+          // The beginners' path offers one lab per track; every other path stays on its own track
+          if (path.id === FIRST_STEPS_PATH_ID) assert.ok(moduleTrack.has(step.moduleId), `${where}: unknown lab (${step.moduleId})`);
+          else assert.equal(moduleTrack.get(step.moduleId), path.track, `${where}: unknown lab or wrong track (${step.moduleId})`);
         } else if (step.kind === 'lesson') {
           assert.ok(step.blocks.length > 0 && step.minutes > 0, `${where}: empty lesson`);
         } else {
@@ -48,4 +50,47 @@ test('Learning paths: ids are unique and every step points at real content', () 
       }
     }
   }
+});
+
+test('Learning paths: the exam paths keep their ids and stage order', () => {
+  // Saved progress is keyed by these ids, so adding the beginners' path must not move or rename any of them
+  const stages = Object.fromEntries(LEARNING_PATHS.filter(p => p.id !== FIRST_STEPS_PATH_ID).map(p => [p.id, p.stages.map(s => s.id)]));
+  assert.deepEqual(stages, {
+    'lpic1-101': ['hardware', 'text-streams', 'disks', 'permissions', 'exam-101'],
+    'lpic1-102': ['accounts', 'jobs-and-logs', 'networking', 'security', 'exam-102'],
+    'aplus-core2': ['cmd-basics', 'disks', 'repair', 'services-network', 'exam-1202'],
+    'netsec-windows': ['client-network', 'active-directory', 'group-policy', 'incident-response', 'exam-netsec'],
+  });
+  assert.equal(LEARNING_PATHS[0].id, 'lpic1-101');
+});
+
+test('First steps: two short lessons, then a five-minute Beginner lab for bash and for Windows', () => {
+  const path = LEARNING_PATHS.find(p => p.id === FIRST_STEPS_PATH_ID);
+  assert.ok(path, 'first-steps path is missing');
+  // One stage, so nothing in it is locked
+  assert.equal(path.stages.length, 1);
+  const steps = path.stages[0].steps;
+  const lessons = steps.filter(s => s.kind === 'lesson');
+  assert.deepEqual(lessons.map(s => s.id), ['what-the-prompt-means', 'you-cannot-break-anything']);
+  for (const l of lessons) assert.ok(l.kind === 'lesson' && l.minutes <= 3, `${l.id} is longer than three minutes`);
+  assert.deepEqual(steps.slice(0, 2).map(s => s.kind), ['lesson', 'lesson'], 'the lessons come before the labs');
+
+  const labs = steps.flatMap(s => (s.kind === 'lab' ? [s.moduleId] : []));
+  assert.deepEqual(labs, ['lpi-000-first-steps', 'win-000-first-steps']);
+  const all = [...LPI_MODULES, ...WINDOWS_PBQS];
+  for (const id of labs) {
+    const m = all.find(x => x.id === id)!;
+    assert.equal(m.difficulty, 'Beginner');
+    assert.equal(m.estimatedMinutes, 5);
+    assert.equal(m.objectives.length, 5);
+    assert.equal(m.solutionWalkthrough.length, 5);
+    for (const o of m.objectives) {
+      assert.ok(o.nudge && o.shape && o.hint, `${id}/${o.id}: needs a nudge, a shape and a hint`);
+      for (const text of [o.title, o.description, o.nudge, o.shape, o.hint]) assert.ok(!text.includes('!'), `${id}/${o.id}: no exclamation marks`);
+    }
+  }
+  assert.equal(LPI_MODULES.find(m => m.id === 'lpi-000-first-steps')?.defaultShell, 'bash');
+  const win = WINDOWS_PBQS.find(m => m.id === 'win-000-first-steps')!;
+  assert.equal(win.defaultShell, 'cmd');
+  assert.deepEqual(win.allowedShells, ['cmd', 'powershell']);
 });

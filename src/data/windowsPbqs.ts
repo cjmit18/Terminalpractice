@@ -1,10 +1,11 @@
 import { ExamModule } from '../types/modules';
-import { SystemState } from '../types/terminal';
-import { createDefaultWindowsFs } from '../terminal/filesystem';
+import { FileNode, SystemState } from '../types/terminal';
+import { createDefaultWindowsFs, getNodeAtPath } from '../terminal/filesystem';
 import {
   alexInDomainAdmins, alexInItAdmins, connectivityVerified, dismRan, ipconfigAllRun, jdoeUnlocked,
   maliciousConnectionFound, maliciousProcessKilled, maliciousProcessNamed, sfcRan, sfcRepairedAfterDism,
 } from './verifiers';
+import { WELCOME_MARKER, folderListed, helpRead, notesEntered, welcomeRead, workingDirShown } from './firstStepsVerifiers';
 
 const baseWindowsState: SystemState = {
   hostname: 'WIN-CLIENT01',
@@ -686,6 +687,159 @@ export const WINDOWS_PBQS: ExamModule[] = [
     examTips: [
       'Cmdlets are named Verb-Noun: Get-Service, Start-Service, Stop-Process. If you know the noun, Get-Command -Noun Service lists every cmdlet for it.',
       'Starting a service does not change its startup type. Use Set-Service -StartupType Automatic, or services.msc, to make it start at boot.',
+    ],
+  },
+  {
+    // The first lab for people who have never used a terminal. It sits in the first-steps path.
+    id: 'win-000-first-steps',
+    track: 'comptia-windows',
+    examCode: 'Getting started',
+    topicNumber: 'Start',
+    title: 'Your first commands on Windows',
+    summary: 'Find out where you are, look around, read a file, open a folder and ask for help, in Command Prompt.',
+    difficulty: 'Beginner',
+    estimatedMinutes: 5,
+    scenarioDescription: 'This is a practice Windows computer, and the dark box beside these instructions is Command Prompt (on a phone, tap Terminal at the top). A file called welcome.txt is waiting in your folder. Each task below is one short command: type it, press Enter, and the task is ticked off. Typing something wrong is fine; Windows tells you what went wrong and you can simply try again. If you want to, switch to PowerShell above the terminal and do the tasks there instead.',
+    systemContext: 'Computer: WIN-CLIENT01 | You are: Student | Starting folder: C:\\Users\\Student',
+    defaultShell: 'cmd',
+    allowedShells: ['cmd', 'powershell'],
+    simType: 'terminal-only',
+    objectives: [
+      {
+        id: 'fs-where',
+        title: 'See where you are',
+        description: 'Command Prompt is always working inside one folder. Ask which one: type cd on its own and press Enter.',
+        nudge: 'cd is short for "change directory", and directory is another word for folder. With nothing after it, cd does not change anything: it only tells you where you are.',
+        shape: 'c_   (two letters, nothing after them)',
+        hint: 'Type cd and press Enter. It prints C:\\Users\\Student: the Student folder, inside the Users folder, on drive C. In PowerShell, use pwd or Get-Location instead, because cd on its own takes you somewhere else there.',
+        verifier: (_, __, ctx) => workingDirShown('windows', ctx),
+      },
+      {
+        id: 'fs-list',
+        title: 'List what is here',
+        description: 'See what is in this folder: type dir and press Enter.',
+        nudge: 'dir is short for "directory". It lists the files and folders in the folder you are in.',
+        shape: 'd_r',
+        hint: 'Type dir and press Enter. You should see notes and welcome.txt. In PowerShell, dir works too, and so do ls, gci and Get-ChildItem.',
+        verifier: (_, __, ctx) => folderListed('windows', ctx),
+      },
+      {
+        id: 'fs-read',
+        title: 'Read a file',
+        description: 'Show what is inside welcome.txt: type the word type, a space, then the file name, and press Enter.',
+        nudge: 'Here type is the name of a command: it prints a file onto the screen. It needs to know which file, so the file name goes after it, with a space in between.',
+        shape: 'type _______.txt',
+        hint: 'Type type welcome.txt and press Enter. Windows does not mind capital letters, but the dot before txt matters. In PowerShell, cat welcome.txt and Get-Content welcome.txt do the same.',
+        verifier: (_, __, ctx) => welcomeRead(ctx),
+      },
+      {
+        id: 'fs-cd',
+        title: 'Go into a folder',
+        description: 'welcome.txt tells you which folder to go into, and the command that does it. Follow what it says.',
+        nudge: 'cd moves you into the folder you name after it, with a space in between.',
+        shape: 'cd _____',
+        hint: 'Type cd notes and press Enter. The prompt changes to C:\\Users\\Student\\notes> to show where you are now. cd .. (cd, a space and two dots) takes you back up one folder.',
+        verifier: (_, __, ctx) => notesEntered('windows', ctx),
+      },
+      {
+        id: 'fs-help',
+        title: 'Ask for help',
+        description: 'Windows can explain its own commands. Ask it to explain dir.',
+        nudge: 'In Command Prompt, the command help followed by the name of another command explains that command.',
+        shape: 'help ___',
+        hint: 'Type help dir and press Enter. dir /? (a forward slash and a question mark) shows the same page. In PowerShell, use Get-Help dir or help dir. Any of these counts.',
+        verifier: (_, __, ctx) => helpRead('windows', ctx),
+      },
+    ],
+    initialFs: (() => {
+      const fs = createDefaultWindowsFs();
+      const home = getNodeAtPath(fs, 'C:\\Users\\Student', true);
+      const file = (name: string, content: string): FileNode => ({
+        name, type: 'file', permissions: 'rw-r--r--', octal: 644, owner: 'Student', group: 'Users', updatedAt: '2026-10-19T09:30:00Z', content,
+      });
+      if (home) {
+        // A tidy user folder with only what the five tasks need
+        home.children = {
+          'welcome.txt': file('welcome.txt', [
+            'Hello, and welcome.',
+            '',
+            WELCOME_MARKER,
+            'The command printed everything in welcome.txt onto your screen.',
+            '',
+            'Next, go into the notes folder. Type this and press Enter:',
+            '',
+            '    cd notes',
+            '',
+            'Then type dir to see what is inside it, and read next.txt',
+            'the same way you read this file.',
+          ].join('\n')),
+          notes: {
+            name: 'notes', type: 'directory', permissions: 'rwxr-xr-x', octal: 755, owner: 'Student', group: 'Users', updatedAt: '2026-10-19T09:30:00Z',
+            children: {
+              'next.txt': file('next.txt', [
+                'You are in the notes folder now. The prompt ends in \\notes> to show it.',
+                'To go back up to your own folder later, type cd .. (cd, a space and two dots).',
+                '',
+                'One task left: ask for help. Type this and press Enter:',
+                '',
+                '    help dir',
+              ].join('\n')),
+            },
+          },
+        };
+      }
+      return fs;
+    })(),
+    initialState: {
+      ...baseWindowsState,
+      // An ordinary user on a healthy PC: nothing here needs fixing
+      currentUser: 'Student',
+      currentGroup: 'Users',
+      isRootOrAdmin: false,
+      processes: baseWindowsState.processes.filter(p => !p.isMalicious),
+      envVars: { ...baseWindowsState.envVars, USERNAME: 'Student' },
+    },
+    solutionWalkthrough: [
+      {
+        step: 1,
+        title: 'See where you are',
+        command: 'cd',
+        explanation: 'cd on its own prints C:\\Users\\Student. Reading from the left: C: is the drive, Users is a folder on it, and Student is a folder inside Users. Each backslash (\\) separates one folder from the next.',
+        underlyingConcept: 'Every command runs "in" a folder, called the current directory. When you name a file without saying where it is, Windows looks for it in that folder.',
+      },
+      {
+        step: 2,
+        title: 'List what is here',
+        command: 'dir',
+        explanation: 'dir lists the folder you are in. Folders are marked <DIR>; files show their size in bytes instead. The two lines with . and .. stand for this folder and the one above it.',
+        underlyingConcept: 'Options change what a command does. In Command Prompt they start with a forward slash: dir /b shows the names only.',
+      },
+      {
+        step: 3,
+        title: 'Read the welcome file',
+        command: 'type welcome.txt',
+        explanation: 'type prints the whole file. welcome.txt is the argument: the thing you want the command to work on, after a space.',
+        underlyingConcept: 'Most commands follow the same pattern: the command name, then what it should work on and any options, each separated by a space. Windows ignores capital letters in command and file names, so TYPE WELCOME.TXT works too.',
+      },
+      {
+        step: 4,
+        title: 'Go into the notes folder',
+        command: 'cd notes',
+        explanation: 'cd notes moves you into the notes folder. cd prints nothing when it works; the prompt changes to C:\\Users\\Student\\notes> instead.',
+        underlyingConcept: 'notes is a relative path: it is looked for inside the folder you are in. C:\\Users\\Student\\notes is the full path to the same folder, starting from the drive. .. means the folder above this one.',
+      },
+      {
+        step: 5,
+        title: 'Ask for help',
+        command: 'help dir',
+        explanation: 'help dir explains what dir does and lists its options. dir /? shows the same page.',
+        underlyingConcept: 'You never have to remember every option. help and /? in Command Prompt, and Get-Help in PowerShell, are always there to look things up, and experienced people use them every day.',
+      },
+    ],
+    examTips: [
+      'cd, dir and type, plus the /? switch for help, come up in the CompTIA A+ command-line objectives. Later labs build on exactly these ideas.',
+      'PowerShell understands many Command Prompt and Linux names, such as dir, cd, ls and cat, because they are aliases (other names) for its own commands like Get-ChildItem.',
+      'Windows paths use a backslash (\\) between folders, and Linux paths use a forward slash (/). On Windows, options usually start with /, and on Linux with -.',
     ],
   },
 ];
