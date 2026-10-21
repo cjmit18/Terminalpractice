@@ -1,4 +1,4 @@
-import { test, expect, headerProgress, runCommand, showTerminal } from './fixtures';
+import { test, expect, headerProgress, runCommand, showLab, showTerminal, terminalLog } from './fixtures';
 import { LEARNING_PATHS } from '../src/data/paths';
 
 const HW_LAB = '#/linux/lpi-101-1-system-architecture';
@@ -50,6 +50,36 @@ test('two tabs: progress from both is kept and shown in both; a reset reaches th
 
   await tab1.reload();
   await expect(headerProgress(tab1)).toHaveText(done(1));
+  await tab2.close();
+});
+
+// The lab's own checklist follows the other tab too, and a reset there lets this tab earn tasks again
+test('two tabs on one lab: completions and resets from the other tab reach the running lab', async ({ page, context }) => {
+  const tab1 = page;
+  await tab1.goto(HW_LAB);
+  const tab2 = await context.newPage();
+  await tab2.goto(HW_LAB);
+  const tasks = (p: import('@playwright/test').Page) => p.getByText(/^\d of 3 done$/);
+
+  await showTerminal(tab1);
+  await runCommand(tab1, 'lspci');
+  await expect(headerProgress(tab2)).toHaveText(done(1));
+  await expect(tasks(tab2)).toHaveText('1 of 3 done');
+
+  // Work typed in tab 2 before the reset is still on its machine; the reset does not restart it
+  await showTerminal(tab2);
+  await runCommand(tab2, 'echo kept > /home/student/marker');
+  await tab1.goto('#/linux');
+  tab1.once('dialog', dialog => void dialog.accept());
+  await tab1.getByRole('button', { name: 'Reset progress' }).click();
+  await expect(headerProgress(tab2)).toHaveText(done(0));
+  await runCommand(tab2, 'lspci');
+  await expect(headerProgress(tab2)).toHaveText(done(1));
+  await expect(headerProgress(tab1)).toHaveText(done(1));
+  await runCommand(tab2, 'cat /home/student/marker');
+  await expect(terminalLog(tab2)).toContainText('kept');
+  await showLab(tab2);
+  await expect(tasks(tab2)).toHaveText('1 of 3 done');
   await tab2.close();
 });
 
