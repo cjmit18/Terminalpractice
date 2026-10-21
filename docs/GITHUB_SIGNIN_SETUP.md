@@ -63,7 +63,7 @@ Both can use the same GitHub App. For each address, including a new one:
 3. Give that Worker the two values (as in section 3 above): the Client ID in its `wrangler.jsonc` (`vars.GITHUB_CLIENT_ID`) and the secret with **Variables and Secrets** on that Worker (secrets are per Worker, so `terminus-wm` needs its own `GITHUB_CLIENT_SECRET`).
 4. Nothing else changes in the code: the server builds its callback address from the address it was reached on.
 
-Sessions and accounts belong to one address: each Worker has its own D1 database (`terminuscli` and `terminalpractice`), and the session cookie stays on the exact host, so learners sign in separately on each address. Apply the migrations to a new Worker's database with its deploy command (`npm run deploy`).
+Both Workers currently use the same D1 database (`terminalpractice`), so they share accounts, but the session cookie stays on the exact host, so learners sign in separately on each address. Give a Worker its own database by creating one and changing its `database_id` in `wrangler.jsonc`. Apply the migrations to a new Worker's database with its deploy command (`npm run deploy`).
 
 ## Testing on your computer
 
