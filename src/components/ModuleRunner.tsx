@@ -22,6 +22,8 @@ interface ModuleRunnerProps {
   onObjectiveComplete: (moduleId: string, objectiveId: string) => void;
   /** Where to go after this lab, when it is part of a path (shown in the recap once it is done) */
   next?: { href: string; title: string } | null;
+  /** Shown under the lab recap once the lab is finished here (a path's stage recap) */
+  recap?: React.ReactNode;
 }
 
 type SideTab = 'tasks' | 'simulator' | 'concepts' | 'walkthrough';
@@ -34,6 +36,7 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
   completedObjectiveIds,
   onObjectiveComplete,
   next,
+  recap,
 }) => {
   const { record, announce } = useGameLayer();
   const [activeShell, setActiveShell] = useState<TerminalShell>(module.defaultShell);
@@ -306,6 +309,7 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
           >
             <div hidden={currentTab !== 'tasks'}>
               {isComplete && finishedHere && <LabRecap module={module} passedBy={passedBy} next={next ?? null} />}
+              {isComplete && finishedHere && recap}
               <TasksPanel key={module.id} module={module} completed={completed} onHint={objectiveId => handleHint(objectiveId)} />
             </div>
             {module.simType !== 'terminal-only' && <div hidden={currentTab !== 'simulator'} className="h-full">{renderSimulator()}</div>}

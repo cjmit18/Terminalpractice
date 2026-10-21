@@ -101,6 +101,35 @@ test('a cleared stage: quiet note with the badge; lively adds confetti', async (
   await expect(page.getByTestId('confetti')).toBeAttached();
 });
 
+test('a stage cleared by marking its last lesson read shows the stage recap', async ({ page }) => {
+  await seedAlmostClearedStage(page, 'quiet');
+  await expect(page.getByRole('heading', { name: 'Stage clear: Hardware and boot' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Mark as read' }).click();
+  await expect(page.getByRole('heading', { level: 2, name: 'Stage clear: Hardware and boot' })).toBeVisible();
+});
+
+test('a stage cleared by finishing its lab shows the stage recap', async ({ page }) => {
+  await page.goto('#/learn');
+  await page.evaluate(() => {
+    localStorage.setItem('certsim:progress:v1', JSON.stringify({ 'lpi-101-1-system-architecture': ['hw-lspci', 'hw-lsmod'] }));
+    localStorage.setItem(
+      'certsim:journey:v1',
+      JSON.stringify({
+        read: ['lpic1-101/how-linux-sees-hardware', 'lpic1-101/from-power-on-to-login'],
+        quiz: { 'lpic1-101/quiz-hardware': { correct: 5, total: 5 } },
+        last: null,
+      }),
+    );
+  });
+  await page.goto('#/learn/lpic1-101/lab-hardware');
+  await page.reload();
+  await showTerminal(page);
+  await runCommand(page, 'dmesg | grep -i sata');
+  const show = page.getByRole('group', { name: 'Show' }).getByRole('button', { name: /^Lab/ });
+  if (await show.isVisible()) await show.click();
+  await expect(page.getByRole('heading', { level: 2, name: 'Stage clear: Hardware and boot' })).toBeVisible();
+});
+
 test('confetti never runs when the system asks for reduced motion', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await seedAlmostClearedStage(page, 'lively');

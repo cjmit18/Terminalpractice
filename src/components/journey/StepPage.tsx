@@ -83,6 +83,7 @@ export const StepPage: React.FC<StepPageProps> = props => {
             module={mod}
             completedObjectiveIds={props.progress[mod.id] ?? []}
             onObjectiveComplete={props.onObjectiveComplete}
+            recap={justCleared ? <StageRecap path={path} stageIndex={loc.stageIndex} src={src} modulesById={modulesById} /> : null}
           />
         ) : (
           <p className="px-4 sm:px-6 py-8 text-[15px] text-muted">This lab is not available in this version of the app.</p>
@@ -150,6 +151,11 @@ export const StepPage: React.FC<StepPageProps> = props => {
             </div>
             <p className="text-sm text-muted">Next: {next.title}</p>
           </footer>
+          {justCleared && (
+            <div className="max-w-prose">
+              <StageRecap path={path} stageIndex={loc.stageIndex} src={src} modulesById={modulesById} />
+            </div>
+          )}
         </article>
       </>
     );
