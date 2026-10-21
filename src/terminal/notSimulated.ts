@@ -4,6 +4,8 @@
 export const NOT_SIMULATED_LINUX: readonly string[] = [
   'fsck', 'e2fsck', 'mkfs', 'mkfs.ext4', 'mkfs.xfs', 'mkfs.vfat', 'mkswap', 'parted', 'gdisk',
   'insmod', 'rmmod', 'modprobe', 'lsof', 'jobs', 'nohup', 'gpg', 'ssh-keygen', 'ssh-copy-id',
+  // Accounts
+  'adduser',
   // Scheduling, sessions and logins
   'crontab', 'at', 'atq', 'atrm', 'batch', 'last', 'lastlog', 'w', 'bg', 'fg', 'top', 'htop', 'watch', 'killall',
   // Files, links, archives and editors

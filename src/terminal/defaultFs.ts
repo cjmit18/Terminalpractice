@@ -1,4 +1,16 @@
 import { FileNode } from '../types/terminal';
+import { SKEL_BASH_LOGOUT, SKEL_BASHRC, SKEL_PROFILE, DEFAULT_USERADD, LOGIN_DEFS } from './linux/etcDefaults';
+
+const STAMP = '2026-10-19T00:00:00Z';
+/** A root-owned 644 file */
+const etcFile = (name: string, content: string): FileNode => ({
+  name, type: 'file', content, permissions: 'rw-r--r--', octal: 644, owner: 'root', group: 'root', updatedAt: STAMP,
+});
+/** A root-owned 755 directory */
+const etcDir = (name: string, files: FileNode[]): FileNode => ({
+  name, type: 'directory', permissions: 'rwxr-xr-x', octal: 755, owner: 'root', group: 'root', updatedAt: STAMP,
+  children: Object.fromEntries(files.map(f => [f.name, f])),
+});
 
 // Default virtual filesystems used by the sandbox and as the base for lab filesystems.
 
@@ -128,6 +140,10 @@ export function createDefaultLinuxFs(): FileNode {
             updatedAt: '2026-10-19T00:00:00Z',
             content: `#\n# This file MUST be edited with the 'visudo' command as root.\n#\nDefaults\tenv_reset\nDefaults\tmail_badpass\nDefaults\tsecure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"\nDefaults\tuse_pty\n\n# User privilege specification\nroot\tALL=(ALL:ALL) ALL\n\n# Members of the admin group may gain root privileges\n%admin ALL=(ALL) ALL\n\n# Allow members of group sudo to execute any command\n%sudo\tALL=(ALL:ALL) ALL\n\n@includedir /etc/sudoers.d`
           },
+          // useradd's defaults, and the files useradd -m copies into a new home directory
+          skel: etcDir('skel', [etcFile('.bash_logout', SKEL_BASH_LOGOUT), etcFile('.bashrc', SKEL_BASHRC), etcFile('.profile', SKEL_PROFILE)]),
+          default: etcDir('default', [etcFile('useradd', DEFAULT_USERADD)]),
+          'login.defs': etcFile('login.defs', LOGIN_DEFS),
           hosts: {
             name: 'hosts',
             type: 'file',
