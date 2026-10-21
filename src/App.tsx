@@ -11,20 +11,20 @@ import { ModuleRunner } from './components/ModuleRunner';
 import { ExamModule } from './types/modules';
 import { SystemState } from './types/terminal';
 import { Route, Section, TrackSection, isTrackSection, replaceRoute, routeHref, useHashRoute } from './lib/router';
-import { Progress, countDone, loadProgress, saveProgress } from './lib/progress';
+import { completeObjective, countDone, progressCodec, PROGRESS_KEY, resetModules } from './lib/progress';
+import { useSyncedStorage } from './lib/syncedStorage';
 import { useTheme } from './lib/theme';
 import { ALL_MODULES, TRACK_MODULES, TRACK_NAMES, topicLabel } from './lib/modules';
 import {
   CompletionSource,
-  Journey,
+  JOURNEY_KEY,
   QuizScore,
   findStep,
+  journeyCodec,
   labCheck,
-  loadJourney,
   markRead,
   recordQuizScore,
   resetPath,
-  saveJourney,
   stepTitle,
   visit,
 } from './lib/journey';
@@ -34,6 +34,9 @@ import { PathOverview } from './components/journey/PathOverview';
 import { StepPage } from './components/journey/StepPage';
 
 const MODULES_BY_ID = new Map(ALL_MODULES.map(m => [m.id, m]));
+// How lab progress and the journey are saved and shared with the app's other open tabs
+const PROGRESS_CODEC = progressCodec(ALL_MODULES);
+const JOURNEY_CODEC = journeyCodec(LEARNING_PATHS);
 
 // Pages that are not needed for the first screen load on demand.
 const SimulatorsHub = lazy(() => import('./components/SimulatorsHub').then(m => ({ default: m.SimulatorsHub })));
@@ -54,14 +57,16 @@ const PAGE_TITLES: Record<Section, string> = {
 export default function App() {
   const route = useHashRoute();
   const [theme, setTheme] = useTheme();
-  // moduleId -> completed objective ids, saved in localStorage
-  const [progress, setProgress] = useState<Progress>(() => loadProgress(ALL_MODULES));
+  // moduleId -> completed objective ids (plus reset tombstones), saved in localStorage and kept in
+  // step with other open tabs: saves merge with what is stored, other tabs' saves merge in here
+  const [progressRecord, setProgressRecord] = useSyncedStorage(PROGRESS_KEY, PROGRESS_CODEC);
+  const progress = progressRecord.done;
   // The lab last open in each track, so coming back to a track returns you to it
   const [lastLab, setLastLab] = useState<Record<TrackSection, string | null>>({ linux: null, windows: null });
   // The lab track used last, for the single Labs item in the phone nav
   const [lastTrack, setLastTrack] = useState<TrackSection>('linux');
-  // Lessons read, quiz scores and the last step opened in the learning paths, saved in localStorage
-  const [journey, setJourney] = useState<Journey>(() => loadJourney(LEARNING_PATHS));
+  // Lessons read, quiz scores and the last step opened in the learning paths, saved and shared like progress
+  const [journey, setJourney] = useSyncedStorage(JOURNEY_KEY, JOURNEY_CODEC);
   // The last learning page open this session, so the Learn link brings you back to it
   const [lastLearnHref, setLastLearnHref] = useState<string | null>(null);
   const mainRef = useRef<HTMLElement>(null);
@@ -220,10 +225,6 @@ export default function App() {
   }, [routeKey, learnRoute, activePath, activeStep]);
 
   useEffect(() => {
-    saveJourney(journey);
-  }, [journey]);
-
-  useEffect(() => {
     if (track) setLastTrack(track);
   }, [track]);
 
@@ -251,27 +252,15 @@ export default function App() {
     document.title = parts.filter(Boolean).join(' · ');
   }, [routeKey, activeModule, activePath, activeStep, route.section]);
 
-  useEffect(() => {
-    saveProgress(progress);
-  }, [progress]);
-
-  const handleObjectiveComplete = (moduleId: string, objectiveId: string) => {
-    setProgress(prev => {
-      const done = prev[moduleId] ?? [];
-      return done.includes(objectiveId) ? prev : { ...prev, [moduleId]: [...done, objectiveId] };
-    });
-  };
+  const handleObjectiveComplete = (moduleId: string, objectiveId: string) =>
+    setProgressRecord(prev => completeObjective(prev, moduleId, objectiveId));
 
   const handleMarkRead = (pathId: string, stepId: string) => setJourney(j => markRead(j, pathId, stepId));
   const handleQuizScore = (pathId: string, stepId: string, score: QuizScore) =>
     setJourney(j => recordQuizScore(j, pathId, stepId, score));
 
   const resetTrackProgress = (t: TrackSection) => {
-    setProgress(prev => {
-      const next = { ...prev };
-      for (const m of TRACK_MODULES[t]) delete next[m.id];
-      return next;
-    });
+    setProgressRecord(prev => resetModules(prev, TRACK_MODULES[t].map(m => m.id)));
   };
 
   const { done: tasksDone, total: tasksTotal } = countDone(progress, ALL_MODULES);

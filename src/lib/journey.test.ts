@@ -12,7 +12,9 @@ import {
   labCheck,
   labPlacements,
   markRead,
+  mergeJourney,
   nextStep,
+  parseJourney,
   pathMinutes,
   pathPercent,
   pathStarted,
@@ -20,6 +22,7 @@ import {
   resetPath,
   resumeTarget,
   sanitizeJourney,
+  serializeJourney,
   stageComplete,
   stageUnlocked,
   stepAfter,
@@ -198,8 +201,39 @@ test('Journey: reset one path keeps the others', () => {
   let j = markRead(EMPTY_JOURNEY, 'p', 'l1');
   j = markRead(j, 'other', 'x');
   j = recordQuizScore(j, 'p', 'q1', { correct: 1, total: 4 });
-  j = visit(j, 'p', 'l1');
-  assert.deepEqual(resetPath(j, 'p'), { read: ['other/x'], quiz: {}, last: null });
+  j = visit(j, 'p', 'l1', 100);
+  assert.deepEqual(resetPath(j, 'p', 5000), { read: ['other/x'], quiz: {}, last: null, resets: { p: 5000 } });
+});
+
+test('Journey merge: union of reads, best quiz score, newest last', () => {
+  const a: Journey = { read: ['p/l2'], quiz: { 'p/q1': { correct: 4, total: 4 } }, last: { pathId: 'p', stepId: 'l2', at: 200 } };
+  const b: Journey = { read: ['p/l1'], quiz: { 'p/q1': { correct: 2, total: 4 } }, last: { pathId: 'p', stepId: 'q1', at: 100 } };
+  const m = mergeJourney(a, b, [PATH]);
+  assert.deepEqual(m.read, ['p/l1', 'p/l2']);
+  assert.deepEqual(m.quiz, { 'p/q1': { correct: 4, total: 4 } });
+  assert.deepEqual(m.last, { pathId: 'p', stepId: 'l2', at: 200 });
+  // Order of the arguments does not matter, and merging again changes nothing
+  assert.deepEqual(mergeJourney(b, a, [PATH]), m);
+  assert.deepEqual(mergeJourney(m, m, [PATH]), m);
+  // A last without a time (older data) loses to one with a time
+  assert.deepEqual(mergeJourney({ ...a, last: { pathId: 'p', stepId: 'l1' } }, b, [PATH]).last, b.last);
+  assert.deepEqual(mergeJourney(EMPTY_JOURNEY, EMPTY_JOURNEY, [PATH]), EMPTY_JOURNEY);
+});
+
+test('Journey merge: a reset in one tab is not undone by a tab that has not seen it', () => {
+  let stale = markRead(EMPTY_JOURNEY, 'p', 'l1');
+  stale = recordQuizScore(stale, 'p', 'q1', { correct: 4, total: 4 });
+  stale = visit(stale, 'p', 'q1', 100);
+  const reset = resetPath(stale, 'p', 1000);
+  // Tab 2 still has its old copy and saves: the stored reset wins
+  const merged = mergeJourney(reset, stale, [PATH]);
+  assert.deepEqual(merged, { read: [], quiz: {}, last: null, resets: { p: 1000 } });
+  // After seeing the reset, new work in that path counts again
+  const after = markRead(merged, 'p', 'l2');
+  assert.deepEqual(mergeJourney(merged, after, [PATH]).read, ['p/l2']);
+  // Text round trip keeps the tombstone, so the key is never removed while it matters
+  assert.deepEqual(parseJourney(serializeJourney(merged), [PATH]), merged);
+  assert.equal(serializeJourney(EMPTY_JOURNEY), null);
 });
 
 test('Journey: minutes, formatting and lab placements', () => {

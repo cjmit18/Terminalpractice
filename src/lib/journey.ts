@@ -1,6 +1,6 @@
 import { ExamModule } from '../types/modules';
 import { LearningPath, PathStage, PathStep } from '../types/paths';
-import { readStorage, writeStorage } from './storage';
+import type { SyncedCodec } from './syncedStorage';
 
 /**
  * Progress through the guided learning paths, saved in this browser.
@@ -21,8 +21,15 @@ export interface Journey {
   read: string[];
   /** "pathId/stepId" -> best score for that quiz */
   quiz: Record<string, QuizScore>;
-  /** The last path (and step, if any) the learner had open */
-  last: { pathId: string; stepId: string | null } | null;
+  /** The last path (and step, if any) the learner had open, and when (ms since epoch; missing in older data) */
+  last: { pathId: string; stepId: string | null; at?: number } | null;
+  /**
+   * pathId -> time (ms since epoch) of the last reset of that path. A tombstone, so that a reset in one
+   * tab is not undone when another tab's copy is merged in. Same rule as ProgressRecord.resetAt: a
+   * copy whose reset time for a path is older than the newest one has not seen that reset, and its
+   * reads, quiz scores and `last` for that path are dropped in the merge.
+   */
+  resets?: Record<string, number>;
 }
 
 export const EMPTY_JOURNEY: Journey = { read: [], quiz: {}, last: null };
@@ -68,14 +75,24 @@ export function sanitizeJourney(raw: unknown, paths: LearningPath[]): Journey {
     const path = paths.find(p => p.id === l.pathId);
     if (path) {
       const stepId = typeof l.stepId === 'string' && findStep(path, l.stepId) ? l.stepId : null;
-      last = { pathId: path.id, stepId };
+      last = isTime(l.at) ? { pathId: path.id, stepId, at: l.at } : { pathId: path.id, stepId };
     }
   }
-  return { read, quiz, last };
+
+  const resets: Record<string, number> = {};
+  const resetsIn = data.resets;
+  if (resetsIn && typeof resetsIn === 'object' && !Array.isArray(resetsIn)) {
+    for (const path of paths) {
+      const t = (resetsIn as Record<string, unknown>)[path.id];
+      if (isTime(t)) resets[path.id] = t;
+    }
+  }
+  return Object.keys(resets).length ? { read, quiz, last, resets } : { read, quiz, last };
 }
 
-export function loadJourney(paths: LearningPath[]): Journey {
-  const text = readStorage(JOURNEY_KEY);
+const isTime = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0;
+
+export function parseJourney(text: string | null, paths: LearningPath[]): Journey {
   if (!text) return EMPTY_JOURNEY;
   try {
     return sanitizeJourney(JSON.parse(text), paths);
@@ -84,9 +101,55 @@ export function loadJourney(paths: LearningPath[]): Journey {
   }
 }
 
-export function saveJourney(journey: Journey): void {
-  const empty = journey.read.length === 0 && Object.keys(journey.quiz).length === 0 && !journey.last;
-  writeStorage(JOURNEY_KEY, empty ? null : JSON.stringify(journey));
+/** Null (remove the key) only when there is nothing at all to keep, tombstones included. */
+export function serializeJourney(journey: Journey): string | null {
+  const empty =
+    journey.read.length === 0 &&
+    Object.keys(journey.quiz).length === 0 &&
+    !journey.last &&
+    Object.keys(journey.resets ?? {}).length === 0;
+  return empty ? null : JSON.stringify(journey);
+}
+
+const pathOfKey = (key: string) => key.slice(0, key.indexOf('/'));
+
+/**
+ * Merge two copies of the journey (what another tab saved, and this tab's): the union of lessons
+ * read, the best score per quiz, and the newest `last`, leaving out what a newer reset of a path
+ * cleared (see Journey.resets). The result is in canonical order (as sanitizeJourney gives it).
+ */
+export function mergeJourney(a: Journey, b: Journey, paths: LearningPath[]): Journey {
+  const resets: Record<string, number> = {};
+  for (const j of [a, b]) for (const [k, t] of Object.entries(j.resets ?? {})) resets[k] = Math.max(resets[k] ?? 0, t);
+  // True when copy j has seen the newest reset of this path, so its data for the path still counts
+  const current = (j: Journey, pathId: string) => (j.resets?.[pathId] ?? 0) >= (resets[pathId] ?? 0);
+
+  const read = [...a.read.filter(k => current(a, pathOfKey(k))), ...b.read.filter(k => current(b, pathOfKey(k)))];
+  const quiz: Record<string, QuizScore> = {};
+  for (const j of [a, b]) {
+    for (const [k, s] of Object.entries(j.quiz)) {
+      if (!current(j, pathOfKey(k))) continue;
+      const prev = quiz[k];
+      if (!prev || s.correct / s.total > prev.correct / prev.total) quiz[k] = s;
+    }
+  }
+  // The newest `last` wins (b, this tab's, on a tie); one older than its path's newest reset is dropped
+  let last: Journey['last'] = null;
+  for (const j of [a, b]) {
+    const l = j.last;
+    if (!l || !current(j, l.pathId)) continue;
+    if (!last || (l.at ?? 0) >= (last.at ?? 0)) last = l;
+  }
+  return sanitizeJourney({ read, quiz, last, resets }, paths);
+}
+
+/** How useSyncedStorage reads, merges and writes the journey. */
+export function journeyCodec(paths: LearningPath[]): SyncedCodec<Journey> {
+  return {
+    parse: text => parseJourney(text, paths),
+    merge: (stored, mine) => mergeJourney(stored, mine, paths),
+    serialize: serializeJourney,
+  };
 }
 
 // ---------- Updates (return a new journey, or the same one when nothing changes) ----------
@@ -104,20 +167,27 @@ export function recordQuizScore(j: Journey, pathId: string, stepId: string, scor
   return { ...j, quiz: { ...j.quiz, [key]: score } };
 }
 
-export function visit(j: Journey, pathId: string, stepId: string | null): Journey {
+export function visit(j: Journey, pathId: string, stepId: string | null, now: number = Date.now()): Journey {
   if (j.last && j.last.pathId === pathId && j.last.stepId === stepId) return j;
-  return { ...j, last: { pathId, stepId } };
+  return { ...j, last: { pathId, stepId, at: now } };
 }
 
-/** Forget lesson reads and quiz scores for one path. Lab progress is shared with the lab lists and stays. */
-export function resetPath(j: Journey, pathId: string): Journey {
+/**
+ * Forget lesson reads and quiz scores for one path, in every tab: it also writes a reset tombstone
+ * (see Journey.resets). Lab progress is shared with the lab lists and stays.
+ */
+export function resetPath(j: Journey, pathId: string, now: number = Date.now()): Journey {
   const prefix = `${pathId}/`;
   const quiz: Record<string, QuizScore> = {};
   for (const [k, v] of Object.entries(j.quiz)) if (!k.startsWith(prefix)) quiz[k] = v;
+  const resets = { ...j.resets };
+  // Strictly newer than any earlier reset (and than `last`), even if the clock went back
+  resets[pathId] = Math.max(now, (resets[pathId] ?? 0) + 1, (j.last?.pathId === pathId ? (j.last.at ?? 0) : 0) + 1);
   return {
     read: j.read.filter(k => !k.startsWith(prefix)),
     quiz,
     last: j.last?.pathId === pathId ? null : j.last,
+    resets,
   };
 }
 
