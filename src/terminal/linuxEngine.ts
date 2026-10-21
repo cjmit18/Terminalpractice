@@ -18,6 +18,7 @@ import './linux/commands/network';
 import './linux/commands/accounts';
 import { helpOptionOutput } from './linux/commands/help';
 import { syncKernelFiles } from './linux/virtualFs';
+import { expandArgs } from './linux/glob';
 
 export interface LinuxExecutionResult extends StageResult {}
 
@@ -197,6 +198,12 @@ function runLinuxCommand(
   depth: number
 ): StageResult {
   let { name, args } = cmd;
+  // Pathname expansion happens in the calling shell, as the calling user, before sudo or the command runs
+  if (cmd.argGlobs) {
+    const isRoot = state.isRootOrAdmin || state.currentUser === 'root';
+    const user = isRoot ? 'root' : state.currentUser;
+    args = expandArgs(args, cmd.argGlobs, cwd, fs, { user, groups: getUserGroups(fs, user, isRoot ? 'root' : state.currentGroup), isRoot });
+  }
   let runState = cloneState(state);
   let isSudo = false;
   let asUserState = false;

@@ -17,6 +17,8 @@ export interface ParsedCommand {
   raw: string;
   name: string;
   args: string[];
+  /** For bash: the glob pattern of each arg that has unquoted wildcards (undefined otherwise), aligned with args */
+  argGlobs?: (string | undefined)[];
   redirect?: {
     type: '>' | '>>';
     target: string;
@@ -57,10 +59,33 @@ function activeMask(input: string, syntax: ShellSyntax): boolean[] {
  * Tokenizes a single command string into an array of arguments handling quotes and escapes
  */
 export function tokenizeArgs(input: string, syntax: ShellSyntax = 'bash'): string[] {
-  const tokens: string[] = [];
+  return tokenizeWords(input, syntax).map(w => w.text);
+}
+
+/**
+ * A word after quote removal, plus what bash needs for pathname expansion: `globPattern` is set when the
+ * word has an unquoted *, ? or [, with any quoted wildcard characters made literal (as [*], [?], [[]).
+ */
+export interface ShellWord {
+  text: string;
+  globPattern?: string;
+}
+
+export function tokenizeWords(input: string, syntax: ShellSyntax = 'bash'): ShellWord[] {
+  const tokens: ShellWord[] = [];
   const esc = ESCAPE[syntax];
   let current = '';
+  let pattern = '';
+  let hasGlob = false;
   let started = false;
+  const push = () => {
+    tokens.push(hasGlob ? { text: current, globPattern: pattern } : { text: current });
+    current = '';
+    pattern = '';
+    hasGlob = false;
+  };
+  // Literal text as it goes into a glob pattern: wildcard characters are bracketed so they match themselves
+  const literal = (text: string) => text.replace(/[*?[]/g, c => `[${c}]`);
   let inDouble = false;
   let inSingle = false;
 
@@ -71,8 +96,11 @@ export function tokenizeArgs(input: string, syntax: ShellSyntax = 'bash'): strin
       const next = input[i + 1];
       if (syntax === 'bash' && inDouble && !'$`"\\\n'.includes(next)) {
         current += ch; // inside "...", bash keeps backslashes that escape nothing
+        pattern += literal(ch);
       } else {
-        current += syntax === 'powershell' ? ({ n: '\n', t: '\t' } as Record<string, string>)[next] ?? next : next;
+        const out = syntax === 'powershell' ? ({ n: '\n', t: '\t' } as Record<string, string>)[next] ?? next : next;
+        current += out;
+        pattern += literal(out);
         i++;
       }
       started = true;
@@ -83,16 +111,21 @@ export function tokenizeArgs(input: string, syntax: ShellSyntax = 'bash'): strin
 
     if (/\s/.test(ch) && !inDouble && !inSingle) {
       if (started) {
-        tokens.push(current);
-        current = '';
+        push();
         started = false;
       }
     } else {
       current += ch;
+      if (!inDouble && !inSingle && syntax === 'bash' && '*?['.includes(ch)) {
+        pattern += ch;
+        hasGlob = true;
+      } else {
+        pattern += literal(ch);
+      }
       started = true;
     }
   }
-  if (started) tokens.push(current);
+  if (started) push();
   return tokens;
 }
 
@@ -167,11 +200,13 @@ export function parseSingleCommand(cmdStr: string, syntax: ShellSyntax = 'bash')
     }
   }
 
-  const tokens = tokenizeArgs(body, syntax);
+  const words = tokenizeWords(body, syntax);
+  const argWords = words.slice(1);
   return {
     raw: cmdStr.trim(),
-    name: tokens[0] ?? '',
-    args: [...tokens.slice(1), ...leftoverArgs],
+    name: words[0]?.text ?? '',
+    args: [...argWords.map(w => w.text), ...leftoverArgs],
+    argGlobs: argWords.some(w => w.globPattern) ? argWords.map(w => w.globPattern) : undefined,
     redirect,
     stderrRedirect: extracted.stderr,
   };
