@@ -98,7 +98,8 @@ test.describe('first steps on a phone', () => {
     await keys.getByRole('button', { name: 'Control C, cancel line' }).tap();
     await expect(input).toHaveValue('');
 
-    await expect(page.getByRole('status').filter({ hasText: 'Lab done' })).toBeVisible();
+    // The lab page's own status bar; the screen-reader Celebrations region can say "Lab done" at the same time
+    await expect(page.locator('[role="status"]:not([aria-label="Celebrations"])').filter({ hasText: 'Lab done' })).toBeVisible();
     await show.getByRole('button', { name: /^Lab/ }).tap();
     await expect(show.getByRole('button', { name: /^Lab/ })).toContainText('5 of 5');
   });
