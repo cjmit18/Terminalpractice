@@ -52,7 +52,13 @@ export interface LinuxDoc {
    * Bash builtin. Builtins have no man page of their own on Ubuntu (help NAME documents
    * them); `file` is true when a program of the same name also exists (/usr/bin/echo).
    */
-  builtin?: { short: string; file?: boolean };
+  builtin?: {
+    short: string;
+    file?: boolean;
+    /** Text for `help NAME` when it differs from the man page (builtins that also exist as programs). */
+    help?: string[];
+    options?: DocOption[];
+  };
   /** Installed in /usr/sbin rather than /usr/bin. */
   sbin?: boolean;
   /** A man page only (no program in this simulator), e.g. the file formats in section 5. */
