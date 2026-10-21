@@ -6,6 +6,10 @@ const PORT = 4173;
 // In CI it stays unset and Playwright uses the Chromium installed by `npx playwright install`.
 const executablePath = process.env.PW_CHROMIUM_PATH || undefined;
 
+// Without this, Chromium's offline emulation and request routing do not apply to fetches made
+// by the service worker itself, so an "offline" test would still reach the preview server.
+process.env.PW_EXPERIMENTAL_SERVICE_WORKER_NETWORK_EVENTS = '1';
+
 export default defineConfig({
   testDir: './e2e',
   outputDir: './test-results',
