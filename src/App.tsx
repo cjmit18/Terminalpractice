@@ -354,7 +354,7 @@ export default function App() {
 
       <main id="main" ref={mainRef} tabIndex={-1} className="flex-1 min-h-0 overflow-y-auto focus:outline-none">
         <PageErrorBoundary resetKey={routeKey}>
-        {learnRoute && !learnRoute.pathId && <PathsList paths={LEARNING_PATHS} src={src} modulesById={MODULES_BY_ID} />}
+        {learnRoute && !learnRoute.pathId && <PathsList paths={LEARNING_PATHS} src={src} modulesById={MODULES_BY_ID} progress={progress} />}
 
         {activePath && !learnRoute?.stepId && (
           <PathOverview
