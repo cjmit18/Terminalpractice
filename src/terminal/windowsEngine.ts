@@ -10,6 +10,8 @@ import './windows/psSystem';
 import { runPowerShellPipeline } from './windows/psPipeline';
 import { expandCmdVariables, expandPowerShellEnv, setErrorLevel } from './windows/env';
 import { psExtractRedirects, psNotRecognized, psNotSimulated, psSplitPipeline, psStage } from './windows/psUtil';
+import { psSyntaxError } from './windows/psParse';
+import { cmdSyntaxError } from './windows/cmd/syntax';
 import { isNotSimulatedWindows } from './notSimulated';
 import { suggestCmd, suggestPowerShell } from './suggest';
 import './windows/psFiles';
@@ -31,6 +33,27 @@ export function executeWindowsLine(
   shell: TerminalShell = 'cmd',
   isDiskpartSession = false
 ): WindowsExecutionResult {
+  try {
+    return runWindowsLine(rawInput, cwd, fs, state, shell, isDiskpartSession);
+  } catch (err) {
+    // A simulator bug must not take the session with it: report it and leave everything as it was
+    const why = err instanceof Error ? err.message : String(err);
+    return {
+      stdout: '', stderr: `The simulator hit an internal error and did not run this command (${why}).`, exitCode: 1,
+      newCwd: cwd, newFs: fs, newState: state, diskpartActive: isDiskpartSession,
+      explanation: 'This is a bug in the simulator, not in your command. Nothing was changed; you can carry on.',
+    };
+  }
+}
+
+function runWindowsLine(
+  rawInput: string,
+  cwd: string,
+  fs: FileNode,
+  state: SystemState,
+  shell: TerminalShell,
+  isDiskpartSession: boolean
+): WindowsExecutionResult {
   const line = rawInput.trim();
   if (!line) {
     return { stdout: '', stderr: '', exitCode: 0, newCwd: cwd, newFs: fs, newState: state, diskpartActive: isDiskpartSession };
@@ -47,6 +70,9 @@ export function executeWindowsLine(
   }
 
   if (shell === 'powershell') return executePowerShellCommand(line, cwd, fs, state);
+
+  const syntax = cmdSyntaxError(line);
+  if (syntax) return { stdout: '', stderr: syntax, exitCode: 1, newCwd: cwd, newFs: fs, newState: state };
 
   // CMD expands %VAR% once for the whole line, before splitting on & and |
   const expanded = expandCmdVariables(line, state, cwd);
@@ -182,6 +208,8 @@ function executePowerShellCommand(
   fs: FileNode,
   state: SystemState
 ): WindowsExecutionResult {
+  const syntax = psSyntaxError(rawLine);
+  if (syntax) return { stdout: '', stderr: syntax, exitCode: 1, newCwd: cwd, newFs: fs, newState: state };
   const { body, redirect } = psExtractRedirects(expandPowerShellEnv(rawLine, state));
   let res = runPowerShellLine(body, cwd, fs, state);
   if (redirect.stderr === 'null') res = { ...res, stderr: '' };
