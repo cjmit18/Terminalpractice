@@ -245,6 +245,39 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
     );
   };
 
+  // The history only changes with a command, not with each keystroke at the prompt
+  const historyView = React.useMemo(
+    () =>
+      history.map((item) => {
+        const stdoutText = item.errorOutput ? item.output.replace(item.errorOutput, '').trim() : item.output;
+        return (
+          <div key={item.id} className="mb-1.5">
+            <div className="break-all">
+              {renderPrompt(item.shell, item.cwd, item.user ?? currentUser, !!item.inDiskpart)}
+              <span>{item.command}</span>
+            </div>
+            {stdoutText && (
+              <pre className={`whitespace-pre-wrap break-words font-mono ${item.isError && !item.errorOutput ? 'text-term-error' : ''}`}>
+                {stdoutText}
+              </pre>
+            )}
+            {item.errorOutput && (
+              <pre className="whitespace-pre-wrap break-words font-mono text-term-error">{item.errorOutput}</pre>
+            )}
+            {/* A learning note, not shell output: set apart in the UI font so it never reads as part of the terminal */}
+            {item.explanation && (
+              <p className="mt-1 mb-2 border-l-2 border-term-line pl-3 font-sans text-[13px] leading-relaxed text-term-muted whitespace-pre-line">
+                <span className="font-medium text-term-text">Why: </span>
+                {item.explanation}
+              </p>
+            )}
+          </div>
+        );
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [history, currentUser, hostname],
+  );
+
   const copyTerminalOutput = async () => {
     const text = history.map(h => `${h.command}\n${h.output}`).join('\n\n');
     try {
@@ -296,32 +329,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
         <div role="log" aria-live="polite" aria-label="Terminal output">
           {showBanner && <p className="text-term-muted mb-2">{BANNERS[shell]}</p>}
 
-          {history.map((item) => {
-            const stdoutText = item.errorOutput ? item.output.replace(item.errorOutput, '').trim() : item.output;
-            return (
-              <div key={item.id} className="mb-1.5">
-                <div className="break-all">
-                  {renderPrompt(item.shell, item.cwd, item.user ?? currentUser, !!item.inDiskpart)}
-                  <span>{item.command}</span>
-                </div>
-                {stdoutText && (
-                  <pre className={`whitespace-pre-wrap break-words font-mono ${item.isError && !item.errorOutput ? 'text-term-error' : ''}`}>
-                    {stdoutText}
-                  </pre>
-                )}
-                {item.errorOutput && (
-                  <pre className="whitespace-pre-wrap break-words font-mono text-term-error">{item.errorOutput}</pre>
-                )}
-                {/* A learning note, not shell output: set apart in the UI font so it never reads as part of the terminal */}
-                {item.explanation && (
-                  <p className="mt-1 mb-2 border-l-2 border-term-line pl-3 font-sans text-[13px] leading-relaxed text-term-muted whitespace-pre-line">
-                    <span className="font-medium text-term-text">Why: </span>
-                    {item.explanation}
-                  </p>
-                )}
-              </div>
-            );
-          })}
+          {historyView}
         </div>
 
         {!readOnly && (
