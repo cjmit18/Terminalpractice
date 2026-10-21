@@ -1,0 +1,16 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  // Must match the Worker connected to this repo in the Cloudflare dashboard (Workers Builds)
+  "name": "terminalpractice",
+  "compatibility_date": "2026-10-13",
+  // `wrangler deploy` builds first, so a deploy never ships a stale or missing dist/
+  "build": {
+    "command": "npm run build"
+  },
+  // Static site only: no Worker script. Cloudflare serves dist/ from its edge.
+  "assets": {
+    "directory": "./dist",
+    // The app routes with #/ hashes, so this only matters for typed or stale paths: they get the app, not a 404
+    "not_found_handling": "single-page-application"
+  }
+}

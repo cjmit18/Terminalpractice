@@ -85,6 +85,19 @@ Add it to `src/data/lpiModules.ts` or `src/data/windowsPbqs.ts`, with a one-sent
 
 ## Deployment
 
-Pushes to `main` run `.github/workflows/deploy.yml`, which tests, builds and publishes `dist/` to GitHub Pages. One-time setup: in the repository settings, under **Pages**, set **Source** to **GitHub Actions**. The build uses a relative base path, so it works from a project URL such as `https://<user>.github.io/<repo>/`.
+The site is static (no server code), so it can be hosted anywhere that serves files. Two hosts are set up:
 
-CI (`.github/workflows/ci.yml`) runs typecheck, tests and build on every push and pull request.
+### Cloudflare Workers (static assets)
+
+`wrangler.jsonc` describes a static-assets Worker named `terminalpractice` that serves `dist/`. Cloudflare Workers Builds is connected to this repository, so every push builds and deploys automatically: pushes to `main` go to production, and pull requests get a preview deployment with its own URL (posted on the PR by Cloudflare's bot).
+
+- `npm run deploy` builds and deploys from your machine (`wrangler deploy`; run `npx wrangler login` once first).
+- `npx wrangler dev` serves the built site locally through Cloudflare's runtime.
+- `wrangler deploy` runs `npm run build` itself (the `build` section of `wrangler.jsonc`), so it never ships a stale `dist/`.
+- Workers Builds settings in the Cloudflare dashboard: the deploy command is `npx wrangler deploy` (the default); no separate build command is needed. Node 22 comes from `.node-version`.
+
+### GitHub Pages
+
+Pushes to `main` also run `.github/workflows/deploy.yml`, which tests, builds and publishes `dist/` to GitHub Pages. One-time setup: in the repository settings, under **Pages**, set **Source** to **GitHub Actions**. The build uses a relative base path, so it works from a project URL such as `https://<user>.github.io/<repo>/`. If Cloudflare becomes the only host, delete that workflow and turn Pages off.
+
+CI (`.github/workflows/ci.yml`) runs typecheck, tests, build and the browser tests on every push and pull request.
