@@ -258,6 +258,9 @@ psCommands.register(['Get-ChildItem', 'gci', 'ls', 'dir'], getChildItem);
 psCommands.register(['Get-Content', 'gc', 'cat', 'type'], getContent);
 psCommands.register(['Get-Location', 'gl', 'pwd'], getLocation);
 psCommands.register(['Set-Location', 'sl', 'cd', 'chdir'], setLocation);
+// PowerShell defines cd.. and cd\ as functions (Set-Location .. and Set-Location \) for CMD habits
+psCommands.register('cd..', ctx => { ctx.args = ['..']; return setLocation(ctx); });
+psCommands.register('cd\\', ctx => { ctx.args = ['\\']; return setLocation(ctx); });
 psCommands.register(['New-Item', 'ni', 'mkdir', 'md'], newItem);
 psCommands.register(['Copy-Item', 'copy', 'cp', 'cpi'], copyItem);
 psCommands.register(['Remove-Item', 'ri', 'del', 'erase', 'rm', 'rmdir', 'rd'], removeItem);

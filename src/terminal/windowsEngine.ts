@@ -95,6 +95,9 @@ function executeSingleCmdCommand(
   state: SystemState,
   stdin = ''
 ): WindowsExecutionResult {
+  // CMD ends an internal command's name at . \ or /, so cd.. cd\ cd/d and dir/w work without a space
+  const glued = cmdCommands.has(parsed.name) ? null : parsed.name.match(/^(cd|chdir|dir|md|mkdir|rd|rmdir)([.\\/].*)$/i);
+  if (glued && cmdCommands.has(glued[1])) parsed = { ...parsed, name: glued[1], args: [glued[2], ...parsed.args] };
   const ctx = new WindowsContext(parsed.name, parsed.args, stdin, parsed.raw, cwd, fs, cloneState(state));
   const handler = cmdCommands.get(parsed.name);
   // <command> /? prints the command's usage instead of running it

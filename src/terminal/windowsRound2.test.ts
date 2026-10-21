@@ -81,3 +81,26 @@ test('B2 (L2-12): PowerShell runs statements separated by ; in order', () => {
   // cd in one statement moves the next one
   assert.match(windowsSession('powershell')('cd C:\\; Get-Location').stdout, /\nC:\\\n/);
 });
+
+test('B3 (L2-11): CMD cd.. cd\\ cd. cd/d and chdir.., PowerShell cd.. and cd\\', () => {
+  const cmd = windowsSession('cmd');
+  assert.equal(cmd('cd..').exitCode, 0);
+  assert.equal(cmd.cwd(), 'C:\\Users');
+  cmd('cd.');
+  assert.equal(cmd.cwd(), 'C:\\Users');
+  cmd('cd\\');
+  assert.equal(cmd.cwd(), 'C:\\');
+  cmd('cd/d C:\\Users\\Student');
+  assert.equal(cmd.cwd(), 'C:\\Users\\Student');
+  cmd('chdir..');
+  assert.equal(cmd.cwd(), 'C:\\Users');
+  cmd('cd\\Windows');
+  assert.equal(cmd.cwd(), 'C:\\Windows');
+  assert.match(cmd('cd/?').stdout, /CHDIR \[\/D\]/);
+
+  const ps = windowsSession('powershell');
+  assert.equal(ps('cd..').exitCode, 0);
+  assert.equal(ps.cwd(), 'C:\\Users');
+  ps('cd\\');
+  assert.equal(ps.cwd(), 'C:\\');
+});
