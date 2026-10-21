@@ -14,6 +14,7 @@ import {
   stageUnlocked,
   stepAfter,
   stepComplete,
+  stepSatisfied,
   stepKey,
   stepMinutes,
   stepTitle,
@@ -274,7 +275,7 @@ const LockedStep: React.FC<{
 }> = ({ path, loc, src, modulesById }) => {
   const prevStage = path.stages[loc.stageIndex - 1];
   const next = nextStep(path, src);
-  const todo = next ? next.stage.steps.filter(s => !stepComplete(path.id, s, src)) : [];
+  const todo = next ? next.stage.steps.filter(s => !stepSatisfied(path.id, next.stage, s, src)) : [];
 
   return (
     <div className="max-w-3xl mx-auto w-full px-4 sm:px-6 py-8 sm:py-12 space-y-6">

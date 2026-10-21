@@ -263,3 +263,34 @@ test('Router: learning path routes', () => {
   assert.equal(learnHref('p'), '#/learn/p');
   assert.equal(learnHref(null, 'x'), '#/learn');
 });
+
+test('Journey: steps sharing a choiceGroup are alternatives, any one completes them', () => {
+  const CHOICE: LearningPath = {
+    ...PATH,
+    stages: [
+      {
+        id: 's1',
+        title: 'One',
+        goal: '',
+        steps: [
+          { kind: 'lesson', id: 'l1', title: 'L1', minutes: 4, blocks: [{ type: 'p', text: 'x' }] },
+          { kind: 'lab', id: 'lab1', moduleId: 'm1', choiceGroup: 'pick' },
+          { kind: 'lab', id: 'lab2', moduleId: 'm2', choiceGroup: 'pick' },
+        ],
+      },
+    ],
+  };
+  const read = markRead(EMPTY_JOURNEY, 'p', 'l1');
+  const none = src(read);
+  assert.equal(stageComplete('p', CHOICE.stages[0], none), false);
+  assert.equal(pathPercent(CHOICE, none), 50);
+  assert.equal(nextStep(CHOICE, none)?.step.id, 'lab1');
+  assert.equal(pathMinutes(CHOICE, new Map(MODULES.map(m => [m.id, m]))), 4 + 15);
+  for (const progress of [{ m1: ['a', 'b'] }, { m2: ['c'] }] as Record<string, string[]>[]) {
+    const s = src(read, progress);
+    assert.equal(stageComplete('p', CHOICE.stages[0], s), true);
+    assert.equal(currentStageIndex(CHOICE, s), -1);
+    assert.equal(pathPercent(CHOICE, s), 100);
+    assert.equal(stepAfter(CHOICE, 'l1', s), null);
+  }
+});

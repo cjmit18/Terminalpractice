@@ -262,8 +262,34 @@ export function stepComplete(pathId: string, step: PathStep, src: CompletionSour
   }
 }
 
+/** A stage's steps as the things to do: one step, or the alternatives sharing a choiceGroup (in first-seen order). */
+export function stageUnits(stage: PathStage): PathStep[][] {
+  const units: PathStep[][] = [];
+  const groups = new Map<string, PathStep[]>();
+  for (const step of stage.steps) {
+    if (!step.choiceGroup) {
+      units.push([step]);
+      continue;
+    }
+    const unit = groups.get(step.choiceGroup);
+    if (unit) unit.push(step);
+    else {
+      const fresh = [step];
+      groups.set(step.choiceGroup, fresh);
+      units.push(fresh);
+    }
+  }
+  return units;
+}
+
+/** Done, or one of its alternatives (same choiceGroup in the same stage) is done. */
+export function stepSatisfied(pathId: string, stage: PathStage, step: PathStep, src: CompletionSource): boolean {
+  if (stepComplete(pathId, step, src)) return true;
+  return !!step.choiceGroup && stage.steps.some(s => s.choiceGroup === step.choiceGroup && stepComplete(pathId, s, src));
+}
+
 export function stageComplete(pathId: string, stage: PathStage, src: CompletionSource): boolean {
-  return stage.steps.every(step => stepComplete(pathId, step, src));
+  return stageUnits(stage).every(unit => unit.some(step => stepComplete(pathId, step, src)));
 }
 
 /** The first stage is always open; each later one opens when the stage before it is complete. */
@@ -278,9 +304,10 @@ export function stepUnlocked(path: LearningPath, stepId: string, src: Completion
   return !!loc && stageUnlocked(path, loc.stageIndex, src);
 }
 
+/** Things done and to do; alternatives (see stageUnits) count once. */
 export function stepsDone(path: LearningPath, src: CompletionSource): { done: number; total: number } {
-  const steps = allSteps(path);
-  return { done: steps.filter(s => stepComplete(path.id, s, src)).length, total: steps.length };
+  const units = path.stages.flatMap(stageUnits);
+  return { done: units.filter(u => u.some(s => stepComplete(path.id, s, src))).length, total: units.length };
 }
 
 /** Whole-number percent of steps complete. */
@@ -301,7 +328,8 @@ export function currentStageIndex(path: LearningPath, src: CompletionSource): nu
 export function nextStep(path: LearningPath, src: CompletionSource): StepLocation | null {
   const stageIndex = currentStageIndex(path, src);
   if (stageIndex < 0) return null;
-  const step = path.stages[stageIndex].steps.find(s => !stepComplete(path.id, s, src));
+  const stage = path.stages[stageIndex];
+  const step = stage.steps.find(s => !stepSatisfied(path.id, stage, s, src));
   return step ? findStep(path, step.id) : null;
 }
 
@@ -316,7 +344,7 @@ export function stepAfter(path: LearningPath, fromStepId: string, src: Completio
     for (let i = from.index + 1; i < steps.length; i++) {
       const loc = findStep(path, steps[i].id)!;
       if (!stageUnlocked(path, loc.stageIndex, src)) break;
-      if (!stepComplete(path.id, loc.step, src)) return loc;
+      if (!stepSatisfied(path.id, loc.stage, loc.step, src)) return loc;
     }
   }
   const next = nextStep(path, src);
@@ -346,7 +374,7 @@ export function resumeTarget(
   if (!path) return null;
   if (last.stepId) {
     const loc = findStep(path, last.stepId);
-    if (loc && !stepComplete(path.id, loc.step, src) && stageUnlocked(path, loc.stageIndex, src)) return { path, loc };
+    if (loc && !stepSatisfied(path.id, loc.stage, loc.step, src) && stageUnlocked(path, loc.stageIndex, src)) return { path, loc };
   }
   const next = nextStep(path, src);
   return next ? { path, loc: next } : null;
@@ -366,8 +394,9 @@ export function stepMinutes(step: PathStep, modulesById: Map<string, ExamModule>
   }
 }
 
+/** Alternatives count once, by the first of them. */
 export function pathMinutes(path: LearningPath, modulesById: Map<string, ExamModule>): number {
-  return allSteps(path).reduce((sum, s) => sum + stepMinutes(s, modulesById), 0);
+  return path.stages.flatMap(stageUnits).reduce((sum, unit) => sum + stepMinutes(unit[0], modulesById), 0);
 }
 
 /** "about 45 min", "about 2 hr 10 min", "about 3 hr" */

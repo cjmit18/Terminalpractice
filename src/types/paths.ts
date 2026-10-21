@@ -35,7 +35,7 @@ export interface QuizQuestion {
   explanation: string;
 }
 
-export type PathStep =
+export type PathStep = (
   | {
       kind: 'lesson';
       id: string;
@@ -58,7 +58,14 @@ export type PathStep =
       /** Fraction of questions needed to pass, e.g. 0.75 */
       passMark: number;
       questions: QuizQuestion[];
-    };
+    }
+) & {
+  /**
+   * Steps of one stage with the same choiceGroup are alternatives (e.g. a Linux and a Windows
+   * version of one lab): doing any one of them completes them all for progress and navigation.
+   */
+  choiceGroup?: string;
+};
 
 export interface PathStage {
   id: string;
