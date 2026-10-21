@@ -38,8 +38,14 @@ export default defineConfig(() => {
     build: {
       rollupOptions: {
         output: {
-          // React and the icon set change rarely; a separate chunk stays cached across app updates
-          manualChunks: (id: string) => (/node_modules\/(react|react-dom|scheduler|lucide-react)\//.test(id) ? 'vendor' : undefined),
+          // Split by how often things change, so an app update does not re-download everything:
+          // React and icons rarely change; command docs and course content change independently of the UI
+          manualChunks: (id: string) => {
+            if (/node_modules\/(react|react-dom|scheduler|lucide-react)\//.test(id)) return 'vendor';
+            if (id.includes('/src/terminal/docs/')) return 'docs';
+            if (id.includes('/src/data/')) return 'content';
+            return undefined;
+          },
         },
       },
     },
