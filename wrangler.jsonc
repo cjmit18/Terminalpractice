@@ -31,5 +31,21 @@
     // The client secret is set separately: npx wrangler secret put GITHUB_CLIENT_SECRET
     // While either is missing, the app hides "Sign in" and the API answers 503 for sign-in.
     "GITHUB_CLIENT_ID": ""
+  },
+  // Branch previews (`wrangler preview`) don't inherit the bindings above, so they get their own
+  "previews": {
+    "vars": {
+      // Empty on purpose: preview URLs won't match the GitHub App's callback, so previews hide "Sign in"
+      "GITHUB_CLIENT_ID": ""
+    },
+    "d1_databases": [
+      {
+        // Separate database so a test branch can never touch real accounts
+        "binding": "DB",
+        "database_name": "terminalpractice-preview",
+        "database_id": "e671f478-ea60-41d5-a2ec-a3668c02c05a",
+        "migrations_dir": "migrations"
+      }
+    ]
   }
 }
