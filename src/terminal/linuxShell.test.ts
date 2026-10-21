@@ -104,6 +104,17 @@ test('printf: %s %d, escapes, width and format reuse', () => {
   assert.equal(bad.exitCode, 1);
 });
 
+test('printf: negative * precision counts as omitted and large precision never throws', () => {
+  const run = linuxSession();
+  assert.equal(run("printf '%.*f' -1 1").stdout, '1.000000');
+  assert.equal(run("printf '%.*s|' -1 abc").stdout, 'abc|');
+  const big = run("printf '%.101f' 1");
+  assert.equal(big.exitCode, 0);
+  assert.match(big.stdout, /^1\.0+$/);
+  assert.equal(run("printf '%.150e' 1").exitCode, 0);
+  assert.equal(run("printf '%.150g' 1").stdout, '1');
+});
+
 test('comments, |& and >&2', () => {
   const run = linuxSession();
   assert.equal(run('echo a # not printed').stdout, 'a');
