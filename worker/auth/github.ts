@@ -1,7 +1,7 @@
 // Sign in with GitHub (a GitHub App's user authorization, an OAuth 2.0 code flow), or link GitHub to the
 // signed-in user with `?link=1`.
-import { randomToken, safeReturn, text, type ApiEnv, type Route, type RouteContext } from '../http';
-import { backToApp, checkState, finishOAuth, linkRefusal, providerFailed, readSavedState, stateCookie, stateMismatch } from './oauth';
+import { randomToken, redirect, safeReturn, text, type ApiEnv, type Route, type RouteContext } from '../http';
+import { backToApp, callbackUrl, checkState, finishOAuth, planStart, providerFailed, readSavedState, stateCookie, stateMismatch } from './oauth';
 
 const GITHUB_AUTHORIZE = 'https://github.com/login/oauth/authorize';
 const GITHUB_TOKEN = 'https://github.com/login/oauth/access_token';
@@ -12,21 +12,18 @@ const notConfigured = () => text('Sign-in with GitHub is not set up on this serv
 
 async function start(c: RouteContext): Promise<Response> {
   if (!githubConfigured(c.env)) return notConfigured();
-  const link = c.url.searchParams.get('link') === '1';
-  const refused = await linkRefusal(c, link);
-  if (refused) return refused;
+  const plan = await planStart(c, 'github');
+  if (plan instanceof Response) return plan;
+  const { mode, returnTo, sessionHash } = plan;
 
   const state = randomToken();
-  const returnTo = safeReturn(c.url.searchParams.get('return'));
   const authorize = new URL(GITHUB_AUTHORIZE);
   authorize.searchParams.set('client_id', c.env.GITHUB_CLIENT_ID!);
-  // Derived from the request, so the same code works on workers.dev, localhost and a custom domain
-  authorize.searchParams.set('redirect_uri', `${c.url.origin}/api/auth/github/callback`);
+  // The app's origin (APP_ORIGINS), or the request's when none is configured (previews, localhost)
+  authorize.searchParams.set('redirect_uri', callbackUrl(c, 'github'));
   authorize.searchParams.set('state', state);
 
-  const headers = new Headers({ Location: authorize.toString(), 'Cache-Control': 'no-store' });
-  headers.append('Set-Cookie', stateCookie({ state, returnTo, link, provider: 'github', verifier: '' }));
-  return new Response(null, { status: 302, headers });
+  return redirect(authorize.toString(), [stateCookie({ state, returnTo, mode, provider: 'github', verifier: '', sessionHash })]);
 }
 
 async function callback(c: RouteContext): Promise<Response> {
@@ -45,7 +42,7 @@ async function callback(c: RouteContext): Promise<Response> {
       client_id: c.env.GITHUB_CLIENT_ID!,
       client_secret: c.env.GITHUB_CLIENT_SECRET!,
       code: c.url.searchParams.get('code')!,
-      redirect_uri: `${c.url.origin}/api/auth/github/callback`,
+      redirect_uri: callbackUrl(c, 'github'),
     }).toString(),
   });
   const token = (await tokenRes.json().catch(() => ({}))) as { access_token?: string };

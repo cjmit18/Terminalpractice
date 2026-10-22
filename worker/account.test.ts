@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ORIGIN, PASSWORD, cookieValue, oauth, register, setup, tokenFromEmail } from './testkit.ts';
+import { ORIGIN, PASSWORD, cookieValue, oauth, register, registerVerified, setup, tokenFromEmail, verifyEmail } from './testkit.ts';
 import { base64url } from './http.ts';
 
 // --- Google --------------------------------------------------------------------------------
@@ -80,7 +80,7 @@ test('a Google account whose email matches an email account is not merged into i
 
 test('linking Google and GitHub to an email account, and unlinking with the last-method guard', async () => {
   const s = setup();
-  const { session, user } = await register(s);
+  const { session, user } = await registerVerified(s);
 
   // Linking needs a session
   assert.equal((await s.call('GET', '/api/auth/google/start?link=1')).status, 401);
@@ -105,8 +105,9 @@ test('linking Google and GitHub to an email account, and unlinking with the last
   const viaGoogle = await oauth(s, 'google');
   assert.equal((await (await s.call('GET', '/api/me', { session: viaGoogle.session })).json()).user.id, user.id);
 
-  // Remove email and GitHub; Google is then the last way in and stays
-  assert.equal((await s.call('DELETE', '/api/account/identities/email', { session })).status, 204);
+  // Remove email and GitHub; Google is then the last way in and stays. With a password, unlinking needs it.
+  assert.equal((await s.call('DELETE', '/api/account/identities/email', { session })).status, 400);
+  assert.equal((await s.call('DELETE', '/api/account/identities/email', { session, json: { currentPassword: PASSWORD } })).status, 204);
   assert.equal((await s.call('DELETE', '/api/account/identities/github', { session })).status, 204);
   const last = await s.call('DELETE', '/api/account/identities/google', { session });
   assert.equal(last.status, 409);
@@ -128,7 +129,7 @@ test('an email account with only its password cannot remove it (409)', async () 
 test('linking an identity that belongs to someone else is refused and nothing moves', async () => {
   const s = setup();
   const owner = await oauth(s, 'github'); // the GitHub account belongs to a GitHub-only user
-  const { session } = await register(s);
+  const { session } = await registerVerified(s);
   const res = await oauth(s, 'github', { session, link: true, returnTo: '#/account/security' });
   assert.equal(res.cb.headers.get('Location'), `${ORIGIN}/#/account/security?error=identity_in_use`);
   assert.equal(s.count("SELECT count(*) AS n FROM identities WHERE provider = 'github'"), 1);
@@ -147,6 +148,11 @@ test('a GitHub-only user who adds an email without a password still cannot drop 
   const { session } = await oauth(s, 'github');
   assert.equal((await s.call('POST', '/api/account/email', { session, json: { email: 'gh@example.com' } })).status, 202);
   assert.equal((await s.call('DELETE', '/api/account/identities/github', { session })).status, 409);
+  // A first password needs the address verified
+  const early = await s.call('POST', '/api/account/password', { session, json: { newPassword: PASSWORD } });
+  assert.equal(early.status, 409);
+  assert.equal((await early.json()).error, 'email_unverified');
+  assert.equal((await verifyEmail(s)).status, 200);
   // After setting a password, email is a real way in
   assert.equal((await s.call('POST', '/api/account/password', { session, json: { newPassword: PASSWORD } })).status, 200);
 });
@@ -256,7 +262,7 @@ test('email change: needs the password, refuses a taken address, sends a new ver
 
 test('export is a JSON download without password, session or token hashes', async () => {
   const s = setup();
-  const { session, user } = await register(s);
+  const { session, user } = await registerVerified(s);
   await oauth(s, 'github', { session, link: true });
   await s.call('POST', '/api/auth/password/forgot', { json: { email: 'learner@example.com' } });
   const res = await s.call('GET', '/api/account/export', { session });
@@ -282,13 +288,14 @@ test('export is a JSON download without password, session or token hashes', asyn
 
 test('delete account needs the confirmation and removes everything linked', async () => {
   const s = setup();
-  const { session, user } = await register(s);
+  const { session, user } = await registerVerified(s);
   await oauth(s, 'google', { session, link: true });
   await s.call('POST', '/api/auth/password/forgot', { json: { email: 'learner@example.com' } });
   const other = await register(s, 'other@example.com');
 
   assert.equal((await s.call('DELETE', '/api/account', { session, json: {} })).status, 400);
-  const res = await s.call('DELETE', '/api/account', { session, json: { confirm: 'delete' } });
+  assert.equal((await s.call('DELETE', '/api/account', { session, json: { confirm: 'delete' } })).status, 400); // no currentPassword
+  const res = await s.call('DELETE', '/api/account', { session, json: { confirm: 'delete', currentPassword: PASSWORD } });
   assert.equal(res.status, 204);
   assert.equal(cookieValue(res, '__Host-session'), '');
   for (const table of ['users WHERE id', 'identities WHERE user_id', 'sessions WHERE user_id', 'auth_tokens WHERE user_id']) {
@@ -352,7 +359,7 @@ test('deleting the account removes its synced progress and leaves other accounts
     await syncSome(s, other.session);
     for (const t of SYNC_TABLES) assert.ok(s.count(`SELECT count(*) AS n FROM ${t} WHERE user_id = ?`, user.id) > 0, t);
 
-    assert.equal((await s.call('DELETE', '/api/account', { session, json: { confirm: 'delete' } })).status, 204);
+    assert.equal((await s.call('DELETE', '/api/account', { session, json: { confirm: 'delete', currentPassword: PASSWORD } })).status, 204);
     for (const t of SYNC_TABLES) {
       assert.equal(s.count(`SELECT count(*) AS n FROM ${t} WHERE user_id = ?`, user.id), 0, `${t} (foreign_keys ${foreignKeys})`);
       assert.ok(s.count(`SELECT count(*) AS n FROM ${t} WHERE user_id = ?`, other.user.id) > 0, `${t} of the other account`);

@@ -233,10 +233,14 @@ test('rate limits answer 429 with Retry-After', async () => {
   assert.equal((await register(u, 'p5@example.com')).res.status, 429);
   assert.equal((await register(u, 'p5@example.com', PASSWORD, '192.0.2.1')).res.status, 201);
 
-  // Forgot password: 3 per hour per email
+  // Forgot password: 3 per hour per email; over the limit it still answers 202 and sends nothing
   const v = setup();
+  await register(v, 'x@example.com');
+  const sent = v.services.emails.length;
   for (let i = 0; i < 3; i++) assert.equal((await v.call('POST', '/api/auth/password/forgot', { json: { email: 'x@example.com' } })).status, 202);
-  assert.equal((await v.call('POST', '/api/auth/password/forgot', { json: { email: 'X@Example.com' } })).status, 429);
+  assert.equal(v.services.emails.length, sent + 3);
+  assert.equal((await v.call('POST', '/api/auth/password/forgot', { json: { email: 'X@Example.com' } })).status, 202);
+  assert.equal(v.services.emails.length, sent + 3);
   // Limit keys never hold the email or IP in readable form
   const keys = (v.db.raw.prepare('SELECT key FROM rate_limits').all() as { key: string }[]).map(r => r.key).join(' ');
   assert.doesNotMatch(keys, /example\.com|203\.0\.113/);

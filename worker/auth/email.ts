@@ -1,17 +1,30 @@
 // Email + password accounts: register, sign in, verify the address, resend, forgot and reset password.
 import {
   HttpError,
-  clientIp,
+  appOrigin,
   inBackground,
+  ipSubject,
   isUniqueViolation,
   json,
   str,
+  type Db,
   type Route,
   type RouteContext,
 } from '../http';
 import { hashPassword, passwordProblem, verifyAgainstDummy, verifyPassword } from '../password';
-import { LIMITS, enforceLimit } from '../ratelimit';
-import { createSession, endAllSessions, loadUser, requireUser, sessionCookie, toPublicUser } from '../session';
+import { LIMITS, countLimit, enforceLimit, rateLimited } from '../ratelimit';
+import {
+  createSession,
+  emailUnverified,
+  endAllSessions,
+  endIncomingSession,
+  loadUser,
+  requireUser,
+  sessionCookie,
+  staleEmailClaim,
+  toPublicUser,
+} from '../session';
+import { SYNC_TABLES } from '../sync';
 import { consumeToken, issueToken, peekToken, revokeTokens, tokenFailure } from '../tokens';
 import { resetEmail, sendEmail, verificationEmail } from '../mail';
 
@@ -25,11 +38,38 @@ async function badToken(c: RouteContext, token: string, purpose: 'verify' | 'res
     : INVALID_TOKEN();
 }
 
-/** Trimmed and lowercased; null when it does not look like an email address */
+const LOCAL_PART = /^[a-z0-9!#$%&'*+/=?^_`{|}~-]+(\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*$/;
+const DOMAIN = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
+/** Characters an address may never hold: specials that make "Name <addr>" or quoted forms, controls, format characters, spaces */
+const FORBIDDEN = /[<>"(),;:[\]\\\s\p{Cc}\p{Cf}]/u;
+
+/**
+ * The canonical form of an email address, or null when it is not one we accept. NFC-normalized, trimmed
+ * and lowercased. The local part is plain ASCII (dot-atom, no quoting); an internationalized domain is
+ * converted to punycode with the URL API (UTS #46), so lookalike Unicode forms map to one address.
+ */
 export function normalizeEmail(value: string): string | null {
-  const email = value.trim().toLowerCase();
-  if (email.length > 254 || !/^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/.test(email)) return null;
-  return email;
+  const email = value.normalize('NFC').trim().toLowerCase();
+  if (email.length > 254 || FORBIDDEN.test(email)) return null;
+  const at = email.indexOf('@');
+  if (at < 1 || at !== email.lastIndexOf('@')) return null;
+  const local = email.slice(0, at);
+  let domain = email.slice(at + 1);
+  if (local.length > 64 || !LOCAL_PART.test(local)) return null;
+  if (/[^\x00-\x7f]/.test(domain)) {
+    // Only letters of other scripts may need conversion; URL syntax characters would change what is parsed
+    if (/[/?#%@\\]/.test(domain)) return null;
+    try {
+      domain = new URL(`http://${domain}`).hostname;
+    } catch {
+      return null;
+    }
+  }
+  if (!DOMAIN.test(domain)) return null;
+  // The last label must name a top-level domain (letters, or punycode), never an IP address
+  if (!/[a-z]/.test(domain.slice(domain.lastIndexOf('.') + 1))) return null;
+  const out = `${local}@${domain}`;
+  return out.length > 254 ? null : out;
 }
 
 export function requireEmail(value: string): string {
@@ -40,42 +80,43 @@ export function requireEmail(value: string): string {
 
 export function requireDisplayName(value: string): string {
   const name = value.trim().replace(/\s+/g, ' ');
-  // No control characters; 1 to 50 characters
-  if (!name || [...name].length > 50 || /\p{Cc}/u.test(name)) throw new HttpError(400, 'invalid_display_name', 'Enter a name of 1 to 50 characters.');
+  // No control or format characters (bidi overrides, zero-width marks); 1 to 50 characters
+  if (!name || [...name].length > 50 || /[\p{Cc}\p{Cf}]/u.test(name)) throw new HttpError(400, 'invalid_display_name', 'Enter a name of 1 to 50 characters.');
   return name;
 }
 
-export function requireStrongPassword(password: string, email: string | null): void {
-  const problem = passwordProblem(password, email);
+export function requireStrongPassword(password: string, email: string | null, displayName: string | null = null): void {
+  const problem = passwordProblem(password, email, displayName);
   if (problem) throw new HttpError(400, problem.code, problem.message);
 }
 
 /** Issues a verification token and emails the link (in the background when the platform allows it) */
 export async function sendVerification(c: RouteContext, userId: string, email: string): Promise<void> {
   const token = await issueToken(c.env.DB, userId, 'verify', c.deps.now());
-  await inBackground(c.deps, () => sendEmail(c.env, c.deps, verificationEmail(c.url.origin, email, token)));
+  await inBackground(c.deps, () => sendEmail(c.env, c.deps, verificationEmail(appOrigin(c), email, token)));
 }
 
 async function register(c: RouteContext): Promise<Response> {
   const now = c.deps.now();
-  await enforceLimit(c.env.DB, LIMITS.registerIp, clientIp(c.request), now);
+  await enforceLimit(c.env, LIMITS.registerIp, ipSubject(c.request), now);
   const body = await c.body();
   const email = requireEmail(str(body, 'email', 320));
   const password = str(body, 'password', 1024);
   const displayName = requireDisplayName(str(body, 'displayName', 200));
   if (body.ageConfirmed !== true) throw new HttpError(400, 'age_required', 'Confirm that you are 13 or older to create an account.');
-  requireStrongPassword(password, email);
+  requireStrongPassword(password, email, displayName);
 
   const taken = () => new HttpError(409, 'email_taken', 'An account with this email already exists. Sign in, or reset the password.');
-  if (await c.env.DB.prepare('SELECT 1 AS x FROM users WHERE email = ?').bind(email).first()) throw taken();
+  // A lapsed unverified claim on the address gives way to this sign-up
+  if (!(await releaseStaleClaim(c.env.DB, email, now))) throw taken();
 
   const id = crypto.randomUUID();
   const hash = await hashPassword(password);
   try {
     await c.env.DB.prepare(
-      'INSERT INTO users (id, display_name, avatar_url, created_at, email, password_hash, updated_at) VALUES (?, ?, NULL, ?, ?, ?, ?)',
+      'INSERT INTO users (id, display_name, avatar_url, created_at, email, email_set_at, password_hash, updated_at) VALUES (?, ?, NULL, ?, ?, ?, ?, ?)',
     )
-      .bind(id, displayName, now, email, hash, now)
+      .bind(id, displayName, now, email, now, hash, now)
       .run();
   } catch (err) {
     // A second sign-up for the same address at the same moment
@@ -86,6 +127,8 @@ async function register(c: RouteContext): Promise<Response> {
     .bind('email', email, id, email, now)
     .run();
 
+  // A sign-up replaces whatever session this browser had
+  await endIncomingSession(c);
   const session = await createSession(c.env.DB, id, now);
   await sendVerification(c, id, email);
   const user = await loadUser(c.env.DB, id);
@@ -97,18 +140,29 @@ async function login(c: RouteContext): Promise<Response> {
   const body = await c.body();
   const password = str(body, 'password', 1024);
   const email = normalizeEmail(str(body, 'email', 320));
-  await enforceLimit(c.env.DB, LIMITS.loginIp, clientIp(c.request), now);
-  if (email) await enforceLimit(c.env.DB, LIMITS.loginEmail, email, now);
+  // The per-IP limit and the hourly per-email ceiling are hard. The 15-minute per-email limit is soft:
+  // past it, only a correct password gets through, so strangers cannot lock the owner out.
+  await enforceLimit(c.env, LIMITS.loginIp, ipSubject(c.request), now);
+  if (email) await enforceLimit(c.env, LIMITS.loginEmailHour, email, now);
+  const perEmail = email ? await countLimit(c.env, LIMITS.loginEmail, email, now) : null;
 
   const row = email
-    ? await c.env.DB.prepare('SELECT id, password_hash FROM users WHERE email = ?').bind(email).first<{ id: string; password_hash: string | null }>()
+    ? await c.env.DB.prepare('SELECT id, password_hash, email, email_verified_at, email_set_at FROM users WHERE email = ?')
+        .bind(email)
+        .first<{ id: string; password_hash: string | null; email: string; email_verified_at: number | null; email_set_at: number | null }>()
     : null;
+  // A lapsed unverified address no longer signs in (same answer as a wrong password)
+  const usable = row && row.password_hash && !staleEmailClaim(row, now) ? row : null;
   // Same work, same answer whether or not the account exists or has a password
-  const ok = row?.password_hash ? await verifyPassword(password, row.password_hash) : await verifyAgainstDummy(password);
-  if (!row || !ok) throw INVALID_CREDENTIALS();
+  const ok = usable ? await verifyPassword(password, usable.password_hash!) : await verifyAgainstDummy(password);
+  if (!usable || !ok) {
+    if (perEmail?.over) throw rateLimited(perEmail.retryAfter);
+    throw INVALID_CREDENTIALS();
+  }
 
-  const session = await createSession(c.env.DB, row.id, now);
-  const user = await loadUser(c.env.DB, row.id);
+  await endIncomingSession(c);
+  const session = await createSession(c.env.DB, usable.id, now);
+  const user = await loadUser(c.env.DB, usable.id);
   return json({ user: toPublicUser(user!) }, 200, { 'Set-Cookie': sessionCookie(session) });
 }
 
@@ -127,7 +181,7 @@ async function verify(c: RouteContext): Promise<Response> {
 
 async function resendVerification(c: RouteContext): Promise<Response> {
   const { user } = await requireUser(c);
-  await enforceLimit(c.env.DB, LIMITS.resendVerification, user.id, c.deps.now());
+  await enforceLimit(c.env, LIMITS.resendVerification, user.id, c.deps.now());
   if (!user.email) throw new HttpError(400, 'no_email', 'Add an email address to your account first.');
   if (user.email_verified_at === null) await sendVerification(c, user.id, user.email);
   return json({ ok: true }, 202);
@@ -137,7 +191,10 @@ async function forgot(c: RouteContext): Promise<Response> {
   const now = c.deps.now();
   const raw = str(await c.body(), 'email', 320);
   const email = normalizeEmail(raw);
-  await enforceLimit(c.env.DB, LIMITS.forgotEmail, email ?? raw, now);
+  // Always 202, also when limited, so the answer never differs; a limited request just sends nothing
+  const perIp = await countLimit(c.env, LIMITS.forgotIp, ipSubject(c.request), now);
+  const perEmail = await countLimit(c.env, LIMITS.forgotEmail, email ?? raw, now);
+  if (perIp.over || perEmail.over) return json({ ok: true }, 202);
   // Looking the account up, issuing the token and sending all happen after the answer when possible,
   // so neither the answer nor its timing says whether the email has an account
   if (email) {
@@ -145,7 +202,7 @@ async function forgot(c: RouteContext): Promise<Response> {
       const row = await c.env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first<{ id: string }>();
       if (!row) return;
       const token = await issueToken(c.env.DB, row.id, 'reset', now);
-      await sendEmail(c.env, c.deps, resetEmail(c.url.origin, email, token));
+      await sendEmail(c.env, c.deps, resetEmail(appOrigin(c), email, token));
     });
   }
   return json({ ok: true }, 202);
@@ -161,11 +218,18 @@ async function reset(c: RouteContext): Promise<Response> {
   if (!pendingUser) throw await badToken(c, token, 'reset');
   const before = await loadUser(c.env.DB, pendingUser);
   if (!before) throw INVALID_TOKEN();
-  requireStrongPassword(password, before.email);
+  requireStrongPassword(password, before.email, before.display_name);
   const hash = await hashPassword(password);
 
   const userId = await consumeToken(c.env.DB, token, 'reset', now);
   if (!userId) throw await badToken(c, token, 'reset');
+  const current = await loadUser(c.env.DB, userId);
+  if (!current) throw INVALID_TOKEN();
+  if (emailUnverified(current)) {
+    // Until now the address was only a claim: whoever set it up may not own the inbox. The inbox owner
+    // starts fresh, so nothing the claimant attached (sign-in methods, sessions, synced data) stays.
+    await wipeClaimedAccount(c.env.DB, userId);
+  }
   // The link reached this inbox, which also proves the address
   await c.env.DB.prepare(
     `UPDATE users SET password_hash = ?, updated_at = ?,
@@ -176,9 +240,38 @@ async function reset(c: RouteContext): Promise<Response> {
     .run();
   await revokeTokens(c.env.DB, userId, ['reset'], now);
   await endAllSessions(c.env.DB, userId);
+  await endIncomingSession(c);
   const session = await createSession(c.env.DB, userId, now);
   const user = await loadUser(c.env.DB, userId);
   return json({ user: toPublicUser(user!) }, 200, { 'Set-Cookie': sessionCookie(session) });
+}
+
+/** Removes every non-email sign-in method, every session and all synced data of an account */
+async function wipeClaimedAccount(db: Db, userId: string): Promise<void> {
+  await db.prepare("DELETE FROM identities WHERE user_id = ? AND provider <> 'email'").bind(userId).run();
+  await db.prepare('DELETE FROM sessions WHERE user_id = ?').bind(userId).run();
+  for (const table of SYNC_TABLES) await db.prepare(`DELETE FROM ${table} WHERE user_id = ?`).bind(userId).run();
+}
+
+/**
+ * Makes `email` free for a new owner when its holder's claim has lapsed (unverified and set more than 24 h
+ * ago): the holder loses the address, its password (which only signed in with that address) and its
+ * pending links. Returns whether the address is free now; false when someone holds it validly.
+ */
+export async function releaseStaleClaim(db: Db, email: string, now: number, exceptUserId: string | null = null): Promise<boolean> {
+  const holder = await db
+    .prepare('SELECT id, email, email_verified_at, email_set_at FROM users WHERE email = ?')
+    .bind(email)
+    .first<{ id: string; email: string; email_verified_at: number | null; email_set_at: number | null }>();
+  if (!holder || holder.id === exceptUserId) return true;
+  if (!staleEmailClaim(holder, now)) return false;
+  await db
+    .prepare('UPDATE users SET email = NULL, email_verified_at = NULL, email_set_at = NULL, password_hash = NULL, updated_at = ? WHERE id = ? AND email = ?')
+    .bind(now, holder.id, email)
+    .run();
+  await db.prepare("DELETE FROM identities WHERE user_id = ? AND provider = 'email'").bind(holder.id).run();
+  await revokeTokens(db, holder.id, ['verify', 'reset'], now);
+  return true;
 }
 
 export const emailRoutes: Route[] = [

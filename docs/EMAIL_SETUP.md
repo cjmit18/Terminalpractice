@@ -56,7 +56,9 @@ The part before `@` can be anything; the domain must be the one verified in step
 
 Open `https://terminuscli.com/api/me`: it should show `"emailSending": true`. Create a test account
 with your own address, or use "Forgot password": the email should arrive within a minute. The links in
-it open the app at `#/account/verify` or `#/account/reset` on the same address the request came from.
+it open the app at `#/account/verify` or `#/account/reset` on the address the request came from when
+that address is listed in the `APP_ORIGINS` var, otherwise on the first address listed there
+(`https://terminuscli.com`; see docs/SECURITY_SETUP.md).
 
 Pull-request previews never send email: `EMAIL_FROM` is empty there, and previews have no accounts.
 

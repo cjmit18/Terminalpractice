@@ -26,6 +26,14 @@ export interface ApiEnv {
   EMAIL_FROM?: string;
   /** Resend API key (set with `wrangler secret put RESEND_API_KEY`); emails are skipped without it */
   RESEND_API_KEY?: string;
+  /**
+   * Comma-separated origins the app is served from, e.g. "https://terminuscli.com" (a var). Email links
+   * and OAuth redirect URIs use the request's origin when it is listed, otherwise the first entry, and
+   * only listed origins pass the Origin check. Empty or unset means "the request's own origin" (previews).
+   */
+  APP_ORIGINS?: string;
+  /** Secret key for hashing rate-limit subjects (set with `wrangler secret put RATE_LIMIT_PEPPER`) */
+  RATE_LIMIT_PEPPER?: string;
 }
 
 export interface ApiDeps {
@@ -67,20 +75,22 @@ export interface Route {
   bodyLimit?: number;
 }
 
-/** Thrown by handlers for a JSON error answer: `{ error, message }` with a 4xx status. */
+/** Thrown by handlers for a JSON error answer: `{ error, message, ...extra }` with a 4xx status. */
 export class HttpError extends Error {
   constructor(
     readonly status: number,
     readonly code: string,
     message: string,
     readonly headers: Record<string, string> = {},
+    /** More fields for the error body, e.g. `providers` on reauth_required */
+    readonly extra: Record<string, unknown> = {},
   ) {
     super(message);
   }
 }
 
 export function errorResponse(err: HttpError): Response {
-  return json({ error: err.code, message: err.message }, err.status, err.headers);
+  return json({ ...err.extra, error: err.code, message: err.message }, err.status, err.headers);
 }
 
 /** Reads the body as text, never more than `limit` bytes, whether or not Content-Length was sent. */
@@ -143,24 +153,42 @@ export function optStr(body: Record<string, unknown>, key: string, max = 1024): 
 
 // --- Responses -----------------------------------------------------------------------------
 
-export function json(body: unknown, status = 200, extra: Record<string, string> | Headers = {}): Response {
+/** Headers on every API answer: no MIME sniffing, no Referer, never framed */
+export const SECURITY_HEADERS: Readonly<Record<string, string>> = {
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'no-referrer',
+  'Content-Security-Policy': "frame-ancestors 'none'",
+};
+
+/** Adds SECURITY_HEADERS and Cache-Control: no-store to a set of headers */
+export function secureHeaders(extra: Record<string, string> | Headers = {}): Headers {
   const headers = new Headers(extra);
-  headers.set('Content-Type', 'application/json; charset=utf-8');
   headers.set('Cache-Control', 'no-store');
+  for (const [k, v] of Object.entries(SECURITY_HEADERS)) headers.set(k, v);
+  return headers;
+}
+
+export function json(body: unknown, status = 200, extra: Record<string, string> | Headers = {}): Response {
+  const headers = secureHeaders(extra);
+  headers.set('Content-Type', 'application/json; charset=utf-8');
   return new Response(JSON.stringify(body), { status, headers });
 }
 
 export function text(body: string, status: number, extra: Record<string, string> = {}): Response {
-  return new Response(body, {
-    status,
-    headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', ...extra },
-  });
+  const headers = secureHeaders(extra);
+  if (!('Content-Type' in extra)) headers.set('Content-Type', 'text/plain; charset=utf-8');
+  return new Response(body, { status, headers });
 }
 
 export function noContent(extra: Record<string, string> | Headers = {}): Response {
-  const headers = new Headers(extra);
-  headers.set('Cache-Control', 'no-store');
-  return new Response(null, { status: 204, headers });
+  return new Response(null, { status: 204, headers: secureHeaders(extra) });
+}
+
+/** A 302 to `location` with the API's headers; `cookies` become Set-Cookie headers */
+export function redirect(location: string, cookies: string[] = []): Response {
+  const headers = secureHeaders({ Location: location });
+  for (const v of cookies) headers.append('Set-Cookie', v);
+  return new Response(null, { status: 302, headers });
 }
 
 // --- Cookies -------------------------------------------------------------------------------
@@ -216,9 +244,68 @@ export async function sha256(value: string): Promise<string> {
   return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-/** The client's address as Cloudflare reports it (hashed before it is stored anywhere) */
+/** The client's address as Cloudflare reports it. Only CF-Connecting-IP is trusted (never X-Forwarded-For). */
 export function clientIp(request: Request): string {
   return request.headers.get('CF-Connecting-IP') ?? 'unknown';
+}
+
+/**
+ * The rate-limit subject for the client's address: an IPv4 address as is, an IPv6 address by its /64
+ * prefix (one host usually holds a whole /64, so per-address keys would be trivial to rotate).
+ * IPv4-mapped IPv6 (::ffff:a.b.c.d) counts as the IPv4 address. Hashed before it is stored.
+ */
+export function ipSubject(request: Request): string {
+  const ip = clientIp(request).trim().toLowerCase();
+  if (!ip.includes(':')) return ip;
+  const groups = expandIpv6(ip);
+  if (!groups) return ip;
+  if (groups.slice(0, 5).every(g => g === 0) && groups[5] === 0xffff) {
+    return [groups[6] >> 8, groups[6] & 255, groups[7] >> 8, groups[7] & 255].join('.');
+  }
+  return `${groups.slice(0, 4).map(g => g.toString(16)).join(':')}::/64`;
+}
+
+/** The eight 16-bit groups of an IPv6 address (with an optional embedded IPv4 tail), or null when malformed */
+export function expandIpv6(value: string): number[] | null {
+  let ip = value.replace(/%.*$/, ''); // zone id
+  const v4 = /(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip);
+  if (v4) {
+    const b = v4.slice(1).map(Number);
+    if (b.some(x => x > 255)) return null;
+    ip = ip.slice(0, v4.index) + `${((b[0] << 8) | b[1]).toString(16)}:${((b[2] << 8) | b[3]).toString(16)}`;
+  }
+  const halves = ip.split('::');
+  if (halves.length > 2) return null;
+  const parse = (part: string) => (part ? part.split(':') : []);
+  const head = parse(halves[0]);
+  const tail = halves.length === 2 ? parse(halves[1]) : [];
+  const missing = 8 - head.length - tail.length;
+  if (halves.length === 1 ? missing !== 0 : missing < 1) return null;
+  const all = [...head, ...Array<string>(halves.length === 2 ? missing : 0).fill('0'), ...tail];
+  if (all.some(g => !/^[0-9a-f]{1,4}$/.test(g))) return null;
+  return all.map(g => parseInt(g, 16));
+}
+
+/** The configured app origins (APP_ORIGINS), without trailing slashes; empty when unset */
+export function appOrigins(env: ApiEnv): string[] {
+  return (env.APP_ORIGINS ?? '')
+    .split(',')
+    .map(o => o.trim().replace(/\/+$/, ''))
+    .filter(Boolean);
+}
+
+/** The origin for links in emails and OAuth redirect URIs: the request's when allowlisted, else the first listed */
+export function appOrigin(c: Pick<RouteContext, 'env' | 'url'>): string {
+  const list = appOrigins(c.env);
+  if (list.length === 0 || list.includes(c.url.origin)) return c.url.origin;
+  return list[0];
+}
+
+/** Whether an Origin header may make state-changing requests: listed in APP_ORIGINS, or the request's own when the list is empty */
+export function originAllowed(env: ApiEnv, url: URL, origin: string | null): boolean {
+  if (!origin) return false;
+  const list = appOrigins(env);
+  return list.length === 0 ? origin === url.origin : list.includes(origin);
 }
 
 /** Runs work after the response when the platform allows it, otherwise before. Errors are logged, never thrown. */

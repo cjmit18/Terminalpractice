@@ -1,7 +1,7 @@
 // Sign in with Google: OAuth 2.0 authorization-code flow with `state` and PKCE (S256), scopes
 // `openid email profile`. The identity is Google's `sub`; the email is only a label and never merges accounts.
-import { base64url, randomToken, safeReturn, text, type ApiEnv, type Route, type RouteContext } from '../http';
-import { backToApp, checkState, finishOAuth, linkRefusal, providerFailed, readSavedState, stateCookie, stateMismatch } from './oauth';
+import { base64url, randomToken, redirect, safeReturn, text, type ApiEnv, type Route, type RouteContext } from '../http';
+import { backToApp, callbackUrl, checkState, finishOAuth, planStart, providerFailed, readSavedState, stateCookie, stateMismatch } from './oauth';
 
 export const GOOGLE_AUTHORIZE = 'https://accounts.google.com/o/oauth2/v2/auth';
 export const GOOGLE_TOKEN = 'https://oauth2.googleapis.com/token';
@@ -9,7 +9,7 @@ export const GOOGLE_USERINFO = 'https://openidconnect.googleapis.com/v1/userinfo
 
 export const googleConfigured = (env: ApiEnv) => Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET);
 const notConfigured = () => text('Sign-in with Google is not set up on this server yet.', 503);
-const redirectUri = (c: RouteContext) => `${c.url.origin}/api/auth/google/callback`;
+const redirectUri = (c: RouteContext) => callbackUrl(c, 'google');
 
 async function pkceChallenge(verifier: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
@@ -18,13 +18,12 @@ async function pkceChallenge(verifier: string): Promise<string> {
 
 async function start(c: RouteContext): Promise<Response> {
   if (!googleConfigured(c.env)) return notConfigured();
-  const link = c.url.searchParams.get('link') === '1';
-  const refused = await linkRefusal(c, link);
-  if (refused) return refused;
+  const plan = await planStart(c, 'google');
+  if (plan instanceof Response) return plan;
+  const { mode, returnTo, sessionHash } = plan;
 
   const state = randomToken();
   const verifier = randomToken();
-  const returnTo = safeReturn(c.url.searchParams.get('return'));
   const authorize = new URL(GOOGLE_AUTHORIZE);
   authorize.searchParams.set('client_id', c.env.GOOGLE_CLIENT_ID!);
   authorize.searchParams.set('redirect_uri', redirectUri(c));
@@ -33,11 +32,15 @@ async function start(c: RouteContext): Promise<Response> {
   authorize.searchParams.set('state', state);
   authorize.searchParams.set('code_challenge', await pkceChallenge(verifier));
   authorize.searchParams.set('code_challenge_method', 'S256');
-  authorize.searchParams.set('prompt', 'select_account');
+  if (mode === 'reauth') {
+    // Re-authentication: Google must ask for the sign-in again, not reuse its own session
+    authorize.searchParams.set('prompt', 'login');
+    authorize.searchParams.set('max_age', '0');
+  } else {
+    authorize.searchParams.set('prompt', 'select_account');
+  }
 
-  const headers = new Headers({ Location: authorize.toString(), 'Cache-Control': 'no-store' });
-  headers.append('Set-Cookie', stateCookie({ state, returnTo, link, provider: 'google', verifier }));
-  return new Response(null, { status: 302, headers });
+  return redirect(authorize.toString(), [stateCookie({ state, returnTo, mode, provider: 'google', verifier, sessionHash })]);
 }
 
 async function callback(c: RouteContext): Promise<Response> {

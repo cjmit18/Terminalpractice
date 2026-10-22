@@ -1,21 +1,26 @@
 // Account settings for the signed-in user: profile, sign out everywhere, password, email, linked
 // sign-in methods, export and delete.
-import { HttpError, isUniqueViolation, json, noContent, optStr, str, type Db, type Route, type RouteContext } from './http';
+import { HttpError, isUniqueViolation, json, noContent, optStr, secureHeaders, str, type Db, type Route, type RouteContext } from './http';
 import { hashPassword, verifyPassword } from './password';
-import { LIMITS, enforceLimit } from './ratelimit';
+import { LIMITS, enforceLimit, forgetLimits } from './ratelimit';
 import {
+  REAUTH_WINDOW,
   clearSessionCookie,
   createSession,
+  emailUnverified,
   endAllSessions,
   loadUser,
+  markAuthenticated,
   requireUser,
   sessionCookie,
+  staleEmailClaim,
   toPublicUser,
+  type Session,
   type UserRow,
 } from './session';
 import { revokeTokens } from './tokens';
 import { SYNC_TABLES, readState } from './sync';
-import { requireDisplayName, requireEmail, requireStrongPassword, sendVerification } from './auth/email';
+import { releaseStaleClaim, requireDisplayName, requireEmail, requireStrongPassword, sendVerification } from './auth/email';
 
 const PROVIDERS = ['github', 'google', 'email'] as const;
 type Provider = (typeof PROVIDERS)[number];
@@ -48,9 +53,49 @@ const publicIdentities = (rows: IdentityRow[]) => rows.map(i => ({ provider: i.p
 async function confirmPassword(c: RouteContext, user: UserRow, given: string | undefined): Promise<void> {
   if (!user.password_hash) return;
   if (given === undefined) throw new HttpError(400, 'current_password_required', 'Enter your current password.');
-  await enforceLimit(c.env.DB, LIMITS.passwordCheck, user.id, c.deps.now());
+  await enforceLimit(c.env, LIMITS.passwordCheck, user.id, c.deps.now());
   // 403, not 401: the session is fine, only the password is wrong
   if (!(await verifyPassword(given, user.password_hash))) throw new HttpError(403, 'wrong_password', 'Your current password is not correct.');
+}
+
+/** The OAuth providers linked to the user: where an account without a password re-authenticates */
+async function reauthProviders(db: Db, userId: string): Promise<string[]> {
+  const rows = await identitiesOf(db, userId);
+  return [...new Set(rows.map(r => r.provider).filter(p => p === 'github' || p === 'google'))];
+}
+
+async function reauthRequired(c: RouteContext, user: UserRow): Promise<HttpError> {
+  return new HttpError(403, 'reauth_required', 'Sign in again to confirm it is you, then retry.', {}, { providers: await reauthProviders(c.env.DB, user.id) });
+}
+
+/**
+ * Re-authentication for sensitive actions (delete, add or change the email, set or change the password,
+ * link or unlink). With a password on the account: `currentPassword` in the body, every time. Without
+ * one: a sign-in (or `?reauth=1` OAuth round trip) within the last 10 minutes, otherwise 403
+ * `reauth_required` with the providers to re-authenticate with.
+ */
+async function requireRecentAuth(c: RouteContext, user: UserRow, session: Session, currentPassword: string | undefined): Promise<void> {
+  if (user.password_hash) return confirmPassword(c, user, currentPassword);
+  if (c.deps.now() - session.authenticatedAt > REAUTH_WINDOW) throw await reauthRequired(c, user);
+}
+
+/** A body that may be absent (DELETE without one): {} when no Content-Type was sent */
+async function optionalBody(c: RouteContext): Promise<Record<string, unknown>> {
+  return c.request.headers.get('Content-Type') ? c.body() : {};
+}
+
+const emailUnverifiedError = () =>
+  new HttpError(409, 'email_unverified', 'Confirm your email address first: open the link in the email we sent you.');
+
+/** POST /api/account/reauth { currentPassword }: proves the password again and refreshes this session's sign-in time */
+async function reauth(c: RouteContext): Promise<Response> {
+  const { session, user } = await requireUser(c);
+  const body = await c.body();
+  if (!user.password_hash) throw await reauthRequired(c, user);
+  await confirmPassword(c, user, optStr(body, 'currentPassword', 1024));
+  const now = c.deps.now();
+  await markAuthenticated(c.env.DB, session.tokenHash, now);
+  return json({ ok: true, authenticatedAt: now });
 }
 
 async function getAccount(c: RouteContext): Promise<Response> {
@@ -82,14 +127,16 @@ async function logoutAll(c: RouteContext): Promise<Response> {
 }
 
 async function changePassword(c: RouteContext): Promise<Response> {
-  const { user } = await requireUser(c);
+  const { session, user } = await requireUser(c);
   const now = c.deps.now();
   const body = await c.body();
   const newPassword = str(body, 'newPassword', 1024);
   const current = optStr(body, 'currentPassword', 1024);
   if (!user.email) throw new HttpError(400, 'email_required', 'Add an email address before setting a password.');
-  await confirmPassword(c, user, current);
-  requireStrongPassword(newPassword, user.email);
+  // A first password needs a verified address: otherwise anyone could hold someone else's email with a password
+  if (!user.password_hash && emailUnverified(user)) throw emailUnverifiedError();
+  await requireRecentAuth(c, user, session, current);
+  requireStrongPassword(newPassword, user.email, user.display_name);
 
   await c.env.DB.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?').bind(await hashPassword(newPassword), now, user.id).run();
   await revokeTokens(c.env.DB, user.id, ['reset'], now);
@@ -100,38 +147,50 @@ async function changePassword(c: RouteContext): Promise<Response> {
 }
 
 /**
- * Adds an email to the account or changes it. With a password on the account, `password` is the
- * current password (required). Without one, an optional `password` becomes the account's password.
- * The new address starts unverified and gets a verification link.
+ * Adds an email to the account or changes it. With a password on the account, `currentPassword` (or,
+ * as before, `password`) is the current password (required). Without one, a recent sign-in is required,
+ * and an optional `password` becomes the account's password, but only for an address that is already
+ * verified (`email_unverified` otherwise). The new address starts unverified and gets a verification link.
  */
 async function changeEmail(c: RouteContext): Promise<Response> {
-  const { user } = await requireUser(c);
+  const { session, user } = await requireUser(c);
   const now = c.deps.now();
-  await enforceLimit(c.env.DB, LIMITS.changeEmail, user.id, now);
+  await enforceLimit(c.env, LIMITS.changeEmail, user.id, now);
   const body = await c.body();
   const email = requireEmail(str(body, 'email', 320));
   const password = optStr(body, 'password', 1024);
+  const currentPassword = optStr(body, 'currentPassword', 1024);
 
   let newHash: string | null = null;
-  if (user.password_hash) await confirmPassword(c, user, password);
-  else if (password !== undefined) {
-    requireStrongPassword(password, email);
-    newHash = await hashPassword(password);
+  if (user.password_hash) await requireRecentAuth(c, user, session, currentPassword ?? password);
+  else {
+    await requireRecentAuth(c, user, session, undefined);
+    if (password !== undefined) {
+      // Only a verified address may carry a password (SEC-1/SEC-2): a new address is never verified yet
+      if (email !== user.email || user.email_verified_at === null) throw emailUnverifiedError();
+      requireStrongPassword(password, email, user.display_name);
+      newHash = await hashPassword(password);
+    }
   }
 
   if (email === user.email) {
     if (newHash) await c.env.DB.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?').bind(newHash, now, user.id).run();
-    if (user.email_verified_at === null) await sendVerification(c, user.id, email);
+    if (user.email_verified_at === null) {
+      // A lapsed claim that nobody else took is this account's again, for another 24 hours
+      if (staleEmailClaim(user, now)) await c.env.DB.prepare('UPDATE users SET email_set_at = ? WHERE id = ?').bind(now, user.id).run();
+      await sendVerification(c, user.id, email);
+    }
     return json({ ok: true }, 202);
   }
 
   const taken = () => new HttpError(409, 'email_in_use', 'Another account already uses this email address.');
-  if (await c.env.DB.prepare('SELECT 1 AS x FROM users WHERE email = ? AND id <> ?').bind(email, user.id).first()) throw taken();
+  // A lapsed unverified claim by another account gives way
+  if (!(await releaseStaleClaim(c.env.DB, email, now, user.id))) throw taken();
   try {
     await c.env.DB.prepare(
-      'UPDATE users SET email = ?, email_verified_at = NULL, password_hash = COALESCE(?, password_hash), updated_at = ? WHERE id = ?',
+      'UPDATE users SET email = ?, email_verified_at = NULL, email_set_at = ?, password_hash = COALESCE(?, password_hash), updated_at = ? WHERE id = ?',
     )
-      .bind(email, newHash, now, user.id)
+      .bind(email, now, newHash, now, user.id)
       .run();
   } catch (err) {
     if (isUniqueViolation(err)) throw taken();
@@ -148,7 +207,8 @@ async function changeEmail(c: RouteContext): Promise<Response> {
 }
 
 async function unlinkIdentity(c: RouteContext): Promise<Response> {
-  const { user } = await requireUser(c);
+  const { session, user } = await requireUser(c);
+  const body = await optionalBody(c);
   const provider = c.params.provider as Provider;
   if (!PROVIDERS.includes(provider)) throw new HttpError(404, 'not_linked', 'This sign-in method is not linked to your account.');
   const identities = await identitiesOf(c.env.DB, user.id);
@@ -158,6 +218,7 @@ async function unlinkIdentity(c: RouteContext): Promise<Response> {
   if (methods.filter(m => m !== provider).length === 0) {
     throw new HttpError(409, 'last_method', 'This is the only way to sign in to your account. Add another method before removing it.');
   }
+  await requireRecentAuth(c, user, session, optStr(body, 'currentPassword', 1024));
 
   const now = c.deps.now();
   await c.env.DB.prepare('DELETE FROM identities WHERE user_id = ? AND provider = ?').bind(user.id, provider).run();
@@ -197,24 +258,26 @@ async function exportAccount(c: RouteContext): Promise<Response> {
     progress: await readState(c.env.DB, user.id),
   };
   return new Response(JSON.stringify(data, null, 2), {
-    headers: {
+    headers: secureHeaders({
       'Content-Type': 'application/json; charset=utf-8',
       'Content-Disposition': 'attachment; filename="terminus-account.json"',
-      'Cache-Control': 'no-store',
-    },
+    }),
   });
 }
 
 async function deleteAccount(c: RouteContext): Promise<Response> {
-  const { user } = await requireUser(c);
+  const { session, user } = await requireUser(c);
   const body = await c.body();
   if (body.confirm !== 'delete') throw new HttpError(400, 'confirm_required', 'Send { "confirm": "delete" } to delete your account.');
+  await requireRecentAuth(c, user, session, optStr(body, 'currentPassword', 1024));
   // ON DELETE CASCADE removes identities, sessions, tokens and synced progress; the explicit deletes
   // also cover a database where foreign keys are not enforced
   for (const table of ['sessions', 'identities', 'auth_tokens', ...SYNC_TABLES]) {
     await c.env.DB.prepare(`DELETE FROM ${table} WHERE user_id = ?`).bind(user.id).run();
   }
   await c.env.DB.prepare('DELETE FROM users WHERE id = ?').bind(user.id).run();
+  // Rate-limit rows keyed by this account's email or id would otherwise outlive it
+  await forgetLimits(c.env, user.id, user.email);
   return noContent({ 'Set-Cookie': clearSessionCookie() });
 }
 
@@ -223,6 +286,7 @@ export const accountRoutes: Route[] = [
   { method: 'PATCH', path: '/api/account', handler: patchAccount },
   { method: 'DELETE', path: '/api/account', handler: deleteAccount },
   { method: 'POST', path: '/api/account/logout-all', handler: logoutAll },
+  { method: 'POST', path: '/api/account/reauth', handler: reauth },
   { method: 'POST', path: '/api/account/password', handler: changePassword },
   { method: 'POST', path: '/api/account/email', handler: changeEmail },
   { method: 'DELETE', path: /^\/api\/account\/identities\/(?<provider>[a-z]+)$/, handler: unlinkIdentity },

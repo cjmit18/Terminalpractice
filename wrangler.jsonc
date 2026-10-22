@@ -14,6 +14,13 @@
   },
   // Account API (sign-in, sessions). Only /api/* reaches it; see run_worker_first below.
   "main": "./worker/index.ts",
+  // Production is served only on the custom domain (terminuscli.com), never on *.workers.dev, so there
+  // is one origin and one cookie jar against the production database. Preview URLs stay on for
+  // pull-request builds (they use the empty preview database below).
+  "workers_dev": false,
+  "preview_urls": true,
+  // Daily sweep of expired sessions, one-time tokens and rate-limit rows (worker/maintenance.ts)
+  "triggers": { "crons": ["17 3 * * *"] },
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
@@ -36,7 +43,8 @@
   // migrations are applied to it): with sign-in off nothing ever writes to it, and /api/me answers
   // "signed out" when the account tables are missing, so a stray session cookie cannot cause an error.
   "previews": {
-    "vars": { "GITHUB_CLIENT_ID": "", "GOOGLE_CLIENT_ID": "", "EMAIL_FROM": "" },
+    // APP_ORIGINS empty: previews use their own preview URL as the origin
+    "vars": { "GITHUB_CLIENT_ID": "", "GOOGLE_CLIENT_ID": "", "EMAIL_FROM": "", "APP_ORIGINS": "" },
     "d1_databases": [
       {
         "binding": "DB",
@@ -57,6 +65,11 @@
     "GOOGLE_CLIENT_ID": "",
     // Sender of account emails (verification, password reset), e.g. "Terminus CertSim <accounts@terminuscli.com>".
     // Public. Emails are sent only when this and the RESEND_API_KEY secret are both set. See docs/EMAIL_SETUP.md.
-    "EMAIL_FROM": ""
+    "EMAIL_FROM": "",
+    // The origins the app is served from, comma-separated (public). Email links and OAuth redirect URIs
+    // use the request's origin when it is listed, otherwise the first one, and only these origins may
+    // make state-changing API requests. Empty means "the request's own origin". See docs/SECURITY_SETUP.md.
+    // The RATE_LIMIT_PEPPER secret is set separately: npx wrangler secret put RATE_LIMIT_PEPPER
+    "APP_ORIGINS": "https://terminuscli.com"
   }
 }

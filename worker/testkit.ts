@@ -113,6 +113,7 @@ export function setup(overrides: Partial<ApiEnv> = {}) {
     GOOGLE_CLIENT_SECRET: 'g-secret',
     RESEND_API_KEY: 're_test',
     EMAIL_FROM: 'Terminus <accounts@terminuscli.example>',
+    RATE_LIMIT_PEPPER: 'test-pepper',
     ...overrides,
   };
   const deps: ApiDeps = { fetch: services.fetch, now: () => now };
@@ -156,14 +157,28 @@ export async function register(s: Setup, email = 'Learner@Example.com', password
   return { res, session: cookieValue(res, '__Host-session')!, user: body.user };
 }
 
+/** Uses the newest verification link, as the inbox owner would; returns the verify response */
+export async function verifyEmail(s: Setup) {
+  return s.call('POST', '/api/auth/email/verify', { json: { token: tokenFromEmail(s, 'verify') } });
+}
+
+/** Registers an email account and verifies its address (needed before linking another sign-in method) */
+export async function registerVerified(s: Setup, email = 'Learner@Example.com', password = PASSWORD, ip?: string) {
+  const r = await register(s, email, password, ip);
+  const v = await verifyEmail(s);
+  if (v.status !== 200) throw new Error(`verify failed: ${v.status}`);
+  return r;
+}
+
 /** Runs an OAuth start + callback. Returns the callback response and the new session cookie (if any). */
 export async function oauth(
   s: Setup,
   provider: 'github' | 'google',
-  opts: { session?: string; link?: boolean; returnTo?: string; code?: string } = {},
+  opts: { session?: string; link?: boolean; reauth?: boolean; returnTo?: string; code?: string } = {},
 ) {
   const q = new URLSearchParams({ return: opts.returnTo ?? '#/learn' });
   if (opts.link) q.set('link', '1');
+  if (opts.reauth) q.set('reauth', '1');
   const start = await s.call('GET', `/api/auth/${provider}/start?${q}`, { session: opts.session });
   if (start.status !== 302) return { start, cb: start, session: undefined };
   const location = new URL(start.headers.get('Location')!);

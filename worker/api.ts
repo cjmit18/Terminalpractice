@@ -14,6 +14,7 @@ import {
   errorResponse,
   isMissingSchema,
   json,
+  originAllowed,
   readCookie,
   readJsonObject,
   sha256,
@@ -22,7 +23,7 @@ import {
   type Route,
   type RouteContext,
 } from './http';
-import { SESSION_COOKIE, RENEW_BELOW, SESSION_TTL, USER_COLUMNS, clearSessionCookie, sessionCookie, toPublicUser, type UserRow } from './session';
+import { SESSION_COOKIE, RENEW_BELOW, USER_COLUMNS, clearSessionCookie, renewedExpiry, sessionAlive, sessionCookie, toPublicUser, type UserRow } from './session';
 import { emailSendingEnabled } from './mail';
 import { githubConfigured, githubRoutes } from './auth/github';
 import { googleConfigured, googleRoutes } from './auth/google';
@@ -33,6 +34,7 @@ import { syncRoutes } from './sync';
 export type { ApiDeps, ApiEnv, Db, DbStatement, Route, RouteContext } from './http';
 export type { PublicUser } from './session';
 export { defaultDeps, safeReturn } from './http';
+export { sweepExpired } from './maintenance';
 
 const STATE_CHANGING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -83,8 +85,9 @@ export async function handleApi(request: Request, env: ApiEnv, deps: ApiDeps = d
   const limit = found.route.bodyLimit ?? BODY_LIMIT;
   try {
     if (STATE_CHANGING.has(request.method)) {
-      // Only this site's own pages may change anything (blocks cross-site requests)
-      if (request.headers.get('Origin') !== url.origin) throw new HttpError(403, 'forbidden_origin', 'This request must come from the app itself.');
+      // Only the app's own pages may change anything (blocks cross-site requests): an origin listed in
+      // APP_ORIGINS, or this request's own origin when none is configured (previews)
+      if (!originAllowed(env, url, request.headers.get('Origin'))) throw new HttpError(403, 'forbidden_origin', 'This request must come from the app itself.');
       if (Number(request.headers.get('Content-Length') ?? '0') > limit) throw new HttpError(413, 'payload_too_large', 'This request is too large.');
     }
     const c: RouteContext = { request, url, env, deps, params: found.params, body: () => readJsonObject(request, limit) };
@@ -122,9 +125,9 @@ async function me(c: RouteContext): Promise<Response> {
   if (!token) return json({ user: null, providers: await providerFlags(env), emailSending });
 
   const hash = await sha256(token);
-  let row: (UserRow & { expires_at: number }) | null;
+  let row: (UserRow & { expires_at: number; session_created_at: number }) | null;
   try {
-    row = await env.DB.prepare(`SELECT s.expires_at, ${USER_COLUMNS} FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?`)
+    row = await env.DB.prepare(`SELECT s.expires_at, s.created_at AS session_created_at, ${USER_COLUMNS} FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?`)
       .bind(hash)
       .first();
   } catch (err) {
@@ -136,15 +139,17 @@ async function me(c: RouteContext): Promise<Response> {
 
   const providers = { github: githubConfigured(env), google: googleConfigured(env), email: true };
   const now = deps.now();
-  if (!row || row.expires_at <= now) {
+  if (!row || !sessionAlive({ expires_at: row.expires_at, created_at: row.session_created_at }, now)) {
     if (row) await env.DB.prepare('DELETE FROM sessions WHERE token_hash = ?').bind(hash).run();
     return json({ user: null, providers, emailSending }, 200, { 'Set-Cookie': clearSessionCookie() });
   }
 
   const user = toPublicUser(row);
-  if (row.expires_at - now < RENEW_BELOW) {
-    await env.DB.prepare('UPDATE sessions SET expires_at = ? WHERE token_hash = ?').bind(now + SESSION_TTL, hash).run();
-    return json({ user, providers, emailSending }, 200, { 'Set-Cookie': sessionCookie(token) });
+  // Slide forward, but never past the absolute lifetime (90 days from sign-in)
+  const renewed = renewedExpiry(row.session_created_at, now);
+  if (row.expires_at - now < RENEW_BELOW && renewed > row.expires_at) {
+    await env.DB.prepare('UPDATE sessions SET expires_at = ? WHERE token_hash = ?').bind(renewed, hash).run();
+    return json({ user, providers, emailSending }, 200, { 'Set-Cookie': sessionCookie(token, renewed - now) });
   }
   return json({ user, providers, emailSending });
 }

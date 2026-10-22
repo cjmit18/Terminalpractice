@@ -72,12 +72,21 @@ export async function verifyAgainstDummy(password: string): Promise<false> {
 }
 
 export interface PasswordProblem {
-  code: 'password_too_short' | 'password_too_long' | 'common_password' | 'password_equals_email';
+  code: 'password_too_short' | 'password_too_long' | 'common_password' | 'password_equals_email' | 'password_contains_name';
   message: string;
 }
 
-/** Why this password is not allowed (an error code and a plain sentence), or null when it is fine. No composition rules. */
-export function passwordProblem(password: string, email: string | null): PasswordProblem | null {
+/** Words no password may contain: the site's own names */
+const SITE_WORDS = ['terminus', 'certsim'];
+/** Personal words shorter than this are not checked as substrings (they would refuse too much) */
+const MIN_PERSONAL = 4;
+
+/**
+ * Why this password is not allowed (an error code and a plain sentence), or null when it is fine.
+ * No composition rules. Refuses the common list, the email itself, and any password containing the
+ * site's name, the display name (with or without its spaces) or the email's local part.
+ */
+export function passwordProblem(password: string, email: string | null, displayName: string | null = null): PasswordProblem | null {
   const length = [...password].length;
   if (length < PASSWORD_MIN) return { code: 'password_too_short', message: `Use at least ${PASSWORD_MIN} characters.` };
   if (length > PASSWORD_MAX) return { code: 'password_too_long', message: `Use at most ${PASSWORD_MAX} characters.` };
@@ -86,5 +95,14 @@ export function passwordProblem(password: string, email: string | null): Passwor
     return { code: 'common_password', message: 'This password is one of the most common ones. Choose something less guessable.' };
   }
   if (email && lower.trim() === email.toLowerCase()) return { code: 'password_equals_email', message: 'Your password cannot be your email address.' };
+  const squashed = lower.replace(/\s+/g, '');
+  const words = [...SITE_WORDS];
+  const local = email ? email.toLowerCase().split('@')[0] : '';
+  if (local.length >= MIN_PERSONAL) words.push(local);
+  const name = (displayName ?? '').normalize('NFC').trim().toLowerCase();
+  if (name.length >= MIN_PERSONAL) words.push(name, name.replace(/\s+/g, ''));
+  if (words.some(w => w && (lower.includes(w) || squashed.includes(w.replace(/\s+/g, ''))))) {
+    return { code: 'password_contains_name', message: "Your password cannot contain your name, your email address or the site's name." };
+  }
   return null;
 }

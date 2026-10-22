@@ -6,6 +6,20 @@ export const DAY = 24 * 60 * 60 * 1000;
 export const SESSION_TTL = 30 * DAY;
 /** Sliding expiry: a session used with less than this left is extended to the full TTL */
 export const RENEW_BELOW = 15 * DAY;
+/** Absolute lifetime: however often it is used, a session ends this long after it was created */
+export const SESSION_MAX_AGE = 90 * DAY;
+/** How long a sign-in counts as recent for sensitive actions on an account without a password */
+export const REAUTH_WINDOW = 10 * 60 * 1000;
+
+/** When a session should expire after being used at `now`: the sliding TTL, capped by the absolute lifetime */
+export function renewedExpiry(createdAt: number, now: number): number {
+  return Math.min(now + SESSION_TTL, createdAt + SESSION_MAX_AGE);
+}
+
+/** Whether a session row is still valid at `now` */
+export function sessionAlive(row: { expires_at: number; created_at: number }, now: number): boolean {
+  return row.expires_at > now && row.created_at + SESSION_MAX_AGE > now;
+}
 
 export interface PublicUser {
   id: string;
@@ -23,6 +37,8 @@ export interface UserRow {
   avatar_url: string | null;
   email: string | null;
   email_verified_at: number | null;
+  /** When the current (unverified) email was set; an unverified claim lapses EMAIL_CLAIM_TTL later */
+  email_set_at: number | null;
   password_hash: string | null;
   created_at: number;
   updated_at: number | null;
@@ -30,9 +46,20 @@ export interface UserRow {
 }
 
 /** Selects a UserRow from `users u` (plus the GitHub username) */
-export const USER_COLUMNS = `u.id, u.display_name, u.avatar_url, u.email, u.email_verified_at, u.password_hash,
+export const USER_COLUMNS = `u.id, u.display_name, u.avatar_url, u.email, u.email_verified_at, u.email_set_at, u.password_hash,
   u.created_at, u.updated_at,
   (SELECT login FROM identities i WHERE i.user_id = u.id AND i.provider = 'github') AS login`;
+
+/** An unverified email holds its address for this long after it was set; then a sign-up or another account may take it */
+export const EMAIL_CLAIM_TTL = DAY;
+
+/** Whether the row's email is an unverified claim that has lapsed */
+export function staleEmailClaim(row: Pick<UserRow, 'email' | 'email_verified_at' | 'email_set_at'>, now: number): boolean {
+  return row.email !== null && row.email_verified_at === null && (row.email_set_at ?? 0) + EMAIL_CLAIM_TTL <= now;
+}
+
+/** The account's email is set but not verified (a claim, not proof of the inbox) */
+export const emailUnverified = (row: Pick<UserRow, 'email' | 'email_verified_at'>) => row.email !== null && row.email_verified_at === null;
 
 export function toPublicUser(row: UserRow): PublicUser {
   return {
@@ -49,19 +76,37 @@ export async function loadUser(db: Db, userId: string): Promise<UserRow | null> 
   return db.prepare(`SELECT ${USER_COLUMNS} FROM users u WHERE u.id = ?`).bind(userId).first<UserRow>();
 }
 
-/** Creates a session and returns the raw token (only its hash is stored). Drops the user's expired sessions. */
+/**
+ * Creates a session and returns the raw token (only its hash is stored). Drops the user's expired sessions.
+ * Every new session comes from a sign-in (password, OAuth, registration, reset or password change), so
+ * `authenticated_at` starts at `now`.
+ */
 export async function createSession(db: Db, userId: string, now: number): Promise<string> {
   const token = randomToken();
-  await db.prepare('DELETE FROM sessions WHERE user_id = ? AND expires_at <= ?').bind(userId, now).run();
   await db
-    .prepare('INSERT INTO sessions (token_hash, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)')
-    .bind(await sha256(token), userId, now + SESSION_TTL, now)
+    .prepare('DELETE FROM sessions WHERE user_id = ? AND (expires_at <= ? OR created_at <= ?)')
+    .bind(userId, now, now - SESSION_MAX_AGE)
+    .run();
+  await db
+    .prepare('INSERT INTO sessions (token_hash, user_id, expires_at, created_at, authenticated_at) VALUES (?, ?, ?, ?, ?)')
+    .bind(await sha256(token), userId, now + SESSION_TTL, now, now)
     .run();
   return token;
 }
 
-export function sessionCookie(token: string): string {
-  return cookie(SESSION_COOKIE, token, SESSION_TTL / 1000);
+export function sessionCookie(token: string, maxAgeMs = SESSION_TTL): string {
+  return cookie(SESSION_COOKIE, token, maxAgeMs / 1000);
+}
+
+/** Ends the session named by the request's cookie, if any: a new sign-in replaces it instead of leaving it valid */
+export async function endIncomingSession(c: Pick<RouteContext, 'request' | 'env'>): Promise<void> {
+  const token = readCookie(c.request, SESSION_COOKIE);
+  if (token) await c.env.DB.prepare('DELETE FROM sessions WHERE token_hash = ?').bind(await sha256(token)).run();
+}
+
+/** Marks this session as just authenticated (POST /api/account/reauth, OAuth `?reauth=1`) */
+export async function markAuthenticated(db: Db, tokenHash: string, now: number): Promise<void> {
+  await db.prepare('UPDATE sessions SET authenticated_at = ? WHERE token_hash = ?').bind(now, tokenHash).run();
 }
 
 export const clearSessionCookie = () => clearCookie(SESSION_COOKIE);
@@ -74,18 +119,21 @@ export async function endAllSessions(db: Db, userId: string): Promise<void> {
 export interface Session {
   userId: string;
   tokenHash: string;
+  createdAt: number;
+  /** When this session's user last proved who they are (sign-in or re-authentication) */
+  authenticatedAt: number;
 }
 
-/** The signed-in session for this request, or null (no cookie, unknown, or expired) */
+/** The signed-in session for this request, or null (no cookie, unknown, expired, or past its absolute lifetime) */
 export async function currentSession(c: Pick<RouteContext, 'request' | 'env' | 'deps'>): Promise<Session | null> {
   const token = readCookie(c.request, SESSION_COOKIE);
   if (!token) return null;
   const tokenHash = await sha256(token);
-  const row = await c.env.DB.prepare('SELECT user_id, expires_at FROM sessions WHERE token_hash = ?')
+  const row = await c.env.DB.prepare('SELECT user_id, expires_at, created_at, authenticated_at FROM sessions WHERE token_hash = ?')
     .bind(tokenHash)
-    .first<{ user_id: string; expires_at: number }>();
-  if (!row || row.expires_at <= c.deps.now()) return null;
-  return { userId: row.user_id, tokenHash };
+    .first<{ user_id: string; expires_at: number; created_at: number; authenticated_at: number | null }>();
+  if (!row || !sessionAlive(row, c.deps.now())) return null;
+  return { userId: row.user_id, tokenHash, createdAt: row.created_at, authenticatedAt: row.authenticated_at ?? row.created_at };
 }
 
 export async function requireSession(c: Pick<RouteContext, 'request' | 'env' | 'deps'>): Promise<Session> {
