@@ -36,7 +36,7 @@
   // migrations are applied to it): with sign-in off nothing ever writes to it, and /api/me answers
   // "signed out" when the account tables are missing, so a stray session cookie cannot cause an error.
   "previews": {
-    "vars": { "GITHUB_CLIENT_ID": "" },
+    "vars": { "GITHUB_CLIENT_ID": "", "GOOGLE_CLIENT_ID": "", "EMAIL_FROM": "" },
     "d1_databases": [
       {
         "binding": "DB",
@@ -50,6 +50,13 @@
     // Client ID of the GitHub App used for "Sign in with GitHub" (public, not a secret).
     // The client secret is set separately: npx wrangler secret put GITHUB_CLIENT_SECRET
     // While either is missing, the app hides "Sign in" and the API answers 503 for sign-in.
-    "GITHUB_CLIENT_ID": "Iv23liq8G8SDh8dctkWx"
+    "GITHUB_CLIENT_ID": "Iv23liq8G8SDh8dctkWx",
+    // Client ID of the Google Cloud OAuth client for "Sign in with Google" (public, not a secret).
+    // The client secret is set separately: npx wrangler secret put GOOGLE_CLIENT_SECRET
+    // While either is missing, the app hides Google and the API answers 503 for it. See docs/GOOGLE_SIGNIN_SETUP.md.
+    "GOOGLE_CLIENT_ID": "",
+    // Sender of account emails (verification, password reset), e.g. "Terminus CertSim <accounts@terminuscli.com>".
+    // Public. Emails are sent only when this and the RESEND_API_KEY secret are both set. See docs/EMAIL_SETUP.md.
+    "EMAIL_FROM": ""
   }
 }

@@ -1,54 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
-import { handleApi, safeReturn, type ApiDeps, type ApiEnv, type Db, type DbStatement } from './api.ts';
+import { handleApi, safeReturn, type ApiEnv, type DbStatement } from './api.ts';
+import { ORIGIN, cookieValue, setup as baseSetup } from './testkit.ts';
 
-const ORIGIN = 'https://terminalpractice.example.workers.dev';
-
-/** D1's prepare/bind/first/run on top of Node's built-in SQLite, with the real migration applied. */
-function testDb(): Db & { raw: DatabaseSync } {
-  const raw = new DatabaseSync(':memory:');
-  raw.exec('PRAGMA foreign_keys = ON;');
-  raw.exec(readFileSync(new URL('../migrations/0001_accounts.sql', import.meta.url), 'utf8'));
-  const statement = (sql: string, values: unknown[] = []): DbStatement => ({
-    bind: (...v) => statement(sql, v),
-    first: async <T,>() => (raw.prepare(sql).get(...(values as never[])) as T | undefined) ?? null,
-    run: async () => raw.prepare(sql).run(...(values as never[])),
-  });
-  return { raw, prepare: sql => statement(sql) };
-}
-
-/** A fake GitHub: answers the token exchange and the profile request, and records what it was sent. */
-function fakeGithub(profile = { id: 4242, login: 'octo-learner', name: 'Octo Learner', avatar_url: 'https://avatars.example/4242' }) {
-  const calls: { url: string; init?: RequestInit }[] = [];
-  const fetch: ApiDeps['fetch'] = async (url, init) => {
-    calls.push({ url, init });
-    if (url === 'https://github.com/login/oauth/access_token') {
-      const body = new URLSearchParams(String(init?.body));
-      return body.get('code') === 'good-code'
-        ? Response.json({ access_token: 'gho_temp', token_type: 'bearer' })
-        : Response.json({ error: 'bad_verification_code' });
-    }
-    if (url === 'https://api.github.com/user') return Response.json(profile);
-    return new Response('unexpected', { status: 500 });
-  };
-  return { fetch, calls };
-}
-
+/** The GitHub-only setup these tests were written for, with calls that send raw headers (no automatic Origin) */
 function setup(overrides: Partial<ApiEnv> = {}) {
-  let now = Date.UTC(2026, 9, 21);
-  const db = testDb();
-  const github = fakeGithub();
-  const env: ApiEnv = { DB: db, GITHUB_CLIENT_ID: 'Iv1.testclient', GITHUB_CLIENT_SECRET: 'shh', ...overrides };
-  const deps: ApiDeps = { fetch: github.fetch, now: () => now };
-  const call = async (method: string, path: string, headers: Record<string, string> = {}) =>
-    (await handleApi(new Request(ORIGIN + path, { method, headers }), env, deps))!;
-  return { db, env, github, call, advance: (ms: number) => (now += ms) };
+  const s = baseSetup(overrides);
+  const call = (method: string, path: string, headers: Record<string, string> = {}) => s.call(method, path, { headers, origin: null });
+  return { ...s, call, github: { calls: s.services.calls } };
 }
 
-const cookieValue = (res: Response, name: string) =>
-  res.headers.getSetCookie().find(c => c.startsWith(`${name}=`))?.split(';')[0].slice(name.length + 1);
+const providersOff = { github: false, google: false, email: true };
+const allProviders = { github: true, google: true, email: true };
 
 /** Runs start + callback and returns the session cookie value. */
 async function signIn(s: ReturnType<typeof setup>, returnTo = '#/learn/lpic1-101') {
@@ -67,10 +31,20 @@ test('non-API paths are left to the static assets', async () => {
 });
 
 test('/api/me says signed out, and whether GitHub sign-in is available', async () => {
-  assert.deepEqual(await (await setup().call('GET', '/api/me')).json(), { user: null, providers: { github: true } });
-  const unconfigured = setup({ GITHUB_CLIENT_ID: '', GITHUB_CLIENT_SECRET: undefined });
-  assert.deepEqual(await (await unconfigured.call('GET', '/api/me')).json(), { user: null, providers: { github: false } });
+  assert.deepEqual(await (await setup().call('GET', '/api/me')).json(), { user: null, providers: allProviders, emailSending: true });
+  const unconfigured = setup({
+    GITHUB_CLIENT_ID: '',
+    GITHUB_CLIENT_SECRET: undefined,
+    GOOGLE_CLIENT_ID: '',
+    GOOGLE_CLIENT_SECRET: undefined,
+    RESEND_API_KEY: undefined,
+  });
+  assert.deepEqual(await (await unconfigured.call('GET', '/api/me')).json(), { user: null, providers: providersOff, emailSending: false });
   assert.equal((await unconfigured.call('GET', '/api/auth/github/start')).status, 503);
+  assert.equal((await unconfigured.call('GET', '/api/auth/google/start')).status, 503);
+  // EMAIL_FROM alone is not enough to send
+  const noKey = setup({ RESEND_API_KEY: '' });
+  assert.equal((await (await noKey.call('GET', '/api/me')).json()).emailSending, false);
 });
 
 test('/api/me treats a database without the account tables as signed out', async () => {
@@ -80,17 +54,38 @@ test('/api/me treats a database without the account tables as signed out', async
   const statement = (sql: string, values: unknown[] = []): DbStatement => ({
     bind: (...v) => statement(sql, v),
     first: async <T,>() => (raw.prepare(sql).get(...(values as never[])) as T | undefined) ?? null,
+    all: async <T,>() => ({ results: raw.prepare(sql).all(...(values as never[])) as T[] }),
     run: async () => raw.prepare(sql).run(...(values as never[])),
   });
   const env: ApiEnv = { DB: { prepare: sql => statement(sql) }, GITHUB_CLIENT_ID: '' };
   const res = (await handleApi(new Request(`${ORIGIN}/api/me`, { headers: { Cookie: '__Host-session=stray' } }), env))!;
   assert.equal(res.status, 200);
-  assert.deepEqual(await res.json(), { user: null, providers: { github: false } });
+  // Email accounts need the tables, so the preview offers no sign-in method at all
+  assert.deepEqual(await res.json(), { user: null, providers: { github: false, google: false, email: false }, emailSending: false });
   assert.equal(cookieValue(res, '__Host-session'), '');
+  const signedOut = (await handleApi(new Request(`${ORIGIN}/api/me`), env))!;
+  assert.equal((await signedOut.json()).providers.email, false);
+  // Account routes answer 503 there instead of failing
+  const reg = (await handleApi(
+    new Request(`${ORIGIN}/api/auth/email/register`, {
+      method: 'POST',
+      headers: { Origin: ORIGIN, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'a@b.example', password: 'a long enough passphrase', displayName: 'A', ageConfirmed: true }),
+    }),
+    env,
+  ))!;
+  assert.equal(reg.status, 503);
 
   // Any other database error is still an error
   const broken: ApiEnv = {
-    DB: { prepare: () => ({ bind() { return this; }, first: async () => { throw new Error('D1_ERROR: network'); }, run: async () => ({}) }) },
+    DB: {
+      prepare: () => ({
+        bind() { return this; },
+        first: async () => { throw new Error('D1_ERROR: network'); },
+        all: async () => { throw new Error('D1_ERROR: network'); },
+        run: async () => ({}),
+      }),
+    },
   };
   await assert.rejects(handleApi(new Request(`${ORIGIN}/api/me`, { headers: { Cookie: '__Host-session=x' } }), broken), /network/);
 });
@@ -128,7 +123,14 @@ test('a full sign-in creates the user and a hashed session, and returns to where
   assert.match(stored[0].token_hash, /^[0-9a-f]{64}$/);
 
   const me = await (await s.call('GET', '/api/me', { Cookie: `__Host-session=${session}` })).json();
-  assert.deepEqual(me.user, { id: me.user.id, name: 'Octo Learner', login: 'octo-learner', avatarUrl: 'https://avatars.example/4242' });
+  assert.deepEqual(me.user, {
+    id: me.user.id,
+    name: 'Octo Learner',
+    login: 'octo-learner',
+    email: null,
+    emailVerified: false,
+    avatarUrl: 'https://avatars.example/4242',
+  });
 
   // Signing in again reuses the same user
   await signIn(s);
@@ -185,6 +187,9 @@ test('logout deletes the session, and only from this site', async () => {
 
 test('only in-app hash routes are accepted as a return address', () => {
   assert.equal(safeReturn('#/learn/lpic1-101/step-2'), '#/learn/lpic1-101/step-2');
+  assert.equal(safeReturn('#/account'), '#/account');
+  assert.equal(safeReturn('#/account/security'), '#/account/security');
+  assert.equal(safeReturn('#/account?error=x'), '#/learn');
   assert.equal(safeReturn('https://evil.example'), '#/learn');
   assert.equal(safeReturn('//evil.example'), '#/learn');
   assert.equal(safeReturn('#/../../x'), '#/learn');
