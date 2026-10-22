@@ -10,5 +10,6 @@
     "skipLibCheck": true,
     "isolatedModules": true
   },
-  "include": ["index.ts", "api.ts"]
+  "include": ["*.ts"],
+  "exclude": ["*.test.ts", "testkit.ts"]
 }

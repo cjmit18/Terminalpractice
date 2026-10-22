@@ -12,5 +12,6 @@
     "isolatedModules": true,
     "allowImportingTsExtensions": true
   },
-  "include": ["api.ts", "*.test.ts"]
+  "include": ["*.ts"],
+  "exclude": ["index.ts"]
 }
