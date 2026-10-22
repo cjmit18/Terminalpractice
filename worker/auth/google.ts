@@ -33,8 +33,8 @@ async function start(c: RouteContext): Promise<Response> {
   authorize.searchParams.set('code_challenge', await pkceChallenge(verifier));
   authorize.searchParams.set('code_challenge_method', 'S256');
   if (mode === 'reauth') {
-    // Re-authentication: Google must ask for the sign-in again, not reuse its own session
-    authorize.searchParams.set('prompt', 'login');
+    // Re-authentication: max_age=0 asks Google for a fresh sign-in (Google does not accept prompt=login)
+    authorize.searchParams.set('prompt', 'select_account');
     authorize.searchParams.set('max_age', '0');
   } else {
     authorize.searchParams.set('prompt', 'select_account');

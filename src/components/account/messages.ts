@@ -27,6 +27,7 @@ const KNOWN: Record<string, Known> = {
   password_common: TOO_COMMON,
   password_equals_email: SAME_AS_EMAIL,
   password_is_email: SAME_AS_EMAIL,
+  password_contains_name: { message: 'Your password can’t contain your name, your email address or the site’s name.', field: 'password' },
   invalid_display_name: { message: 'Use a display name between 1 and 50 characters.', field: 'displayName' },
   age_required: { message: 'Confirm that you are 13 or older to create an account.', field: 'age' },
   age_not_confirmed: { message: 'Confirm that you are 13 or older to create an account.', field: 'age' },
@@ -130,6 +131,9 @@ const RETURN_ERRORS: Record<string, string> = {
   reauth_failed: 'We could not confirm it was you, so nothing was changed. Try again.',
   email_unverified: 'Verify your email first, then link Google or GitHub. Open the link we sent you, or send a new one.',
   reauth_required: 'For your security, sign in again to continue.',
+  not_linked: 'That Google or GitHub account is not linked to this account, so it could not confirm it was you.',
+  session_changed: 'You signed in or out in another tab before that finished, so nothing was changed. Try again.',
+  reauth_mismatch: 'That was a different Google or GitHub account from the one linked here, so nothing was changed.',
 };
 
 export function returnErrorMessage(code: string): string {

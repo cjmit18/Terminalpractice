@@ -180,7 +180,7 @@ test('SEC-3: without a password, sensitive actions need a sign-in within 10 minu
 
   // ?reauth=1 with the same Google account refreshes the session's sign-in time
   const re = await oauth(s, 'google', { session: g.session, reauth: true, returnTo: '#/account/security' });
-  assert.equal(re.location!.searchParams.get('prompt'), 'login');
+  assert.equal(re.location!.searchParams.get('prompt'), 'select_account');
   assert.equal(re.location!.searchParams.get('max_age'), '0');
   assert.equal(re.cb.headers.get('Location'), `${ORIGIN}/#/account/security`);
   assert.equal(re.session, undefined); // the same session continues
