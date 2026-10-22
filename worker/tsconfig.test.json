@@ -12,5 +12,5 @@
     "isolatedModules": true,
     "allowImportingTsExtensions": true
   },
-  "include": ["api.ts", "*.test.ts"]
+  "include": ["api.ts", "sync.ts", "../src/lib/syncRules.ts", "*.test.ts"]
 }

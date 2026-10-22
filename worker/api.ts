@@ -1,5 +1,6 @@
 // Account API served by the Worker under /api/*: GitHub sign-in, sessions, "who am I" and sign-out.
 // Kept free of Cloudflare-only imports so it runs (and is tested) in Node with a SQLite stand-in for D1.
+import { handleSync } from './sync';
 
 /** The slice of D1 this API uses. Cloudflare's D1Database satisfies it. */
 export interface DbStatement {
@@ -54,6 +55,7 @@ const defaultDeps: ApiDeps = {
 export async function handleApi(request: Request, env: ApiEnv, deps: ApiDeps = defaultDeps): Promise<Response | null> {
   const url = new URL(request.url);
   if (!url.pathname.startsWith('/api/')) return null;
+  if (url.pathname.startsWith('/api/progress')) return handleSync(request, env, await currentUser(request, env, deps.now()), deps.now());
 
   const route = `${request.method} ${url.pathname}`;
   switch (route) {
@@ -213,6 +215,21 @@ async function createSession(db: Db, userId: string, now: number): Promise<strin
     .bind(await sha256(token), userId, now + SESSION_TTL, now)
     .run();
   return token;
+}
+
+/** The signed-in user's id from the session cookie, or null (no cookie, unknown or expired session, no account tables). */
+export async function currentUser(request: Request, env: ApiEnv, now: number = Date.now()): Promise<string | null> {
+  const token = readCookie(request, SESSION_COOKIE);
+  if (!token) return null;
+  try {
+    const row = await env.DB.prepare('SELECT user_id, expires_at FROM sessions WHERE token_hash = ?')
+      .bind(await sha256(token))
+      .first<{ user_id: string; expires_at: number }>();
+    return row && row.expires_at > now ? row.user_id : null;
+  } catch (err) {
+    if (isMissingTable(err)) return null;
+    throw err;
+  }
 }
 
 async function me(request: Request, env: ApiEnv, deps: ApiDeps): Promise<Response> {

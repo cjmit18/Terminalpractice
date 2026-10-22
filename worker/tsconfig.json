@@ -10,5 +10,5 @@
     "skipLibCheck": true,
     "isolatedModules": true
   },
-  "include": ["index.ts", "api.ts"]
+  "include": ["index.ts", "api.ts", "sync.ts", "../src/lib/syncRules.ts"]
 }
