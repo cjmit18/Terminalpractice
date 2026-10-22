@@ -51,7 +51,7 @@ test('two tabs: clearing badges in one is quiet in the other', async ({ page, co
   await page.reload();
   await expect(earnedList(page)).toContainText('First lab');
   const other = await context.newPage();
-  await other.goto('#/learn');
+  await other.goto('#/account/settings');
   other.once('dialog', d => d.accept());
   await other.getByRole('button', { name: 'Clear badges and activity' }).click();
   await expect.poll(async () => (await storedActivity(page)).clearedAt).toBeTruthy();
@@ -89,10 +89,14 @@ test('settings: hide badges, turn celebrations off, clear badges and activity', 
   await runCommand(page, 'whoami');
   await expect(celebrations(page)).toContainText('whoami');
 
+  // The settings live on #/account/settings; the Learn page links there
   await page.goto('#/learn');
+  await page.getByRole('main').getByRole('link', { name: 'Settings', exact: true }).click();
+  await expect(page).toHaveURL(/#\/account\/settings$/);
   await page.getByRole('group', { name: 'Celebrations' }).getByRole('radio', { name: /^Off/ }).check();
   await page.getByRole('group', { name: 'Badges' }).getByRole('radio', { name: /^Hide/ }).check();
-  await expect(page.getByRole('heading', { name: 'Badges and celebrations', exact: true })).toBeVisible();
+  await page.goto('#/learn');
+  await expect(page.getByRole('heading', { name: 'Badges', exact: true })).toBeVisible();
   await expect(page.getByText('Badges are hidden.')).toBeVisible();
   await expect(earnedList(page)).toHaveCount(0);
   expect((await storedActivity(page)).prefs).toEqual({ celebrations: 'off', showBadges: false });
@@ -102,11 +106,14 @@ test('settings: hide badges, turn celebrations off, clear badges and activity', 
   await runCommand(page, 'ls --help');
   await expect(celebrations(page)).toHaveText('');
 
-  await page.goto('#/learn');
+  await page.goto('#/account/settings');
   await page.getByRole('group', { name: 'Badges' }).getByRole('radio', { name: /^Show/ }).check();
+  await page.goto('#/learn');
   await expect(earnedList(page)).toContainText('--help');
+  await page.goto('#/account/settings');
   page.once('dialog', d => d.accept());
   await page.getByRole('button', { name: 'Clear badges and activity' }).click();
+  await page.goto('#/learn');
   await expect(page.getByText('No badges yet.')).toBeVisible();
   const after = await storedActivity(page);
   expect(after.facts).toEqual([]);

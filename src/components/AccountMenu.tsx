@@ -1,6 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Github, LogOut } from 'lucide-react';
-import { githubSignInHref, useAccount } from '../lib/account';
+import { LogIn, LogOut } from 'lucide-react';
+import { useAccount } from '../lib/account';
+import { accountHref } from '../lib/router';
+
+const menuLink = 'flex items-center min-h-10 px-2 -mx-2 rounded-sm text-text hover:bg-surface-2';
 
 /** Header control for optional sign-in. Renders nothing where sign-in is not offered. */
 export const AccountMenu: React.FC = () => {
@@ -22,11 +25,15 @@ export const AccountMenu: React.FC = () => {
         buttonRef.current?.focus();
       }
     };
+    // A link in the menu was followed
+    const onHash = () => setOpen(false);
     document.addEventListener('pointerdown', onPointer);
     document.addEventListener('keydown', onKey);
+    window.addEventListener('hashchange', onHash);
     return () => {
       document.removeEventListener('pointerdown', onPointer);
       document.removeEventListener('keydown', onKey);
+      window.removeEventListener('hashchange', onHash);
     };
   }, [open]);
 
@@ -35,15 +42,11 @@ export const AccountMenu: React.FC = () => {
   if (account.status === 'signed-out') {
     return (
       <a
-        // Read the current page at click time, so GitHub sends the learner back to it
-        href={githubSignInHref()}
-        onClick={e => {
-          e.currentTarget.href = githubSignInHref();
-        }}
-        aria-label="Sign in with GitHub"
-        className="inline-flex items-center gap-2 h-10 md:h-9 px-2.5 md:px-3 rounded-md border border-line-strong text-sm font-medium text-text hover:bg-surface-2 whitespace-nowrap"
+        href={accountHref()}
+        aria-label="Sign in"
+        className="inline-flex items-center justify-center gap-2 h-10 md:h-9 min-w-10 px-2 sm:px-3 rounded-md border border-line-strong text-sm font-medium text-text hover:bg-surface-2 whitespace-nowrap"
       >
-        <Github className="size-4" aria-hidden="true" />
+        <LogIn className="size-4" aria-hidden="true" />
         <span className="hidden sm:inline">Sign in</span>
       </a>
     );
@@ -62,7 +65,7 @@ export const AccountMenu: React.FC = () => {
         onClick={() => setOpen(o => !o)}
         className="inline-flex items-center gap-2 h-10 md:h-9 pl-1 pr-1 lg:pr-3 rounded-md hover:bg-surface-2"
       >
-        {/* An initial, not the GitHub picture: no image is fetched from another site */}
+        {/* An initial, not a profile picture: no image is fetched from another site */}
         <span aria-hidden="true" className="grid place-items-center size-7 rounded-full bg-accent-soft text-accent text-sm font-semibold">
           {initial}
         </span>
@@ -70,12 +73,32 @@ export const AccountMenu: React.FC = () => {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-2 w-72 rounded-md border border-line bg-surface p-4 shadow-lg z-50 text-sm">
+        <div className="absolute right-0 top-full mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-md border border-line bg-surface p-4 shadow-lg z-50 text-sm">
           <p className="font-medium text-text truncate">{user.name}</p>
-          {user.login && <p className="text-muted truncate">Signed in with GitHub as {user.login}</p>}
-          <p className="mt-3 text-muted">
-            Your progress is saved in this browser. Syncing it between your devices is the next step.
-          </p>
+          {user.email ? (
+            <p className="text-muted truncate">{user.email}</p>
+          ) : (
+            user.login && <p className="text-muted truncate">Signed in with GitHub as {user.login}</p>
+          )}
+          <nav aria-label="Account" className="mt-3 border-t border-line pt-2">
+            <ul>
+              <li>
+                <a href={accountHref()} className={menuLink}>
+                  Dashboard
+                </a>
+              </li>
+              <li>
+                <a href={accountHref('settings')} className={menuLink}>
+                  Settings
+                </a>
+              </li>
+              <li>
+                <a href={accountHref('security')} className={menuLink}>
+                  Security
+                </a>
+              </li>
+            </ul>
+          </nav>
           <button
             type="button"
             onClick={async () => {
@@ -83,7 +106,7 @@ export const AccountMenu: React.FC = () => {
               if (await signOut()) setOpen(false);
               else setError('Could not sign out. Check your connection and try again.');
             }}
-            className="mt-4 inline-flex items-center gap-2 h-9 px-3 rounded-md border border-line-strong font-medium text-text hover:bg-surface-2"
+            className="mt-3 inline-flex items-center gap-2 h-10 px-3 rounded-md border border-line-strong font-medium text-text hover:bg-surface-2"
           >
             <LogOut className="size-4" aria-hidden="true" />
             Sign out

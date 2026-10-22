@@ -54,7 +54,16 @@ export interface ActivityPrefs {
   bannerLine?: BannerLine;
   /** Story framing on labs (help-desk tickets); anything but false is on */
   storyNotes?: boolean;
+  /** The shell the Sandbox opens with */
+  defaultShell?: SandboxShell;
+  /** Terminal text size: small, medium (the default) or large */
+  termFontSize?: TermFontSize;
 }
+
+export type SandboxShell = 'bash' | 'cmd' | 'powershell';
+export const SANDBOX_SHELLS: SandboxShell[] = ['bash', 'cmd', 'powershell'];
+export type TermFontSize = 's' | 'm' | 'l';
+export const TERM_FONT_SIZES: TermFontSize[] = ['s', 'm', 'l'];
 
 export interface Activity {
   /** Grow-only, sorted: 'help:linux:chmod', 'cmd:ps:get-service', 'recover:permission', 'shell:cmd', 'hint:mod/obj' */
@@ -92,6 +101,8 @@ export const DEFAULT_PREFS: Required<ActivityPrefs> = {
   promptStyle: 'standard',
   bannerLine: 'none',
   storyNotes: true,
+  defaultShell: 'bash',
+  termFontSize: 'm',
 };
 
 export const prefsOf = (a: Activity): Required<ActivityPrefs> => ({ ...DEFAULT_PREFS, ...a.prefs });
@@ -148,6 +159,8 @@ function sanitizePrefs(raw: unknown): ActivityPrefs | undefined {
   if (PROMPT_STYLES.includes(r.promptStyle as PromptStyle)) prefs.promptStyle = r.promptStyle as PromptStyle;
   if (BANNER_LINES.includes(r.bannerLine as BannerLine)) prefs.bannerLine = r.bannerLine as BannerLine;
   if (typeof r.storyNotes === 'boolean') prefs.storyNotes = r.storyNotes;
+  if (SANDBOX_SHELLS.includes(r.defaultShell as SandboxShell)) prefs.defaultShell = r.defaultShell as SandboxShell;
+  if (TERM_FONT_SIZES.includes(r.termFontSize as TermFontSize)) prefs.termFontSize = r.termFontSize as TermFontSize;
   return Object.keys(prefs).length ? prefs : undefined;
 }
 
