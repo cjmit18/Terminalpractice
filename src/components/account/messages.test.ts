@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { describeError, emailError, newPasswordError, passwordLengthHint } from './messages.ts';
+import { describeError, emailError, newPasswordError, normalizeEmail, passwordLengthHint, returnErrorMessage } from './messages.ts';
 import { parseHash, routeHref } from '../../lib/router.ts';
 
 test('error codes become plain messages, tied to a field when there is one', () => {
@@ -25,6 +25,26 @@ test('password and email checks', () => {
   assert.match(newPasswordError('me@example.com', 'ME@example.com ') ?? '', /same as your email/);
   assert.equal(emailError('me@example.com'), null);
   assert.ok(emailError('nope'));
+});
+
+test('emails are NFC-normalized and trimmed, and lookalike forms are refused', () => {
+  const nfd = 'cafe\u0301@example.com';
+  assert.equal(normalizeEmail(`  ${nfd}\n`), 'caf\u00e9@example.com');
+  assert.equal(normalizeEmail(nfd), normalizeEmail('caf\u00e9@example.com'));
+  assert.equal(emailError(' caf\u00e9@example.com '), null);
+  for (const bad of ['x<attacker@evil.example>', '"a"@b.c', 'a@b.c>', 'a@b.c\u200b', 'a\u202e@b.c', 'a,b@c.d']) {
+    assert.ok(emailError(bad), bad);
+  }
+});
+
+test('link and sign-in-again errors have plain messages', () => {
+  assert.match(returnErrorMessage('identity_in_use'), /already linked to a different account/);
+  assert.match(returnErrorMessage('provider_already_linked'), /Unlink it first/);
+  assert.match(returnErrorMessage('not_signed_in'), /Sign in, then try again/);
+  assert.match(returnErrorMessage('reauth_failed'), /could not confirm it was you/);
+  assert.match(returnErrorMessage('email_unverified'), /Verify your email first/);
+  assert.match(returnErrorMessage('something_new'), /nothing was changed/);
+  assert.equal(describeError('reauth_required', 403).message, 'For your security, sign in again to continue.');
 });
 
 test('account routes parse with or without a one-time token', () => {

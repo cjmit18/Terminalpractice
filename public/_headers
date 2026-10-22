@@ -1,0 +1,12 @@
+# Response headers for the static files (Cloudflare Workers static assets reads this file; it is not
+# served). /api/* responses come from the Worker and set their own headers. `vite preview` applies
+# this file too (see previewHeaders in vite.config.ts), so the e2e suite runs under the same policy.
+# The GitHub Pages copy cannot send headers; it gets the same CSP, minus frame-ancestors, as a <meta>.
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Frame-Options: DENY
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+  Cross-Origin-Opener-Policy: same-origin
+  Strict-Transport-Security: max-age=31536000

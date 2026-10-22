@@ -123,7 +123,15 @@ function onSignedOutElsewhere(): void {
 
 export type ApiResult<T> =
   | { ok: true; status: number; data: T }
-  | { ok: false; status: number; code: string; message: string; field?: ErrorField };
+  | {
+      ok: false;
+      status: number;
+      code: string;
+      message: string;
+      field?: ErrorField;
+      /** With 403 `reauth_required`: the sign-in methods that can confirm it is you (e.g. ["github"]) */
+      providers?: string[];
+    };
 
 async function request<T>(method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', path: string, body?: unknown): Promise<ApiResult<T>> {
   const sendsBody = method !== 'GET';
@@ -148,11 +156,12 @@ async function request<T>(method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', p
     }
   }
   if (res.ok) return { ok: true, status: res.status, data: json as T };
-  const err = (json && typeof json === 'object' ? json : {}) as { error?: unknown; message?: unknown };
+  const err = (json && typeof json === 'object' ? json : {}) as { error?: unknown; message?: unknown; providers?: unknown };
   const code = typeof err.error === 'string' ? err.error : `http_${res.status}`;
   const retryAfter = Number(res.headers.get('Retry-After')) || undefined;
   const { message, field } = describeError(code, res.status, typeof err.message === 'string' ? err.message : undefined, retryAfter);
-  return { ok: false, status: res.status, code, message, field };
+  const providers = Array.isArray(err.providers) ? err.providers.filter((p): p is string => typeof p === 'string') : undefined;
+  return { ok: false, status: res.status, code, message, field, ...(providers ? { providers } : {}) };
 }
 
 /** Signs in on success: the server set the session cookie */
@@ -174,8 +183,16 @@ export const register = async (input: RegisterInput) =>
 export const login = async (input: { email: string; password: string }) =>
   signedIn(await request<{ user: AccountUser }>('POST', 'auth/email/login', input));
 
-export const verifyEmail = async (token: string) =>
-  signedIn(await request<{ user: AccountUser }>('POST', 'auth/email/verify', { token }));
+/**
+ * Confirms an email. It never signs this browser in: /verify sets no session cookie, and the link may
+ * have been opened by someone other than the account's owner. Whoever is signed in here (if anyone)
+ * is asked again, so a signed-in owner sees the email as confirmed.
+ */
+export async function verifyEmail(token: string) {
+  const r = await request<{ user: AccountUser }>('POST', 'auth/email/verify', { token });
+  if (r.ok) await refreshAccount();
+  return r;
+}
 
 export const resendVerification = () => request<null>('POST', 'auth/email/resend-verification');
 
@@ -189,13 +206,26 @@ export async function resetPassword(token: string, password: string) {
   return signedIn(r);
 }
 
-/** Where "Continue with Google/GitHub" goes. With link, adds that method to the signed-in account. */
-export function oauthStartHref(provider: OAuthProvider, opts: { link?: boolean; returnTo?: string } = {}): string {
+/**
+ * Where "Continue with Google/GitHub" goes. With link, adds that method to the signed-in account;
+ * with reauth, signs in again to confirm it is you before a sensitive change (accounts without a password).
+ */
+export function oauthStartHref(provider: OAuthProvider, opts: { link?: boolean; reauth?: boolean; returnTo?: string } = {}): string {
   const params = new URLSearchParams();
+  if (opts.reauth) params.set('reauth', '1');
   params.set('return', opts.returnTo ?? '#/account');
   if (opts.link) params.set('link', '1');
   return `${apiUrl(`auth/${provider}/start`)}?${params.toString()}`;
 }
+
+/** The current route without its ?query, e.g. "#/account/security" */
+export function currentRoute(hash: string = window.location.hash): string {
+  const bare = hash.split('?')[0];
+  return bare.startsWith('#/') ? bare : '#/account';
+}
+
+/** "Sign in again with …" after 403 reauth_required: back to the current route afterwards */
+export const reauthHref = (provider: OAuthProvider) => oauthStartHref(provider, { reauth: true, returnTo: currentRoute() });
 
 /** Kept for older callers: GitHub sign-in that returns to the current page */
 export function githubSignInHref(hash: string = window.location.hash): string {
@@ -239,10 +269,17 @@ export async function updateDisplayName(displayName: string) {
 export const changePassword = (input: { currentPassword?: string; newPassword: string }) =>
   request<unknown>('POST', 'account/password', input);
 
-export const changeEmail = (input: { email: string; password?: string }) => request<unknown>('POST', 'account/email', input);
+// Sensitive changes confirm it is you: accounts with a password send `currentPassword`; accounts
+// without one may get 403 `reauth_required` with `providers`, and then sign in again (reauthHref).
 
-export const unlinkIdentity = (provider: string) =>
-  request<null>('DELETE', `account/identities/${encodeURIComponent(provider)}`);
+/** Adds or changes the email. `currentPassword` is required when the account has a password. */
+export const changeEmail = (input: { email: string; currentPassword?: string }) => request<unknown>('POST', 'account/email', input);
+
+export const unlinkIdentity = (provider: string, currentPassword?: string) =>
+  request<null>('DELETE', `account/identities/${encodeURIComponent(provider)}`, currentPassword ? { currentPassword } : {});
+
+/** Confirms the password before leaving for Google/GitHub to link it (the link itself is a redirect) */
+export const reauthWithPassword = (currentPassword: string) => request<unknown>('POST', 'account/reauth', { currentPassword });
 
 /** Fetches the export and hands it to the browser as a file download. */
 export async function downloadExport(): Promise<ApiResult<null>> {
@@ -268,8 +305,8 @@ export async function downloadExport(): Promise<ApiResult<null>> {
   return { ok: true, status: res.status, data: null };
 }
 
-export async function deleteAccount(): Promise<ApiResult<null>> {
-  const r = await request<null>('DELETE', 'account', { confirm: 'delete' });
+export async function deleteAccount(currentPassword?: string): Promise<ApiResult<null>> {
+  const r = await request<null>('DELETE', 'account', currentPassword ? { confirm: 'delete', currentPassword } : { confirm: 'delete' });
   if (r.ok) setSignedOut('Your account and everything linked to it, synced progress included, were deleted. Progress saved in this browser while signed out is still here.');
   return r;
 }
@@ -311,12 +348,14 @@ export function useAccount(): Snapshot & { signOut: () => Promise<boolean>; refr
   return { ...snap, signOut: doSignOut, refresh };
 }
 
-/** Reads ?token=… from the hash (#/account/verify?token=…). Pure: see clearHashQuery. */
-export function readHashToken(hash: string = window.location.hash): string | null {
+/** Reads ?<name>=… from the hash (#/account/verify?token=…, #/account/security?error=…). Pure: see clearHashQuery. */
+export function readHashParam(name: string, hash: string = window.location.hash): string | null {
   const q = hash.indexOf('?');
   if (q < 0) return null;
-  return new URLSearchParams(hash.slice(q + 1)).get('token') || null;
+  return new URLSearchParams(hash.slice(q + 1)).get(name) || null;
 }
+
+export const readHashToken = (hash: string = window.location.hash) => readHashParam('token', hash);
 
 /** Removes ?… from the hash with history.replaceState, so a one-time token does not stay in the URL. */
 export function clearHashQuery(): void {
