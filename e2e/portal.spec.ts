@@ -32,7 +32,7 @@ async function stubApi(
     }
     calls.push({ key, body });
     if (key === 'GET me') return route.fulfill({ json: me });
-    const h = handlers[key];
+    const h = handlers[key] ?? PROGRESS_STUBS[key];
     if (!h) return route.fulfill({ status: 404, json: { error: 'not_found', message: 'Not found' } });
     const r = h(body);
     if (r.json === undefined) return route.fulfill({ status: r.status ?? 204, body: '', headers: r.headers });
@@ -43,6 +43,13 @@ async function stubApi(
 
 /** 4xx answers make Chromium log "Failed to load resource"; anything else is still a failure. */
 const onlyHttpErrors = (errors: string[]) => errors.filter(e => !e.includes('Failed to load resource'));
+
+/** Signed in, the progress sync talks to these: by default an account with nothing saved yet */
+const PROGRESS_STUBS: Record<string, Handler> = {
+  'GET progress': () => ({ json: { items: [], epochs: {}, settings: {} } }),
+  'PUT progress': () => ({ json: { items: [], epochs: {}, settings: {} } }),
+  'POST progress/reset': () => ({ json: { epochs: {} } }),
+};
 
 const passwordInput = (page: Page, label = 'Password') => page.getByLabel(label, { exact: true });
 
@@ -137,7 +144,7 @@ test.describe('signed out', () => {
     await page.getByRole('button', { name: 'Sign in' }).click();
     await expect(page.getByRole('heading', { level: 1, name: 'Hello, Ada' })).toBeVisible();
     await expect(page.getByRole('navigation', { name: 'Account' }).getByRole('link', { name: 'Dashboard' })).toHaveAttribute('aria-current', 'page');
-    await expect(page.getByTestId('sync-status')).toContainText('Your progress is saved in this browser.');
+    await expect(page.getByTestId('sync-status')).toContainText('Progress synced just now.');
     await expect(page.getByRole('heading', { name: 'Learning paths' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Quick links' })).toBeVisible();
 
@@ -213,6 +220,46 @@ test.describe('signed out', () => {
     await expect(page).toHaveURL(/#\/account\/verify$/);
     expect(calls.find(c => c.key === 'POST auth/email/verify')?.body).toEqual({ token: 'ver-9' });
     expect(onlyHttpErrors(consoleErrors)).toEqual([]);
+  });
+});
+
+test.describe('dashboard and progress sync', () => {
+  test.use({ allowConsoleErrors: true });
+
+  test('the dashboard offers to add this browser\'s progress, once', async ({ page, consoleErrors }) => {
+    const puts: Record<string, unknown>[] = [];
+    await stubApi(page, { user: ADA, providers: ALL_PROVIDERS, emailSending: true }, {
+      'PUT progress': body => {
+        puts.push(body ?? {});
+        return { json: { items: [], epochs: {}, settings: {} } };
+      },
+    });
+    // Progress saved in this browser before signing in
+    await page.addInitScript(() => {
+      if (!localStorage.getItem('certsim:progress:v1'))
+        localStorage.setItem('certsim:progress:v1', JSON.stringify({ 'lpi-101-1-system-architecture': ['hw-lspci'] }));
+    });
+    await page.goto('#/account');
+    await expect(page.getByTestId('sync-status')).toContainText('Progress synced just now.');
+    const prompt = page.getByRole('region', { name: 'Add the progress saved in this browser to your account?' });
+    await expect(prompt).toBeVisible();
+    await prompt.getByRole('button', { name: 'Add' }).click();
+    await expect(prompt).toHaveCount(0);
+    await expect.poll(() => puts.some(b => JSON.stringify(b.items ?? []).includes('hw-lspci'))).toBe(true);
+    await page.reload();
+    await expect(page.getByTestId('sync-status')).toContainText('Progress synced');
+    await expect(prompt).toHaveCount(0);
+    expect(onlyHttpErrors(consoleErrors)).toEqual([]);
+  });
+
+  test('a session the server no longer knows signs the browser out', async ({ page }) => {
+    await stubApi(page, { user: ADA, providers: ALL_PROVIDERS, emailSending: true }, {
+      'GET progress': () => ({ status: 401, json: { error: 'not_signed_in', message: 'Sign in to continue.' } }),
+    });
+    await page.goto('#/account');
+    await expect(page.getByRole('banner').getByRole('link', { name: 'Sign in', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 1, name: 'Sign in' })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => Object.keys(localStorage).filter(k => k.startsWith('certsim:acct:')))).toEqual([]);
   });
 });
 
@@ -326,7 +373,7 @@ test.describe('security', () => {
     await expect(del).toBeEnabled();
     await del.click();
     await expect(page).toHaveURL(/#\/account$/);
-    await expect(page.getByText('Your account and everything linked to it were deleted.', { exact: false })).toBeVisible();
+    await expect(page.getByText('Your account and everything linked to it, synced progress included, were deleted.', { exact: false })).toBeVisible();
     await expect(page.getByRole('banner').getByRole('link', { name: 'Sign in', exact: true })).toBeVisible();
     expect(calls.find(c => c.key === 'DELETE account')?.body).toEqual({ confirm: 'delete' });
   });

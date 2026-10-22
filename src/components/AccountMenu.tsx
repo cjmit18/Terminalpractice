@@ -80,6 +80,7 @@ export const AccountMenu: React.FC = () => {
           ) : (
             user.login && <p className="text-muted truncate">Signed in with GitHub as {user.login}</p>
           )}
+          <p className="mt-2 text-muted">Your progress syncs to your account while you are signed in.</p>
           <nav aria-label="Account" className="mt-3 border-t border-line pt-2">
             <ul>
               <li>

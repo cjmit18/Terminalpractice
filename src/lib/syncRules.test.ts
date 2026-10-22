@@ -160,3 +160,17 @@ test('settings: newest write per field wins; malformed or free-text values are r
     practice: { value: ['2026-10-20', '2026-10-21'], updatedAt: 2 },
   });
 });
+
+test('Settings: the Sandbox shell and terminal text size prefs sync, from their fixed lists only', async () => {
+  const { SANDBOX_SHELLS, TERM_FONT_SIZES } = await import('./activity');
+  for (const defaultShell of SANDBOX_SHELLS) {
+    for (const termFontSize of TERM_FONT_SIZES) {
+      const prefs = { value: { defaultShell, termFontSize }, updatedAt: 1 };
+      assert.deepEqual(sanitizeSettings({ prefs }, true), { prefs });
+    }
+  }
+  // Anything else is dropped, never stored
+  assert.deepEqual(sanitizeSettings({ prefs: { value: { defaultShell: 'zsh', termFontSize: 'xl', weeklyGoal: 2 }, updatedAt: 1 } }, true), {
+    prefs: { value: { weeklyGoal: 2 }, updatedAt: 1 },
+  });
+});

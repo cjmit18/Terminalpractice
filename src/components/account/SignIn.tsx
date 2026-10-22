@@ -276,6 +276,7 @@ export const PrivacyNote: React.FC = () => (
     </h2>
     <p>
       You don’t need an account. Everything in the app works without one, and your progress is saved in this browser.
+      Signed in, it also syncs to your account.
     </p>
     <p>
       An account stores your display name, your email if you use one, a scrambled form of your password (never the

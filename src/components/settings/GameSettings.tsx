@@ -138,8 +138,8 @@ export const GameSettings: React.FC = () => {
           Clear badges and activity
         </button>
         <p className="text-sm text-muted">
-          Everything here is saved only in this browser. It records which kinds of things you have tried, such as
-          opening a manual page or fixing a typo, never what you typed.
+          Everything here is saved in this browser, and syncs to your account while you are signed in. It records
+          which kinds of things you have tried, such as opening a manual page or fixing a typo, never what you typed.
         </p>
       </div>
     </section>

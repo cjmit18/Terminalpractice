@@ -289,6 +289,8 @@ export interface PrefsSetting {
   promptStyle?: 'standard' | 'bracket' | 'short' | 'host-first';
   bannerLine?: 'none' | 'calm' | 'tip' | 'loopback';
   storyNotes?: boolean;
+  defaultShell?: 'bash' | 'cmd' | 'powershell';
+  termFontSize?: 's' | 'm' | 'l';
 }
 
 export interface SettingField<T> {
@@ -330,6 +332,8 @@ function sanitizePrefsSetting(raw: unknown): PrefsSetting | null {
     p.promptStyle = r.promptStyle;
   if (r.bannerLine === 'none' || r.bannerLine === 'calm' || r.bannerLine === 'tip' || r.bannerLine === 'loopback') p.bannerLine = r.bannerLine;
   if (typeof r.storyNotes === 'boolean') p.storyNotes = r.storyNotes;
+  if (r.defaultShell === 'bash' || r.defaultShell === 'cmd' || r.defaultShell === 'powershell') p.defaultShell = r.defaultShell;
+  if (r.termFontSize === 's' || r.termFontSize === 'm' || r.termFontSize === 'l') p.termFontSize = r.termFontSize;
   return p;
 }
 

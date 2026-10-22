@@ -63,7 +63,7 @@ test.describe('signed in: progress syncs with the account', () => {
     // Signing out removes the account's data from this browser and shows the signed-out progress
     await page.getByRole('button', { name: 'Account: Octo Learner' }).click();
     await page.getByRole('button', { name: 'Sign out' }).click();
-    await expect(page.getByRole('link', { name: 'Sign in with GitHub' })).toBeVisible();
+    await expect(page.getByRole('banner').getByRole('link', { name: 'Sign in', exact: true })).toBeVisible();
     await expect.poll(() => keysWith(page, 'certsim:acct:')).toEqual([]);
     await expect(headerProgress(page)).toHaveText(done(0));
     expect(await page.evaluate(() => localStorage.getItem('certsim:account'))).toBeNull();

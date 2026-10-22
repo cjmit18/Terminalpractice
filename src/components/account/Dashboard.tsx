@@ -9,7 +9,7 @@ import { BadgeName } from '../badges/BadgeName';
 import { ProgressBar } from '../journey/shared';
 import { pathProgressText } from '../journey/progressText';
 import { secondaryButton, textLink } from './forms';
-import { ImportPrompt, syncStatusText, useSyncState, SYNC_AVAILABLE } from './syncAdapter';
+import { ImportPrompt, syncStatusText, useSyncState } from './syncAdapter';
 
 const RECENT_BADGES = 6;
 
@@ -88,7 +88,8 @@ const EmailStatus: React.FC<{ user: AccountUser; emailSending: boolean }> = ({ u
   );
 };
 
-// INTEGRATION POINT: useSyncState and ImportPrompt come from the sync branch through syncAdapter.ts.
+// The real sync state (src/lib/sync.ts through syncAdapter.ts), and the offer to add this browser's
+// signed-out progress to the account (ImportPrompt renders nothing once answered).
 const SyncStatus: React.FC = () => {
   const sync = useSyncState();
   return (
@@ -99,12 +100,12 @@ const SyncStatus: React.FC = () => {
       <p className="text-[15px]" role="status">
         {syncStatusText(sync)}
       </p>
-      {SYNC_AVAILABLE && sync.status !== 'off' && (
+      {sync.status !== 'off' && (
         <button type="button" onClick={() => void sync.syncNow()} disabled={sync.status === 'syncing'} className={secondaryButton}>
           Sync now
         </button>
       )}
-      {ImportPrompt && <ImportPrompt />}
+      <ImportPrompt className="mt-4" />
     </section>
   );
 };
