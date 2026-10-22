@@ -111,8 +111,42 @@ test('sessions: expire after their TTL and after 90 days however often they are 
   const db = testDb();
   addUser(db);
   const token = await createSession(db, 'u1', NOW);
-  assert.ok(await currentSession(ctx(db, token, NOW + SESSION_TTL - 1)));
-  assert.equal(await currentSession(ctx(db, token, NOW + SESSION_TTL)), null);
+  assert.equal(await currentSession(ctx(db, token, NOW + SESSION_TTL)), null, 'unused for its whole TTL');
+});
+
+test('sessions: use slides the expiry forward with a matching cookie, up to the 90-day cap', async () => {
+  const db = testDb();
+  addUser(db);
+  const token = await createSession(db, 'u1', NOW);
+  const maxAge = (cookie?: string) => Number(/Max-Age=(\d+)/.exec(cookie ?? '')?.[1]);
+
+  // Plenty of time left: nothing changes, no cookie to send
+  const early = await currentSession(ctx(db, token, NOW + 5 * DAY));
+  assert.equal(early?.expiresAt, NOW + SESSION_TTL);
+  assert.equal(early?.renewedCookie, undefined);
+
+  // Under RENEW_BELOW left: renewed to a full TTL from now, cookie Max-Age to match
+  const at = NOW + 20 * DAY;
+  const renewed = await currentSession(ctx(db, token, at));
+  assert.equal(renewed?.expiresAt, at + SESSION_TTL);
+  assert.equal(maxAge(renewed?.renewedCookie), SESSION_TTL / 1000);
+  assert.match(renewed?.renewedCookie ?? '', /^__Host-session=[^;]+; Path=\/; Max-Age=\d+; HttpOnly; Secure; SameSite=Lax$/);
+  assert.equal(db.raw.prepare('SELECT expires_at FROM sessions').get()?.expires_at, at + SESSION_TTL);
+
+  // Used every 10 days it stays signed in, but never past 90 days from sign-in
+  const cookies: { day: number; cookie: string }[] = [];
+  let last;
+  for (let day = 30; day < 90; day += 10) {
+    last = await currentSession(ctx(db, token, NOW + day * DAY));
+    if (last?.renewedCookie) cookies.push({ day, cookie: last.renewedCookie });
+  }
+  assert.equal(last?.expiresAt, NOW + SESSION_MAX_AGE);
+  // The last renewal reached the cap; its cookie lasts exactly until then, and nothing renews past it
+  const final = cookies.at(-1)!;
+  assert.equal(maxAge(final.cookie) * 1000, SESSION_MAX_AGE - final.day * DAY);
+  assert.equal(last?.renewedCookie, undefined);
+  assert.ok(await currentSession(ctx(db, token, NOW + SESSION_MAX_AGE - 1)));
+  assert.equal(await currentSession(ctx(db, token, NOW + SESSION_MAX_AGE)), null);
 });
 
 test('sessions: sign out everywhere ends every session of that user only', async () => {
@@ -165,6 +199,19 @@ test('rate limits: 429 with Retry-After once over the maximum, and a new window 
   });
   await enforceLimit(env, limit, '198.51.100.1', start); // another subject is unaffected
   await enforceLimit(env, limit, '203.0.113.9', start + limit.windowMs);
+});
+
+test('rate limits: without the pepper they refuse to run (503), unless plain keys are explicitly allowed', async () => {
+  const db = testDb();
+  await assert.rejects(enforceLimit({ DB: db }, LIMITS.loginIp, '203.0.113.9', NOW), (err: { status: number; code: string }) => {
+    assert.equal(err.status, 503);
+    assert.equal(err.code, 'not_configured');
+    return true;
+  });
+  assert.equal(db.raw.prepare('SELECT COUNT(*) AS n FROM rate_limits').get()?.n, 0, 'nothing stored');
+
+  await enforceLimit({ DB: db, ALLOW_UNPEPPERED_RATE_LIMITS: '1' }, LIMITS.loginIp, '203.0.113.9', NOW);
+  assert.equal(db.raw.prepare('SELECT key FROM rate_limits').get()?.key, `login-ip:${await sha256('203.0.113.9')}`);
 });
 
 test('rate limits: keys never hold the email or address, and depend on the secret pepper', async () => {

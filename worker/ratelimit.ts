@@ -1,7 +1,8 @@
 // Fixed-window rate limits kept in D1 (table rate_limits). Subjects (emails, IP addresses, user ids) are
 // hashed into the key with HMAC-SHA256 under the RATE_LIMIT_PEPPER secret, so the table never holds them
 // in readable form and a leaked table cannot be reversed against a list of candidate emails or the whole
-// IPv4 space without the secret. Without the secret (a local run) plain SHA-256 is used and a warning logged.
+// IPv4 space without the secret. Without the secret, rate-limited requests fail with 503 rather than
+// storing guessable keys, unless ALLOW_UNPEPPERED_RATE_LIMITS is "1" (local runs, tests and previews).
 import { HttpError, sha256, type ApiEnv } from './http';
 
 const MINUTE = 60 * 1000;
@@ -35,15 +36,22 @@ export const MAX_WINDOW = Math.max(...Object.values(LIMITS).map(l => l.windowMs)
 export const EMAIL_LIMITS: Limit[] = [LIMITS.loginEmail, LIMITS.loginEmailHour, LIMITS.forgotEmail];
 export const USER_LIMITS: Limit[] = [LIMITS.resendVerification, LIMITS.changeEmail, LIMITS.passwordCheck];
 
+/** The settings that decide how rate-limit subjects are hashed */
+export type PepperEnv = Pick<ApiEnv, 'RATE_LIMIT_PEPPER' | 'ALLOW_UNPEPPERED_RATE_LIMITS'>;
+
 const keyCache = new Map<string, Promise<CryptoKey>>();
 let warned = false;
 
-async function hashSubject(env: Pick<ApiEnv, 'RATE_LIMIT_PEPPER'>, subject: string): Promise<string> {
+async function hashSubject(env: PepperEnv, subject: string): Promise<string> {
   const pepper = env.RATE_LIMIT_PEPPER;
   if (!pepper) {
+    if (env.ALLOW_UNPEPPERED_RATE_LIMITS !== '1') {
+      console.error('ratelimit: RATE_LIMIT_PEPPER is not set; set it with `wrangler secret put RATE_LIMIT_PEPPER`');
+      throw new HttpError(503, 'not_configured', 'Signing in is not available right now. Try again later.');
+    }
     if (!warned) {
       warned = true;
-      console.warn('ratelimit: RATE_LIMIT_PEPPER is not set; rate-limit keys use unsalted SHA-256 (set it with `wrangler secret put RATE_LIMIT_PEPPER`)');
+      console.warn('ratelimit: RATE_LIMIT_PEPPER is not set; using plain SHA-256 keys (ALLOW_UNPEPPERED_RATE_LIMITS=1)');
     }
     return sha256(subject);
   }
@@ -57,7 +65,7 @@ async function hashSubject(env: Pick<ApiEnv, 'RATE_LIMIT_PEPPER'>, subject: stri
 }
 
 /** The rate_limits key for a limit and subject: `<limit name>:<HMAC-SHA256 hex>` */
-export async function limitKey(env: Pick<ApiEnv, 'RATE_LIMIT_PEPPER'>, limit: Limit, subject: string): Promise<string> {
+export async function limitKey(env: PepperEnv, limit: Limit, subject: string): Promise<string> {
   return `${limit.name}:${await hashSubject(env, subject)}`;
 }
 
@@ -72,7 +80,7 @@ export function rateLimited(retryAfter: number): HttpError {
 }
 
 /** Counts one attempt against `limit` for `subject` and says whether the window's count is over the maximum. */
-export async function countLimit(env: Pick<ApiEnv, 'DB' | 'RATE_LIMIT_PEPPER'>, limit: Limit, subject: string, now: number): Promise<LimitResult> {
+export async function countLimit(env: Pick<ApiEnv, 'DB'> & PepperEnv, limit: Limit, subject: string, now: number): Promise<LimitResult> {
   const key = await limitKey(env, limit, subject);
   const windowStart = Math.floor(now / limit.windowMs) * limit.windowMs;
   const row = await env.DB.prepare(
@@ -96,7 +104,7 @@ export async function countLimit(env: Pick<ApiEnv, 'DB' | 'RATE_LIMIT_PEPPER'>, 
  * Counts one attempt and throws 429 (with Retry-After) once the window's count goes over the maximum.
  * One upsert per call: the row is reset when a new window starts.
  */
-export async function enforceLimit(env: Pick<ApiEnv, 'DB' | 'RATE_LIMIT_PEPPER'>, limit: Limit, subject: string, now: number): Promise<void> {
+export async function enforceLimit(env: Pick<ApiEnv, 'DB'> & PepperEnv, limit: Limit, subject: string, now: number): Promise<void> {
   const result = await countLimit(env, limit, subject, now);
   if (result.over) throw rateLimited(result.retryAfter);
 }
@@ -107,7 +115,7 @@ export async function sweepRateLimits(db: ApiEnv['DB'], now: number): Promise<vo
 }
 
 /** Deletes the rate-limit rows that can be traced to this account: its email's and its user id's */
-export async function forgetLimits(env: Pick<ApiEnv, 'DB' | 'RATE_LIMIT_PEPPER'>, userId: string, email: string | null): Promise<void> {
+export async function forgetLimits(env: Pick<ApiEnv, 'DB'> & PepperEnv, userId: string, email: string | null): Promise<void> {
   const keys: string[] = [];
   for (const limit of USER_LIMITS) keys.push(await limitKey(env, limit, userId));
   if (email) for (const limit of EMAIL_LIMITS) keys.push(await limitKey(env, limit, email));

@@ -34,6 +34,11 @@ export interface ApiEnv {
   APP_ORIGINS?: string;
   /** Secret key for hashing rate-limit subjects (set with `wrangler secret put RATE_LIMIT_PEPPER`) */
   RATE_LIMIT_PEPPER?: string;
+  /**
+   * "1" lets rate limits run without RATE_LIMIT_PEPPER, using plain SHA-256 keys. Only for local runs,
+   * tests and previews (whose databases hold no real accounts); production must set the pepper instead.
+   */
+  ALLOW_UNPEPPERED_RATE_LIMITS?: string;
 }
 
 export interface ApiDeps {

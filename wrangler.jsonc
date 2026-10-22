@@ -38,7 +38,8 @@
   // migrations are applied to it): with sign-in off nothing ever writes to it, and /api/me answers
   // "signed out" when the account tables are missing, so a stray session cookie cannot cause an error.
   "previews": {
-    "vars": { "GITHUB_CLIENT_ID": "" },
+    // Preview databases hold no real accounts, so rate limits may use plain SHA-256 keys there
+    "vars": { "GITHUB_CLIENT_ID": "", "ALLOW_UNPEPPERED_RATE_LIMITS": "1" },
     "d1_databases": [
       {
         "binding": "DB",

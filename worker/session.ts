@@ -122,9 +122,20 @@ export interface Session {
   createdAt: number;
   /** When this session's user last proved who they are (sign-in or re-authentication) */
   authenticatedAt: number;
+  /** When the session now expires (after any renewal below) */
+  expiresAt: number;
+  /**
+   * Set when this request renewed the session: a Set-Cookie value with the matching new Max-Age, for the
+   * response to send so the browser keeps the cookie as long as the server keeps the session.
+   */
+  renewedCookie?: string;
 }
 
-/** The signed-in session for this request, or null (no cookie, unknown, expired, or past its absolute lifetime) */
+/**
+ * The signed-in session for this request, or null (no cookie, unknown, expired, or past its absolute lifetime).
+ * A session used with less than RENEW_BELOW left slides forward to the full TTL, never past its absolute
+ * lifetime; the result then carries `renewedCookie` for the response.
+ */
 export async function currentSession(c: Pick<RouteContext, 'request' | 'env' | 'deps'>): Promise<Session | null> {
   const token = readCookie(c.request, SESSION_COOKIE);
   if (!token) return null;
@@ -132,8 +143,22 @@ export async function currentSession(c: Pick<RouteContext, 'request' | 'env' | '
   const row = await c.env.DB.prepare('SELECT user_id, expires_at, created_at, authenticated_at FROM sessions WHERE token_hash = ?')
     .bind(tokenHash)
     .first<{ user_id: string; expires_at: number; created_at: number; authenticated_at: number | null }>();
-  if (!row || !sessionAlive(row, c.deps.now())) return null;
-  return { userId: row.user_id, tokenHash, createdAt: row.created_at, authenticatedAt: row.authenticated_at ?? row.created_at };
+  const now = c.deps.now();
+  if (!row || !sessionAlive(row, now)) return null;
+  const session: Session = {
+    userId: row.user_id,
+    tokenHash,
+    createdAt: row.created_at,
+    authenticatedAt: row.authenticated_at ?? row.created_at,
+    expiresAt: row.expires_at,
+  };
+  const renewed = renewedExpiry(row.created_at, now);
+  if (row.expires_at - now < RENEW_BELOW && renewed > row.expires_at) {
+    await c.env.DB.prepare('UPDATE sessions SET expires_at = ? WHERE token_hash = ?').bind(renewed, tokenHash).run();
+    session.expiresAt = renewed;
+    session.renewedCookie = sessionCookie(token, renewed - now);
+  }
+  return session;
 }
 
 export async function requireSession(c: Pick<RouteContext, 'request' | 'env' | 'deps'>): Promise<Session> {
