@@ -84,7 +84,9 @@ test('review: five due questions across paths, missed ones first, no score, and 
   for (let i = 1; i < 5; i++) asked.push(await answer(page, true, i < 4 ? 'Next question' : 'Finish'));
   expect(asked.map(q => q.id)).toEqual([lq[0].id, wq[0].id, lq[1].id, wq[1].id, lq[2].id]);
 
-  await expect(page.getByRole('heading', { name: '4 of 5 right.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Review complete.' })).toBeVisible();
+  // The round ends without a count of right answers
+  await expect(page.getByRole('main')).not.toContainText(/\d+ of \d+ right/);
   await expect(page.getByText('1 comes back soon, 1 tomorrow and 3 in a few days.')).toBeVisible();
   // No score or percentage
   await expect(page.getByRole('main')).not.toContainText('%');

@@ -1,5 +1,6 @@
 import { CommandContext } from '../types/modules';
 import { FileNode, SystemState, TerminalShell } from '../types/terminal';
+import { getNodeAtPath } from '../terminal/filesystem';
 
 /**
  * Mini challenges: short puzzles answered with one command (sometimes two), on the machines of
@@ -35,6 +36,18 @@ const lines = (text: string) =>
     .split('\n')
     .map(l => l.replace(/\r$/, ''))
     .filter(l => l.trim() !== '');
+
+/** The machine's own lines of a file, so an answer is checked against the real source. */
+function fileLines(fs: FileNode, path: string): string[] {
+  const node = getNodeAtPath(fs, path, false);
+  return node?.type === 'file' && node.content ? lines(node.content) : [];
+}
+
+/** The output is exactly these lines of the file, in order, each whole and unchanged. */
+const printsLines = (stdout: string, expected: string[]) => {
+  const out = lines(stdout);
+  return expected.length > 0 && out.length === expected.length && out.every((l, i) => l === expected[i]);
+};
 
 /** Commands that print what you type: they can repeat an answer but never find one. */
 const ECHO = /^\s*(echo|printf|write-output|write-host)\b/i;
@@ -74,10 +87,9 @@ export const CHALLENGES: Challenge[] = [
     shell: 'bash',
     machineFrom: 'lpi-103-2-text-processing',
     prompt: 'Which line in /var/log/syslog mentions sshd? Print only that line.',
-    verifier: (_fs, _s, ctx) => {
+    verifier: (fs, _s, ctx) => {
       if (!answered(ctx, /\/var\/log\/syslog|\bsyslog\b/)) return false;
-      const out = lines(ctx.stdout);
-      return out.length === 1 && /sshd\[2410\]/.test(out[0]);
+      return printsLines(ctx.stdout, fileLines(fs, '/var/log/syslog').filter(l => /\bsshd\[/.test(l)));
     },
     hint: 'grep prints only the lines that contain a word. Give it the word and the file.',
     explanation:
@@ -134,10 +146,9 @@ export const CHALLENGES: Challenge[] = [
     shell: 'bash',
     machineFrom: 'lpi-102-1-disk-partitioning',
     prompt: 'Which DNS servers does this machine ask? Print only the nameserver lines of its resolver file.',
-    verifier: (_fs, _s, ctx) => {
+    verifier: (fs, _s, ctx) => {
       if (!answered(ctx, /resolv\.conf/)) return false;
-      const out = lines(ctx.stdout);
-      return out.length === 2 && out.every(l => /^nameserver\s/.test(l.trim()));
+      return printsLines(ctx.stdout, fileLines(fs, '/etc/resolv.conf').filter(l => /^\s*nameserver\s/.test(l)));
     },
     hint: 'The resolver settings live in /etc/resolv.conf. grep can pick out the lines that start with a word.',
     explanation:

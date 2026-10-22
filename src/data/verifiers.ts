@@ -248,6 +248,39 @@ export function ipconfigAllRun(ctx?: CommandContext): boolean {
 
 const PROBE = /^\s*(ping|tnc|test-netconnection|test-connection)\b/i;
 
+// PowerShell switches that take no value; any other parameter takes the next word as its value
+const PS_SWITCHES = /^(quiet|detailed|traceroute|ipv4|ipv6|resolvedestination|repeat|continuous|dontfragment|mtusizedetect|asjob|whatif|confirm|verbose|debug)$/;
+// ping options that take a value (-n 4, /w 1000); -S is the source address, the PC itself
+const PING_VALUES = /^[nlwivrsjkcpS]$/;
+const isTargetParam = (name: string) =>
+  name === 'cn' || (name.length >= 3 && 'computername'.startsWith(name)) || (name.length >= 2 && 'targetname'.startsWith(name));
+
+/**
+ * The destinations a probe names, read the way the shell binds its parameters: positional words and
+ * the values of -ComputerName (also -ComputerName:value) or -TargetName. Values of other parameters,
+ * such as -Source, -Count or -InformationLevel, are not destinations.
+ */
+function probeTargets(tool: string, words: string[]): string[] {
+  const targets: string[] = [];
+  const add = (v: string) => targets.push(...v.split(',').map(w => w.replace(/^["']|["']$/g, '')).filter(Boolean));
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    const isOption = tool === 'ping' ? /^[-/]/.test(w) : w.startsWith('-');
+    if (!isOption) { add(w); continue; }
+    if (tool === 'ping') {
+      if (PING_VALUES.test(w.slice(1))) i++;
+      continue;
+    }
+    const colon = w.indexOf(':');
+    const name = (colon === -1 ? w.slice(1) : w.slice(1, colon)).toLowerCase();
+    const inline = colon === -1 ? undefined : w.slice(colon + 1);
+    if (PS_SWITCHES.test(name)) continue;
+    const value = inline ?? words[++i] ?? '';
+    if (isTargetParam(name)) add(value);
+  }
+  return targets;
+}
+
 /**
  * A successful ping or connection test to a real destination after the adapter has a working
  * lease. Loopback and the PC's own address answer even with no network, so they do not count.
@@ -274,7 +307,7 @@ export function connectivityVerified(state: SystemState, ctx?: CommandContext): 
     // Test-NetConnection's SourceAddress are the PC itself, not the destination, so they are skipped
     ...out.matchAll(/^\S+\s+[^\s:]\S*\s+(\d+\.\d+\.\d+\.\d+)\s/gm),
   ].map(m => m[1] ?? m[2]);
-  const named = probe.split(/\s+/).slice(1).flatMap(w => w.split(',')).map(w => w.replace(/^["']|["']$/g, '')).filter(w => w && !w.startsWith('-'));
+  const named = probeTargets(tool, probe.split(/\s+/).slice(1));
   if ([...shown, ...named].some(isLocal)) return false;
   // -Quiet / -InformationLevel Quiet print only True or False, one per target
   const quiet = out.trim().split(/\s*\n\s*/);

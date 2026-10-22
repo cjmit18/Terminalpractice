@@ -60,6 +60,23 @@ test('a Command Prompt challenge in two steps', async ({ page }) => {
   await expect(page.getByText(/svchost_update\.exe, PID 3892/)).toBeVisible();
 });
 
+test('Reset machine starts a fresh attempt at a solved challenge', async ({ page }) => {
+  await page.goto('#/sandbox/challenge/bash-login-shells');
+  await runCommand(page, 'grep -c /bin/bash /etc/passwd');
+  await expect(page.getByRole('heading', { level: 2, name: 'Solved' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Reset machine' }).click();
+  await expect(page.getByRole('heading', { level: 2, name: 'Solved' })).toHaveCount(0);
+  // The list still remembers it was solved before
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('Solved');
+
+  // A wrong answer does not pass, and the right one solves it again
+  await runCommand(page, 'echo 2');
+  await expect(page.getByRole('heading', { level: 2, name: 'Solved' })).toHaveCount(0);
+  await runCommand(page, 'grep -c /bin/bash /etc/passwd');
+  await expect(page.getByRole('heading', { level: 2, name: 'Solved' })).toBeVisible();
+});
+
 test('an unknown challenge id falls back to the list', async ({ page }) => {
   await page.goto('#/sandbox/challenge/no-such-challenge');
   await expect(page).toHaveURL(/#\/sandbox\/challenge$/);

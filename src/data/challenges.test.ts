@@ -30,11 +30,11 @@ function machine(c: Challenge) {
 // Plausible near misses: the whole file, an echoed guess, the wrong count or filter
 const WRONG: Record<string, string[]> = {
   'bash-login-shells': ['cat /etc/passwd', 'echo 2', 'grep -c nologin /etc/passwd', 'wc -l /etc/passwd'],
-  'bash-sshd-line': ['cat /var/log/syslog', 'grep sshd /var/log/auth.log', 'grep nginx /var/log/syslog', 'echo "sshd[2410]: listening /var/log/syslog"'],
+  'bash-sshd-line': ['cat /var/log/syslog', 'grep sshd /var/log/auth.log', 'grep nginx /var/log/syslog', 'echo "sshd[2410]: listening /var/log/syslog"', "grep -o 'sshd\\[2410\\]' /var/log/syslog"],
   'bash-failed-count': ['wc -l /var/log/auth.log', 'grep -c sshd /var/log/syslog', 'echo 3', 'grep "Failed password" /var/log/auth.log'],
   'bash-suid-programs': ['ls -l /usr/bin', 'ls /usr/bin', 'find /usr/bin -perm -2000'],
   'bash-listening-ports': ['ps aux', 'ss -tan', 'cat /etc/hosts'],
-  'bash-name-servers': ['cat /etc/resolv.conf', 'grep search /etc/resolv.conf', 'grep nameserver /etc/hosts'],
+  'bash-name-servers': ['cat /etc/resolv.conf', 'grep search /etc/resolv.conf', 'grep nameserver /etc/hosts', "grep nameserver /etc/resolv.conf | sed 's/[0-9]/1/g'"],
   'bash-adm-group': ['cat /etc/group', 'grep student /etc/group', 'getent group sudo'],
   'bash-boot-usage': ['df -h', 'df /boot', 'du -sh /boot'],
   'cmd-port-4444-pid': ['netstat -ano', 'netstat -ano | findstr 445', 'echo 3892'],

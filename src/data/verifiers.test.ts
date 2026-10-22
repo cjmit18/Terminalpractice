@@ -390,6 +390,22 @@ test('net-verify-ping: loopback and APIPA do not count, real targets after the f
   assert.ok(!connectivityVerified(fixed, ctx('ipconfig /all', 'bytes=32 TTL=64')));
 });
 
+test('net-verify-ping: destinations are read from parameter binding, not every word', () => {
+  const fixed = fixedState();
+  // -ComputerName:value names the target too, so loopback in that form does not count
+  assert.ok(!connectivityVerified(fixed, ctx('Test-NetConnection -ComputerName:127.0.0.1 -InformationLevel Quiet', 'True')));
+  assert.ok(!connectivityVerified(fixed, ctx('Test-NetConnection -ComputerName 127.0.0.1 -InformationLevel Quiet', 'True')));
+  assert.ok(!connectivityVerified(fixed, ctx('tnc -cn localhost -InformationLevel Quiet', 'True')));
+  assert.ok(connectivityVerified(fixed, ctx('Test-NetConnection -ComputerName:8.8.8.8 -InformationLevel Quiet', 'True')));
+  assert.ok(connectivityVerified(fixed, ctx('Test-Connection -TargetName 8.8.8.8 -Quiet', 'True')));
+  // -Source is the PC itself, not where the probe went
+  assert.ok(connectivityVerified(fixed, ctx('Test-Connection 8.8.8.8 -Source WIN-CLIENT01',
+    'Source        Destination     IPV4Address      IPV6Address     Bytes    Time(ms)\n------        -----------     -----------      -----------     -----    --------\nWIN-CLIENT01  8.8.8.8         8.8.8.8                          32       12')));
+  // ping's own options: counts and the source address are not targets, slash or dash
+  assert.ok(connectivityVerified(fixed, ctx('ping -n 2 8.8.8.8', REPLY('8.8.8.8'))));
+  assert.ok(connectivityVerified(fixed, ctx('ping /n 2 -S 192.168.1.145 8.8.8.8', REPLY('8.8.8.8'))));
+});
+
 test('net-ipconfig-all: /all in any case, or -all', () => {
   const out = 'Windows IP Configuration\n\n   Host Name . . . : WIN-CLIENT01';
   for (const c of ['ipconfig /all', 'ipconfig -all', 'ipconfig /ALL', 'IPCONFIG /All']) assert.ok(ipconfigAllRun(ctx(c, out)), c);

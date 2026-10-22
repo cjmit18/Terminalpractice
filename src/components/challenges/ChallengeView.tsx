@@ -59,7 +59,10 @@ export const ChallengeView: React.FC<ChallengeViewProps> = ({ challenge, machine
   const { session, run, clearHistory, reset } = useShellSession(() => freshSession(machine), verify, record);
 
   const handleReset = () => {
+    // A fresh machine is a fresh attempt; the saved "solved before" fact stays
     lastOutcomeRef.current = undefined;
+    solvedRef.current = false;
+    setSolvedBy(null);
     reset(freshSession(machine));
     setResetCount(n => n + 1);
   };

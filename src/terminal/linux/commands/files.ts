@@ -225,8 +225,9 @@ function rm(ctx: LinuxContext): LinuxResult {
   const args = end === -1 ? ctx.args : ctx.args.slice(0, end);
   // after --, every argument is a file name, even one that starts with -
   const targets = [...args.filter(a => !a.startsWith('-')), ...(end === -1 ? [] : ctx.args.slice(end + 1))];
-  const recursive = args.some(a => /^-[a-zA-Z]*[rR]/.test(a));
-  const force = args.some(a => /^-[a-zA-Z]*f/.test(a));
+  // Long forms arrive already expanded (--rec → --recursive) by the option check
+  const recursive = args.some(a => /^-[a-zA-Z]*[rR]/.test(a) || a === '--recursive');
+  const force = args.some(a => /^-[a-zA-Z]*f/.test(a) || a === '--force');
 
   if (targets.length === 0) {
     if (force) return ctx.ok();

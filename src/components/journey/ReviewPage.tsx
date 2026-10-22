@@ -141,16 +141,19 @@ export const ReviewPage: React.FC<ReviewPageProps> = ({ paths, src, onAnswer }) 
   }
 
   if (finished) {
-    const right = answered.filter(a => a.right).length;
     const more = reviewQueue(paths, src).length > 0;
     return (
       <div className="max-w-3xl mx-auto w-full px-4 sm:px-6 py-8 sm:py-12">
         {header}
         <section aria-labelledby="review-done" className="mt-8 space-y-4 max-w-prose">
           <h2 id="review-done" ref={resultRef} tabIndex={-1} className="text-xl font-semibold focus:outline-none">
-            {right} of {answered.length} right.
+            Review complete.
           </h2>
+          <p className="text-[15px]">
+            Nice work practising. Questions you answered correctly return later, and the ones you missed come back sooner.
+          </p>
           <p className="text-[15px]">{comeBackText(answered.map(a => a.history))}</p>
+          <p className="text-[15px]">Keep learning at your own pace.</p>
           <div className="flex flex-wrap items-center gap-3">
             {back}
             {more && (
