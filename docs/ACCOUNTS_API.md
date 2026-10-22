@@ -60,11 +60,11 @@ All JSON. Errors: `{ "error": "<code>", "message": "<plain sentence>" }` with a 
 | `POST /api/account/password` | `{ currentPassword?, newPassword }` | 200; `currentPassword` required when one exists; other sessions ended |
 | `POST /api/account/email` | `{ email, password? }` | 202; adds or changes the email identity (verification sent) |
 | `DELETE /api/account/identities/:provider` | | 204; refused (409 `last_method`) if it is the only way to sign in |
-| `GET /api/account/export` | | the user's data as a JSON download |
-| `DELETE /api/account` | `{ confirm: "delete" }` | 204; deletes the user and everything linked |
-| `GET /api/progress` | | `{ items, epochs, settings }` (Phase 3 sync) |
-| `PUT /api/progress` | `{ items, epochs, settings? }` | merged `{ items, epochs, settings }` |
-| `POST /api/progress/reset` | `{ scope }` | `{ epochs }` |
+| `GET /api/account/export` | | the user's data as a JSON download, synced progress included (`progress: { items, epochs, settings }`) |
+| `DELETE /api/account` | `{ confirm: "delete" }` | 204; deletes the user and everything linked, synced progress included |
+| `GET /api/progress` | | `{ items, epochs, settings }` (see "Progress sync" below) |
+| `PUT /api/progress` | `{ items?, settings? }` (an `epochs` field is accepted and ignored: each item carries its own) | 200, the stored `{ items, epochs, settings }` after the merge |
+| `POST /api/progress/reset` | `{ scope, epoch? }` or `{ resets: [{ scope, epoch? }] }` | 200 `{ epochs }` |
 
 `PublicUser`: `{ id, name, login: string | null, email: string | null, emailVerified: boolean, avatarUrl: string | null }`
 (`avatarUrl` is kept from the built API; the app does not display it).
@@ -91,6 +91,59 @@ Email links point to the app: `#/account/verify?token=…` and `#/account/reset?
   `not_signed_in`. `?link=1` without a session answers 401 (plain text).
 - Google sign-in never fills `PublicUser.email`; the Google address is only the identity's label.
 - A later GitHub or Google sign-in no longer overwrites the display name (it is editable now).
+
+### Progress sync
+
+`worker/sync.ts` stores the rules of `src/lib/syncRules.ts` (shared with the app). All three routes
+need a session (401 `not_signed_in`); PUT and POST follow the shared rules above with a 512 KB body cap.
+
+- **Item**: `{ kind, key, scope, epoch, earnedAt, correct?, total? }`.
+  - `kind` is `objective` (key `<moduleId>/<objectiveId>`), `lesson` or `quiz` (key `<pathId>/<stepId>`).
+    Each id matches `[a-z0-9][a-z0-9._-]{0,63}`.
+  - `scope` is derived from the key and never taken from the client: `lab:<moduleId>` for objectives,
+    `path:<pathId>` for lessons and quizzes.
+  - `epoch` is the scope's epoch as the sending device knew it. The server keeps an uploaded item only
+    when that equals the scope's current epoch.
+  - `earnedAt` is client time in ms (0 when unknown), for display only.
+  - Quiz only: `correct` and `total`, integers with `0 <= correct <= total <= 1000`. The best score is
+    kept: the higher fraction, or the same fraction out of more questions.
+- **Epochs**: `{ "<scope>": n }`. A scope that is missing is at epoch 0. Epochs only go up and are never
+  removed.
+- **Reset**: `{ scope, epoch? }` for one scope, or `{ resets: [{ scope, epoch? }, …] }` for several.
+  - A reset raises the scope's epoch by one and deletes its items.
+  - With `epoch`, the reset applies only while the scope is still at that epoch, so a retried or
+    repeated reset does not reset twice.
+  - Answers `{ epochs }` with every scope of the user.
+- **Settings**: `{ "<field>": { value, updatedAt } }`. `updatedAt` is client time in ms, and for each
+  field the newest write wins. The fields are:
+  - `prefs`: activity prefs. Unknown pref fields are dropped. The allowed values are:
+    - `celebrations`: `quiet | off | lively`
+    - `showBadges`: boolean
+    - `weeklyGoal`: 0–7
+    - `sandboxHost`: hostname or `''`
+    - `promptStyle`: `standard | bracket | short | host-first`
+    - `bannerLine`: `none | calm | tip | loopback`
+    - `storyNotes`: boolean
+    - `defaultShell`: `bash | cmd | powershell`
+    - `termFontSize`: `s | m | l`
+  - `theme`: `system | light | dark`.
+  - `badges`: `{ badgeId: earnedAt }`.
+  - `practice`: YYYY-MM-DD days.
+  - `goalWeeks`: YYYY-MM-DD week starts.
+  - `cleared`: the time in ms of the last "Clear badges and activity".
+
+  Any other field or value outside these lists answers 400 `invalid_settings`.
+- **Caps**:
+  - 2000 items per PUT (413 `too_many_items`).
+  - 5000 items stored per user (413 `too_many_items`).
+  - 100 resets per request (413 `too_many_resets`).
+  - 2000 scopes with an epoch per user (413 `too_many_scopes`).
+  - In settings: 500 badges, 400 practice days and 2000 goal weeks.
+- **Errors**:
+  - `invalid_items` (400, a malformed item).
+  - `invalid_settings` (400).
+  - `invalid_scope` (400, a malformed scope or epoch, or no scope named).
+  - `conflict` (409, settings changed by another request at the same moment; retry).
 
 ### Error codes
 
