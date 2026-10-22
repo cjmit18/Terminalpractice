@@ -12,12 +12,18 @@ Covers hands-on objectives for:
 
 ## What's in the app
 
-- **12 guided labs** (5 Linux, 7 Windows). Each has a short scenario, a task list that is checked against the simulated system's real state, hints, exam tips and a walkthrough you can run step by step.
+- **Learn paths** (the start page, `#/learn`): four guided courses, one per exam (LPIC-1 101 and 102, CompTIA A+ Core 2, and Network+ and Security+ on Windows), plus "Your first terminal" for people who have never used one. Each exam path has five stages that unlock in order and mixes short lessons, the labs below and checkpoint quizzes.
+- **First-steps banner**: until anything is saved, the Learn page offers "Your first terminal"; once dismissed it stays hidden in that browser.
+- **Checkpoint quizzes**: multiple-choice questions at the end of each stage, with a pass mark and the best score kept.
+- **14 guided labs**: 6 Linux and 8 Windows, including a first-steps lab on each side. Each has a short scenario, a task list that is checked against the simulated system's real state, hints, exam tips and a walkthrough you can run step by step. Hints come as a ladder: a nudge first, then the command's shape, then the answer.
 - **Explanations when you are blocked**: when a command fails with "Permission denied", the terminal adds a short note saying which permission check failed and why.
 - **Sandbox**: free-form bash, Command Prompt and PowerShell sessions, with a file tree that shows the real simulated filesystem, permissions and owners.
 - **Simulators**: Active Directory Users and Computers, Group Policy Management, Disk Management, a network diagram and a file permission calculator.
-- **Command reference**: searchable pages with syntax, options, examples and exam notes.
-- **Progress is saved** in your browser, and every page has its own URL, so links and the back button work.
+- **Command reference**: searchable pages with syntax, options, examples and exam notes. The same pages answer `man`, `--help`, `help`, `/?` and `Get-Help` inside the terminal.
+- **Badges**: earned for a new ability or a curious act (reading a manual page, fixing an error, finishing a path), never for repeating a command. They survive resets.
+- **Celebrations**: a short note when you finish a task, a lab or a stage or earn a badge, and a recap at the end of a lab or stage.
+- **Game settings** (on the Learn page): show or hide badges, and set celebrations to Quiet, Off or Lively (Lively adds confetti for a finished stage or path, skipped when the system asks for reduced motion).
+- **Progress is saved** in your browser and kept in step between open tabs, and every page has its own URL, so links and the back button work.
 - **Light and dark themes** (follows your system unless you choose one).
 - **Phone support**: one pane at a time in labs, a key toolbar (`Tab`, `Ctrl+C`, arrows and the symbols phone keyboards hide) and an input that does not autocorrect commands.
 - **Installable and offline**: web app manifest, icons and a service worker. Fonts (IBM Plex Sans and Mono) are bundled, so nothing is fetched from third parties.
@@ -32,26 +38,39 @@ Covers hands-on objectives for:
 ## Project layout
 
 ```
-docs/DESIGN.md              # design brief: tokens, type, layout and copy rules for the UI
+docs/                       # DESIGN.md (UI tokens, type, layout, copy rules), sign-in setup and plan
 src/
+├── main.tsx                # entry: mounts the app, registers the service worker
 ├── App.tsx                 # routes, saved progress, page layout
-├── lib/                    # hash router, progress storage, theme, module helpers
+├── index.css               # Tailwind and the design tokens for both themes
+├── lib/                    # hash router, storage (progress, journey, activity, synced across tabs),
+│                           #   theme, account, celebrations, chunk reload after a deploy, API base
 ├── components/
-│   ├── lab/                # lab manual, shell session hook, file tree
-│   ├── sims/               # shared simulator UI pieces
-│   └── *.tsx               # header, catalog, lab runner, terminal, sandbox, simulators, reference
+│   ├── journey/            # Learn paths: path list, overview, lessons, quizzes, first-steps banner
+│   ├── lab/                # lab manual, page header, shell session hook, file tree
+│   ├── badges/             # badge list and names
+│   ├── celebrate/          # celebration notes, recaps, confetti
+│   ├── settings/           # game settings (badges, celebrations)
+│   ├── sims/               # shared UI pieces (buttons, code blocks, segmented controls)
+│   └── *.tsx               # header, account menu, lab list and runner, terminal, sandbox,
+│                           #   simulators, command reference, error boundary
 ├── terminal/
 │   ├── registry.ts         # command registry shared by both engines
 │   ├── chain.ts            # &&, ||, ; runner
-│   ├── parser.ts           # tokenizer, pipelines, redirects
+│   ├── parser.ts           # CMD and PowerShell tokenizer, pipelines, redirects (bash: linux/shell.ts)
 │   ├── filesystem.ts       # virtual filesystem, permission checks and explanations
-│   ├── linux/              # bash context, input helpers, awk, commands by area
+│   ├── linux/              # bash syntax and expansion (shell.ts), context, input helpers, awk,
+│   │                       #   globbing, scripts, commands by area
 │   ├── windows/            # CMD commands by area, PowerShell, DiskPart, variables
+│   ├── docs/               # built-in documentation and its renderers (man, --help, /?, Get-Help)
 │   ├── linuxEngine.ts      # executeLinuxLine
 │   ├── windowsEngine.ts    # executeWindowsLine
 │   └── *.test.ts           # unit, regression and walkthrough replay tests
-├── data/                   # labs, Windows PBQs, command reference
+├── data/                   # labs, Windows PBQs, learning paths, badges, verifiers, command reference
 └── types/
+worker/                     # Cloudflare Worker: the optional account API (/api/*) and its tests
+migrations/                 # D1 database schema
+e2e/                        # Playwright browser tests
 public/                     # web app manifest, service worker, icons
 ```
 
@@ -62,17 +81,21 @@ Requires Node.js 22 or newer.
 ```bash
 npm ci
 npm run dev        # dev server on http://localhost:3000
-npm test           # run the test suite
-npm run lint       # typecheck (tsc --noEmit)
-npm run build      # typecheck, then production build into dist/
+npm test           # unit tests (app and worker)
+npm run lint       # three typechecks: the app, the worker, and the worker tests (no ESLint)
+npm run build      # typecheck the app, then production build into dist/
 npm run preview    # serve the production build
+npm run e2e        # browser tests (builds, then serves on port 4173)
 ```
+
+Before the first `npm run e2e`, install the browser with `npx playwright install chromium`. If a Chromium is already installed elsewhere (a sandbox, for example), point `PW_CHROMIUM_PATH` at it instead. The tests run on a desktop and a phone (Pixel 7) profile.
 
 ### Tests
 
-`npm test` runs the Node test runner through `tsx`. Besides unit tests for the parser, filesystem and both engines, it includes:
+`npm test` runs the Node test runner through `tsx` over every `*.test.ts` in `src/` and `worker/`. Besides unit tests for the parsers, filesystem, both engines, the learning paths and badges, it includes:
 
-- **Walkthrough replay:** every module's own solution steps are run through the engine, and every objective's verifier must pass. A module that cannot be completed fails the build.
+- **Walkthrough replay:** every module's own solution steps are run through the engine, and every objective's verifier must pass. A module that cannot be completed fails `npm test` (and so the Cloudflare build, which runs the tests first).
+- **Account API tests:** `worker/api.test.ts` (see below).
 - **Regression tests** for each bug found in review (`ls -ld`, `chmod -R` with files you do not own, `tar` flag parsing, `usermod` with unknown users, `id` group numbers, CMD `2>&1`, `ls -l` on unreadable files).
 
 ### Adding a command
@@ -93,9 +116,11 @@ The app is static and works without any server. On Cloudflare, a small Worker ad
 
 ### Cloudflare Workers
 
-`wrangler.jsonc` describes the Worker `terminuscli`, which serves https://terminuscli.com: it serves `dist/` as static assets and runs `worker/index.ts` only for `/api/*` (`run_worker_first`), with a D1 database (`DB`) for accounts. Cloudflare Workers Builds is connected to this repository and builds on every push.
+`wrangler.jsonc` describes the Worker `terminuscli`, which serves https://terminuscli.com: it serves `dist/` as static assets and runs `worker/index.ts` only for `/api/*` (`run_worker_first`), with a D1 database (`DB`) for accounts. Cloudflare Workers Builds is connected to this repository: pushes to the production branch deploy, and pull-request builds run `wrangler preview`.
 
-- `npm run deploy`: applies new database migrations (`migrations/`) to the remote D1 database, then `wrangler deploy` (which runs `npm run build` first). Run `npx wrangler login` once before deploying from your machine. Set the same command as the **Deploy command** in the Workers Builds settings.
+- Before every deploy or preview, wrangler runs the `build.command` from `wrangler.jsonc`: `npm test && npm run lint && VITE_BASE=/ npm run build`. A failing test or typecheck stops the deploy. The build image installs devDependencies, which is where `tsx`, `typescript` and `wrangler` come from.
+- `npm run deploy`: applies new database migrations (`migrations/`) to the remote D1 database, then `wrangler deploy`. Run `npx wrangler login` once before deploying from your machine. Set the same command as the **Deploy command** in the Workers Builds settings.
+- **Previews:** the `previews` block in `wrangler.jsonc` is what `wrangler preview` uses (nothing is inherited from the top level). It turns sign-in off (`GITHUB_CLIENT_ID` empty) and binds a separate D1 database, `terminuscli-preview`, so a preview link can never touch real accounts. No migrations are applied to that database on purpose: with sign-in off nothing writes to it, and `/api/me` answers "signed out" when the account tables are missing, so a stray session cookie gets the normal signed-out answer instead of an error.
 - `npm run dev:cf`: the full stack locally (static app, Worker and a local D1 copy) at <http://localhost:8787>.
 - Node 22 for Workers Builds comes from `.node-version`.
 - Cloudflare builds use `VITE_BASE=/` (set in `wrangler.jsonc`), so a deep link such as `/old/path` still loads `/assets/...`; the default relative base keeps GitHub Pages' `/<repo>/` path working.
@@ -105,11 +130,11 @@ The app is static and works without any server. On Cloudflare, a small Worker ad
 - `worker/api.ts`: GitHub sign-in (`/api/auth/github/start`, `/api/auth/github/callback`), `/api/me`, `/api/logout`. Sessions are random tokens in an `HttpOnly; Secure; SameSite=Lax` `__Host-` cookie; D1 stores only their SHA-256.
 - The GitHub token is used once to read the public profile and never stored. No passwords, no email address.
 - Sign-in stays hidden until the GitHub App is configured: see [docs/GITHUB_SIGNIN_SETUP.md](docs/GITHUB_SIGNIN_SETUP.md). The plan for the next phases (progress sync, account page) is in [docs/LOGIN_PLAN.md](docs/LOGIN_PLAN.md).
-- The callback address is built from the address the site was reached on, so moving to a custom domain needs no code change.
+- The callback address is built from the address the site was reached on, so another domain needs no code change. A second copy runs at https://terminus.wayne-mitchell.com (Worker `terminus-wm`, deployed from the `site/wayne-mitchell` branch); see "Adding another domain" in the setup guide.
 - Tests: `worker/api.test.ts` runs the API against Node's built-in SQLite with the real migration and a fake GitHub; `e2e/account.spec.ts` covers the header control.
 
 ### GitHub Pages
 
-Pushes to `main` also run `.github/workflows/deploy.yml`, which tests, builds and publishes `dist/` to GitHub Pages, with `VITE_ACCOUNTS=off` because that host has no account API. One-time setup: in the repository settings, under **Pages**, set **Source** to **GitHub Actions**. The build uses a relative base path, so it works from a project URL such as `https://<user>.github.io/<repo>/`. If Cloudflare becomes the only host, delete that workflow and turn Pages off.
+After CI passes on a push to `main`, `.github/workflows/deploy.yml` typechecks, tests, builds and publishes `dist/` to GitHub Pages, with `VITE_ACCOUNTS=off` because that host has no account API. One-time setup: in the repository settings, under **Pages**, set **Source** to **GitHub Actions**. The build uses a relative base path, so it works from a project URL such as `https://<user>.github.io/<repo>/`. If Cloudflare becomes the only host, delete that workflow and turn Pages off.
 
-CI (`.github/workflows/ci.yml`) runs typecheck, tests, build and the browser tests on every push and pull request.
+CI (`.github/workflows/ci.yml`) runs the typechecks, tests, build and the browser tests on pushes and pull requests to `main` (and `master`). Pushes to other branches get no CI run of their own; open a pull request to test them.

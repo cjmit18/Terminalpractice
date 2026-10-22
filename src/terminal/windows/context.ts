@@ -70,7 +70,7 @@ export class WindowsContext {
   protectedReason(absPath: string, action: 'read' | 'write'): string | null {
     if (this.isAdmin) return null;
     const p = absPath.toLowerCase();
-    const who = `You are '${this.state.currentUser}', a standard user (not elevated).`;
+    const who = `You are '${this.state.currentUser}' in a prompt that is not elevated.`;
     if (action === 'write' && (p === 'c:\\windows' || p.startsWith('c:\\windows\\') || p.startsWith('c:\\program files'))) {
       return `${who} ${absPath.split('\\').slice(0, 2).join('\\')} is protected: only Administrators and SYSTEM may change files there, so run the prompt as administrator.`;
     }
@@ -92,7 +92,6 @@ export function driveCwd(state: SystemState, cwd: string, drive: string): string
   return state.envVars?.[`=${d}`] ?? `${d}\\`;
 }
 
-export type WindowsHandler =(ctx: WindowsContext) => WindowsResult;
 
 /** CMD built-ins and external tools, keyed case-insensitively. */
 export const cmdCommands = new CommandRegistry<WindowsContext, WindowsResult>(true);

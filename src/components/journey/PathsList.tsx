@@ -10,13 +10,16 @@ import {
   pathPercent,
   pathStarted,
   resumeTarget,
+  reviewStatus,
   stepTitle,
+  whenText,
 } from '../../lib/journey';
-import { learnHref } from '../../lib/router';
+import { learnHref, reviewHref } from '../../lib/router';
 import { ProgressBar, primaryLinkClass, secondaryLinkClass, textLinkClass } from './shared';
 import { pathProgressText, stagesText } from './progressText';
 import { FirstStepsBanner } from './FirstStepsBanner';
 import { BadgesSection } from '../badges/BadgesSection';
+import { TodayAndWeek } from '../celebrate/TodayAndWeek';
 
 interface PathsListProps {
   paths: LearningPath[];
@@ -53,6 +56,9 @@ export const PathsList: React.FC<PathsListProps> = ({ paths, src, modulesById, p
           <span className="text-muted"> in {resume.path.title}</span>
         </p>
       )}
+
+      <ReviewEntry paths={paths} src={src} />
+      <TodayAndWeek />
 
       <ul className="mt-8 border-t border-line">
         {paths.map(path => {
@@ -130,5 +136,30 @@ export const PathsList: React.FC<PathsListProps> = ({ paths, src, modulesById, p
         </p>
       </section>
     </div>
+  );
+};
+
+/**
+ * The way into the review queue, once the learner has answered checkpoint questions. Says whether
+ * anything is ready without nagging: no count of overdue questions.
+ */
+const ReviewEntry: React.FC<{ paths: LearningPath[]; src: CompletionSource }> = ({ paths, src }) => {
+  const { due, nextAt } = reviewStatus(paths, src);
+  if (due === 0 && nextAt === null) return null;
+  return (
+    <p className="mt-4 text-[15px]">
+      {due > 0 ? (
+        <>
+          <a href={reviewHref()} className={`${textLinkClass} font-medium`}>
+            Review a few questions
+          </a>
+          <span className="text-muted"> from the checkpoints you have taken, spaced out so they stick.</span>
+        </>
+      ) : (
+        <span className="text-muted">
+          Nothing to review right now. The next checkpoint question comes back {whenText(nextAt!)}.
+        </span>
+      )}
+    </p>
   );
 };

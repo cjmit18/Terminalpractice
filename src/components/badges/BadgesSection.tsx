@@ -4,6 +4,8 @@ import { Badge, BadgeFamily, FAMILY_LABEL } from '../../data/badges';
 import { useGameLayer } from '../celebrate/GameLayer';
 import { GameSettings } from '../settings/GameSettings';
 import { BadgeName } from './BadgeName';
+import { ProgressSummary } from './ProgressSummary';
+import { badgeHref } from '../../lib/router';
 
 const FAMILIES: BadgeFamily[] = ['curiosity', 'resilience', 'milestone'];
 
@@ -30,6 +32,7 @@ export const BadgesSection: React.FC = () => {
           Badges and celebrations
         </h2>
         <p className="text-sm text-muted">Badges are hidden. You can show them again here.</p>
+        <ProgressSummary />
         <GameSettings />
       </section>
     );
@@ -94,6 +97,7 @@ export const BadgesSection: React.FC = () => {
         </details>
       )}
 
+      <ProgressSummary />
       <GameSettings />
     </section>
   );
@@ -104,7 +108,9 @@ const EarnedBadge: React.FC<{ badge: Badge; at: number }> = ({ badge, at }) => (
     <BadgeCheck className="size-5 mt-0.5 shrink-0 text-ok" aria-hidden="true" />
     <p className="min-w-0 text-[15px]">
       <span className="sr-only">Badge earned: </span>
-      <BadgeName badge={badge} className="font-medium text-text" />
+      <a href={badgeHref(badge.id)} className="text-text hover:text-accent underline-offset-2 hover:underline rounded-sm">
+        <BadgeName badge={badge} className="font-medium" />
+      </a>
       <span className="sr-only">. </span>
       <span className="block text-sm text-muted">
         {badge.description}

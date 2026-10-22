@@ -1,16 +1,11 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
-import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { BottomNav, Header } from './components/Header';
 import { ModuleSelector } from './components/ModuleSelector';
 import { ModuleRunner } from './components/ModuleRunner';
 import { ExamModule } from './types/modules';
 import { SystemState } from './types/terminal';
-import { Route, Section, TrackSection, isTrackSection, replaceRoute, routeHref, useHashRoute } from './lib/router';
+import { Route, Section, TrackSection, isTrackSection, navSection, replaceRoute, routeHref, useHashRoute } from './lib/router';
 import { completeObjective, countDone, progressCodec, PROGRESS_KEY, resetModules, sanitizeProgress } from './lib/progress';
 import { useSyncedStorage } from './lib/syncedStorage';
 import { useTheme } from './lib/theme';
@@ -25,6 +20,7 @@ import {
   labPlacements,
   markRead,
   quizPassed,
+  recordAnswer,
   recordQuizScore,
   resetPath,
   sanitizeJourney,
@@ -37,10 +33,13 @@ import { LEARNING_PATHS } from './data/paths';
 import { PathsList } from './components/journey/PathsList';
 import { PathOverview } from './components/journey/PathOverview';
 import { StepPage } from './components/journey/StepPage';
+import { ReviewPage } from './components/journey/ReviewPage';
 import { PageErrorBoundary } from './components/PageErrorBoundary';
 import { lazyWithReload, reloadOnPreloadError } from './lib/chunkReload';
-import { ACTIVITY_KEY, activityCodec, addFacts, quizMissFact, resetFact } from './lib/activity';
+import { ACTIVITY_KEY, activityCodec, addFacts, addPractice, quizMissFact, resetFact } from './lib/activity';
 import { GameLayerProvider } from './components/celebrate/GameLayer';
+import { CHALLENGES_BY_ID } from './data/challenges';
+import { BadgePage } from './components/badges/BadgePage';
 
 const MODULES_BY_ID = new Map(ALL_MODULES.map(m => [m.id, m]));
 // How lab progress and the journey are saved and shared with the app's other open tabs
@@ -55,6 +54,9 @@ const LAB_PLACEMENTS = labPlacements(LEARNING_PATHS);
 reloadOnPreloadError();
 const SimulatorsHub = lazyWithReload(() => import('./components/SimulatorsHub').then(m => ({ default: m.SimulatorsHub })));
 const SandboxMode = lazyWithReload(() => import('./components/SandboxMode').then(m => ({ default: m.SandboxMode })));
+const ChallengesPage = lazyWithReload(() =>
+  import('./components/challenges/ChallengesPage').then(m => ({ default: m.ChallengesPage })),
+);
 const CommandEncyclopedia = lazyWithReload(() =>
   import('./components/CommandEncyclopedia').then(m => ({ default: m.CommandEncyclopedia })),
 );
@@ -215,9 +217,13 @@ export default function App() {
   const trackModules = track ? TRACK_MODULES[track] : [];
   const activeModule = moduleId ? trackModules.find(m => m.id === moduleId) ?? null : null;
   const routeKey = routeHref(route);
+  // #/sandbox/challenge[/<id>]: the mini challenges
+  const challengeRoute = route.section === 'sandbox' && 'challengeId' in route ? route : null;
+  const challengeTitle = challengeRoute?.challengeId ? CHALLENGES_BY_ID.get(challengeRoute.challengeId)?.title : undefined;
 
   // Learning path routes
   const learnRoute = route.section === 'learn' ? route : null;
+  const reviewOpen = learnRoute?.page === 'review';
   const activePath = learnRoute?.pathId ? LEARNING_PATHS.find(p => p.id === learnRoute.pathId) ?? null : null;
   // Memoized so a rerender (e.g. another tab's journey save) is not mistaken for opening the step again
   const routeStepId = learnRoute?.stepId;
@@ -265,18 +271,21 @@ export default function App() {
       activeModule ? `${topicLabel(activeModule)} ${activeModule.title}` : null,
       activeStep ? stepTitle(activeStep.step, MODULES_BY_ID) : null,
       activePath?.title,
-      PAGE_TITLES[route.section],
+      challengeTitle,
+      challengeRoute ? 'Challenges' : null,
+      reviewOpen ? 'Review' : null,
+      route.section === 'badge' ? 'Badge' : PAGE_TITLES[route.section],
       'Terminus CertSim',
     ];
     document.title = parts.filter(Boolean).join(' · ');
-  }, [routeKey, activeModule, activePath, activeStep, route.section]);
+  }, [routeKey, activeModule, activePath, activeStep, route.section, challengeTitle, challengeRoute, reviewOpen]);
 
   const handleObjectiveComplete = (moduleId: string, objectiveId: string) =>
     setProgressRecord(prev => completeObjective(prev, moduleId, objectiveId));
 
   const handleMarkRead = (pathId: string, stepId: string) => {
     setJourney(j => markRead(j, pathId, stepId));
-    setActivity(a => addFacts(a, []));
+    setActivity(a => addPractice(a, []));
   };
   const handleQuizScore = (pathId: string, stepId: string, score: QuizScore) => {
     const path = LEARNING_PATHS.find(p => p.id === pathId);
@@ -287,8 +296,12 @@ export default function App() {
       !quizPassed(score, step.passMark) &&
       !quizPassed(journey.quiz[stepKey(pathId, stepId)], step.passMark);
     setJourney(j => recordQuizScore(j, pathId, stepId, score));
-    setActivity(a => addFacts(a, missed ? [quizMissFact(pathId, stepId)] : []));
+    // Any quiz attempt counts toward the weekly goal
+    setActivity(a => addPractice(a, missed ? [quizMissFact(pathId, stepId)] : []));
   };
+  // Each checkpoint or review answer, for the review queue
+  const handleAnswer = (pathId: string, questionId: string, right: boolean) =>
+    setJourney(j => recordAnswer(j, pathId, questionId, right));
 
   const resetTrackProgress = (t: TrackSection) => {
     const ids = TRACK_MODULES[t].map(m => m.id);
@@ -349,7 +362,7 @@ export default function App() {
       </a>
 
       <Header
-        current={route.section}
+        current={navSection(route.section)}
         hrefs={hrefs}
         tasksDone={tasksDone}
         tasksTotal={tasksTotal}
@@ -359,7 +372,11 @@ export default function App() {
 
       <main id="main" ref={mainRef} tabIndex={-1} className="flex-1 min-h-0 overflow-y-auto focus:outline-none">
         <PageErrorBoundary resetKey={routeKey}>
-        {learnRoute && !learnRoute.pathId && <PathsList paths={LEARNING_PATHS} src={src} modulesById={MODULES_BY_ID} progress={progress} />}
+        {reviewOpen && <ReviewPage paths={LEARNING_PATHS} src={src} onAnswer={handleAnswer} />}
+
+        {learnRoute && !learnRoute.pathId && !reviewOpen && (
+          <PathsList paths={LEARNING_PATHS} src={src} modulesById={MODULES_BY_ID} progress={progress} />
+        )}
 
         {activePath && !learnRoute?.stepId && (
           <PathOverview
@@ -383,6 +400,7 @@ export default function App() {
             onObjectiveComplete={handleObjectiveComplete}
             onMarkRead={handleMarkRead}
             onQuizScore={handleQuizScore}
+            onAnswer={handleAnswer}
           />
         )}
 
@@ -414,9 +432,15 @@ export default function App() {
           </Suspense>
         )}
 
-        {route.section === 'sandbox' && (
+        {route.section === 'sandbox' && !challengeRoute && (
           <Suspense fallback={loading}>
             <SandboxMode />
+          </Suspense>
+        )}
+
+        {challengeRoute && (
+          <Suspense fallback={loading}>
+            <ChallengesPage challengeId={challengeRoute.challengeId} />
           </Suspense>
         )}
 
@@ -425,10 +449,12 @@ export default function App() {
             <CommandEncyclopedia />
           </Suspense>
         )}
+
+        {route.section === 'badge' && <BadgePage badgeId={route.badgeId} />}
         </PageErrorBoundary>
       </main>
 
-      <BottomNav current={route.section} hrefs={hrefs} labsHref={hrefs[lastTrack]} />
+      <BottomNav current={navSection(route.section)} hrefs={hrefs} labsHref={hrefs[lastTrack]} />
     </div>
     </GameLayerProvider>
   );

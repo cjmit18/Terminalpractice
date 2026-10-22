@@ -1,24 +1,25 @@
 import React, { useState } from 'react';
-import { ArrowRight, Check, ChevronLeft, ChevronRight, Lock } from 'lucide-react';
+import { ArrowRight, Check, ChevronLeft, ChevronRight } from 'lucide-react';
 import { ExamModule } from '../../types/modules';
-import { LearningPath, PathStep } from '../../types/paths';
+import { LearningPath, PathStage, PathStep } from '../../types/paths';
 import {
   CompletionSource,
   QuizScore,
   StepLocation,
   allSteps,
   currentStageIndex,
+  lessonsToTestOut,
   markRead,
   nextStep,
+  quizPassed,
   stageComplete,
-  stageUnlocked,
   stepAfter,
   stepComplete,
-  stepSatisfied,
   stepKey,
   stepMinutes,
   stepTitle,
   stepAt,
+  suggestedAfter,
 } from '../../lib/journey';
 import { learnHref } from '../../lib/router';
 import { ModuleRunner } from '../ModuleRunner';
@@ -36,13 +37,18 @@ interface StepPageProps {
   onObjectiveComplete: (moduleId: string, objectiveId: string) => void;
   onMarkRead: (pathId: string, stepId: string) => void;
   onQuizScore: (pathId: string, stepId: string, score: QuizScore) => void;
+  /** Each checkpoint answer as it is checked, for the review queue */
+  onAnswer?: (pathId: string, questionId: string, right: boolean) => void;
 }
 
 /** #/learn/<pathId>/<stepId> */
 export const StepPage: React.FC<StepPageProps> = props => {
   const { path, loc, src, modulesById } = props;
   const { step } = loc;
-  const unlocked = stageUnlocked(path, loc.stageIndex, src);
+  // A stage ahead of the suggested order is open, with a gentle note instead of a lock
+  const aheadOf = suggestedAfter(path, loc.stageIndex, src);
+  // Set when passing this checkpoint marked the stage's lessons as known ("test out")
+  const [passedNote, setPassedNote] = useState<string | null>(null);
   // Did finishing this step, on this visit, clear its stage (or the whole path)?
   const stageDone = stageComplete(path.id, loc.stage, src);
   const [stageDoneAtOpen] = useState(stageDone);
@@ -57,16 +63,12 @@ export const StepPage: React.FC<StepPageProps> = props => {
       : { href: learnHref(path.id), title: `${path.title} overview` };
   };
 
-  const bar = <StepBar path={path} loc={loc} modulesById={modulesById} />;
-
-  if (!unlocked) {
-    return (
-      <>
-        {bar}
-        <LockedStep path={path} loc={loc} src={src} modulesById={modulesById} />
-      </>
-    );
-  }
+  const bar = (
+    <>
+      <StepBar path={path} loc={loc} modulesById={modulesById} />
+      {aheadOf && <SuggestedBanner path={path} loc={loc} after={aheadOf} src={src} modulesById={modulesById} />}
+    </>
+  );
 
   if (step.kind === 'lab') {
     const mod = modulesById.get(step.moduleId);
@@ -173,7 +175,21 @@ export const StepPage: React.FC<StepPageProps> = props => {
             key={`${path.id}/${step.id}`}
             step={step}
             best={src.journey.quiz[stepKey(path.id, step.id)]}
-            onScore={score => props.onQuizScore(path.id, step.id, score)}
+            onScore={score => {
+              props.onQuizScore(path.id, step.id, score);
+              // Test out: passing the checkpoint marks the stage's lessons as known
+              const known = quizPassed(score, step.passMark) ? lessonsToTestOut(path, loc.stageIndex, src.journey) : [];
+              for (const id of known) props.onMarkRead(path.id, id);
+              setPassedNote(
+                known.length === 0
+                  ? null
+                  : known.length === 1
+                    ? 'You passed the checkpoint, so the lesson in this stage is marked as known.'
+                    : `You passed the checkpoint, so the ${known.length} lessons in this stage are marked as known.`,
+              );
+            }}
+            onAnswer={props.onAnswer ? (qid, right) => props.onAnswer?.(path.id, qid, right) : undefined}
+            passedNote={passedNote}
             next={nextHref(src)}
           />
           {justCleared && <StageRecap path={path} stageIndex={loc.stageIndex} src={src} modulesById={modulesById} />}
@@ -266,57 +282,34 @@ const StepLink: React.FC<{
   );
 };
 
-/** A step in a stage that is not open yet: say what opens it and where to go instead. */
-const LockedStep: React.FC<{
+/**
+ * A step in a stage ahead of the suggested order. Nothing stops the learner; the note says what
+ * the suggested order is and links to the next suggested step.
+ */
+const SuggestedBanner: React.FC<{
   path: LearningPath;
   loc: StepLocation;
+  after: PathStage;
   src: CompletionSource;
   modulesById: Map<string, ExamModule>;
-}> = ({ path, loc, src, modulesById }) => {
-  const prevStage = path.stages[loc.stageIndex - 1];
+}> = ({ path, loc, after, src, modulesById }) => {
   const next = nextStep(path, src);
-  const todo = next ? next.stage.steps.filter(s => !stepSatisfied(path.id, next.stage, s, src)) : [];
-
   return (
-    <div className="max-w-3xl mx-auto w-full px-4 sm:px-6 py-8 sm:py-12 space-y-6">
-      <header className="space-y-1">
-        <p className="text-sm text-muted">
-          {KIND_LABEL[loc.step.kind]} · Stage {loc.stageIndex + 1}: {loc.stage.title}
-        </p>
-        <h1 className="text-2xl font-semibold leading-snug">{stepTitle(loc.step, modulesById)}</h1>
-      </header>
-
-      <p className="flex items-start gap-2 text-[15px] max-w-prose">
-        <Lock className="w-4 h-4 mt-1 shrink-0 text-muted" aria-hidden="true" />
-        <span>
-          This step opens once you finish Stage {loc.stageIndex}, {prevStage?.title}.
-        </span>
+    <div role="note" className="shrink-0 px-4 sm:px-6 py-2.5 border-b border-line bg-surface">
+      <p className="max-w-3xl text-sm text-text">
+        Suggested after {after.title}. Go ahead if you know it already.
+        {loc.step.kind === 'quiz' && ' Passing this checkpoint marks the lessons in this stage as known.'}
+        {next && (
+          <span className="text-muted">
+            {' '}
+            Next in the suggested order:{' '}
+            <a href={learnHref(path.id, next.step.id)} className={textLinkClass}>
+              {stepTitle(next.step, modulesById)}
+            </a>
+            .
+          </span>
+        )}
       </p>
-
-      {next && todo.length > 0 && (
-        <section aria-labelledby="locked-todo" className="space-y-2 max-w-prose">
-          <h2 id="locked-todo" className="text-base font-semibold">
-            Still to do in {next.stage.title}
-          </h2>
-          <ul className="space-y-1">
-            {todo.map(s => (
-              <li key={s.id} className="text-[15px]">
-                <a href={learnHref(path.id, s.id)} className={textLinkClass}>
-                  {stepTitle(s, modulesById)}
-                </a>
-                <span className="text-sm text-muted"> · {KIND_LABEL[s.kind]}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {next && (
-        <a href={learnHref(path.id, next.step.id)} className={primaryLinkClass}>
-          Go to {stepTitle(next.step, modulesById)}
-          <ArrowRight className="w-4 h-4" aria-hidden="true" />
-        </a>
-      )}
     </div>
   );
 };
