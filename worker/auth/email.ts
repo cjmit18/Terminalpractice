@@ -1,9 +1,10 @@
-// Email + password accounts: sign up and sign in. Verifying the address and resetting a password come next.
-import { HttpError, ipSubject, isUniqueViolation, json, str, type Db, type Route, type RouteContext } from '../http';
+// Email + password accounts: sign up, sign in, and confirm the address. Resetting a password comes next.
+import { HttpError, appOrigin, inBackground, ipSubject, isUniqueViolation, json, str, type Db, type Route, type RouteContext } from '../http';
+import { sendEmail, verificationEmail } from '../mail';
 import { hashPassword, passwordProblem, verifyAgainstDummy, verifyPassword } from '../password';
 import { LIMITS, countLimit, enforceLimit, rateLimited } from '../ratelimit';
-import { EMAIL_CLAIM_TTL, createSession, endIncomingSession, loadUser, sessionCookie, staleEmailClaim, toPublicUser } from '../session';
-import { revokeTokens } from '../tokens';
+import { EMAIL_CLAIM_TTL, createSession, endIncomingSession, loadUser, requireUser, sessionCookie, staleEmailClaim, toPublicUser } from '../session';
+import { consumeToken, issueToken, revokeTokens, tokenFailure } from '../tokens';
 
 const INVALID_CREDENTIALS = () => new HttpError(401, 'invalid_credentials', 'That email and password do not match an account.');
 
@@ -59,6 +60,12 @@ export function requireStrongPassword(password: string, email: string | null, di
   if (problem) throw new HttpError(400, problem.code, problem.message);
 }
 
+/** Issues a verification token and emails the link (after the answer is sent, when the platform allows it) */
+export async function sendVerification(c: RouteContext, userId: string, email: string): Promise<void> {
+  const token = await issueToken(c.env.DB, userId, 'verify', c.deps.now());
+  await inBackground(c.deps, () => sendEmail(c.env, c.deps, verificationEmail(appOrigin(c), email, token)));
+}
+
 async function register(c: RouteContext): Promise<Response> {
   const now = c.deps.now();
   await enforceLimit(c.env, LIMITS.registerIp, ipSubject(c.request), now);
@@ -93,6 +100,7 @@ async function register(c: RouteContext): Promise<Response> {
   // A sign-up replaces whatever session this browser had
   await endIncomingSession(c);
   const session = await createSession(c.env.DB, id, now);
+  await sendVerification(c, id, email);
   const user = await loadUser(c.env.DB, id);
   return json({ user: toPublicUser(user!) }, 201, { 'Set-Cookie': sessionCookie(session) });
 }
@@ -129,6 +137,34 @@ async function login(c: RouteContext): Promise<Response> {
 }
 
 /**
+ * POST /api/auth/email/verify { token }: the link from the email confirms the address. It does not sign the
+ * browser in: whoever opens the link proves the inbox, not that they may use the account here.
+ */
+async function verify(c: RouteContext): Promise<Response> {
+  const now = c.deps.now();
+  const token = str(await c.body(), 'token', 200);
+  const userId = await consumeToken(c.env.DB, token, 'verify', now);
+  if (!userId) {
+    throw (await tokenFailure(c.env.DB, token, 'verify', now)) === 'token_expired'
+      ? new HttpError(400, 'token_expired', 'This link has expired. Ask for a new one.')
+      : new HttpError(400, 'invalid_token', 'This link is invalid or was already used. Ask for a new one.');
+  }
+  await c.env.DB.prepare('UPDATE users SET email_verified_at = COALESCE(email_verified_at, ?) WHERE id = ? AND email IS NOT NULL')
+    .bind(now, userId)
+    .run();
+  return json({ ok: true });
+}
+
+/** POST /api/auth/email/resend-verification (signed in): a new link, at most 3 an hour; the older ones stop working */
+async function resendVerification(c: RouteContext): Promise<Response> {
+  const { user } = await requireUser(c);
+  await enforceLimit(c.env, LIMITS.resendVerification, user.id, c.deps.now());
+  if (!user.email) throw new HttpError(400, 'no_email', 'Add an email address to your account first.');
+  if (user.email_verified_at === null) await sendVerification(c, user.id, user.email);
+  return json({ ok: true }, 202);
+}
+
+/**
  * Makes `email` free for a new owner when its holder's claim has lapsed (unverified and set more than 24 h
  * ago): the holder loses the address, its password (which only signed in with that address) and its
  * pending links. Returns whether the address is free now; false when someone holds it validly.
@@ -156,4 +192,6 @@ export async function releaseStaleClaim(db: Db, email: string, now: number, exce
 export const emailRoutes: Route[] = [
   { method: 'POST', path: '/api/auth/email/register', handler: register },
   { method: 'POST', path: '/api/auth/email/login', handler: login },
+  { method: 'POST', path: '/api/auth/email/verify', handler: verify },
+  { method: 'POST', path: '/api/auth/email/resend-verification', handler: resendVerification },
 ];

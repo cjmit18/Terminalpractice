@@ -1,54 +1,10 @@
 // Email sign-up and sign-in through the API, on Node's SQLite with every migration applied.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
-import { DatabaseSync } from 'node:sqlite';
-import { handleApi, type ApiEnv, type Db, type DbStatement } from './api.ts';
+import type { Db } from './api.ts';
 import { normalizeEmail, releaseStaleClaim } from './auth/email.ts';
 import { DAY } from './session.ts';
-
-const ORIGIN = 'https://terminuscli.com';
-const PASSWORD = 'correct horse battery staple';
-
-function testDb(): Db & { raw: DatabaseSync } {
-  const raw = new DatabaseSync(':memory:');
-  raw.exec('PRAGMA foreign_keys = ON;');
-  for (const name of readdirSync(new URL('../migrations/', import.meta.url)).filter(f => f.endsWith('.sql')).sort()) {
-    raw.exec(readFileSync(new URL(`../migrations/${name}`, import.meta.url), 'utf8'));
-  }
-  const statement = (sql: string, values: unknown[] = []): DbStatement => ({
-    bind: (...v) => statement(sql, v),
-    first: async <T,>() => (raw.prepare(sql).get(...(values as never[])) as T | undefined) ?? null,
-    all: async <T,>() => ({ results: raw.prepare(sql).all(...(values as never[])) as T[] }),
-    run: async () => raw.prepare(sql).run(...(values as never[])),
-  });
-  return { raw, prepare: sql => statement(sql) };
-}
-
-function setup(overrides: Partial<ApiEnv> = {}) {
-  let now = Date.UTC(2026, 9, 23);
-  const db = testDb();
-  const env: ApiEnv = { DB: db, RATE_LIMIT_PEPPER: 'test-pepper', ...overrides };
-  const deps = { fetch: async () => new Response('unexpected', { status: 500 }), now: () => now };
-  const call = (method: string, path: string, body?: unknown, headers: Record<string, string> = {}) =>
-    handleApi(
-      new Request(`${ORIGIN}${path}`, {
-        method,
-        headers: { Origin: ORIGIN, 'Content-Type': 'application/json', 'CF-Connecting-IP': '203.0.113.9', ...headers },
-        body: body === undefined ? undefined : JSON.stringify(body),
-      }),
-      env,
-      deps,
-    ).then(r => r!);
-  const register = (fields: Record<string, unknown> = {}, headers?: Record<string, string>) =>
-    call('POST', '/api/auth/email/register', { email: 'Learner@Example.com', password: PASSWORD, displayName: 'Learner', ageConfirmed: true, ...fields }, headers);
-  const login = (email = 'learner@example.com', password = PASSWORD, headers?: Record<string, string>) =>
-    call('POST', '/api/auth/email/login', { email, password }, headers);
-  return { db, env, call, register, login, advance: (ms: number) => (now += ms) };
-}
-
-const sessionOf = (res: Response) => /__Host-session=([^;]*)/.exec(res.headers.get('Set-Cookie') ?? '')?.[1] ?? null;
-const count = (db: { raw: DatabaseSync }, table: string) => (db.raw.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
+import { count, PASSWORD, sessionOf, setup } from './testkit.ts';
 
 test('sign-up: creates the account and an email sign-in method, signs in, and stores only a password hash', async () => {
   const s = setup();
