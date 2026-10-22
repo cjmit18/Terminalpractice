@@ -2,7 +2,7 @@
 import { HttpError, ipSubject, isUniqueViolation, json, str, type Db, type Route, type RouteContext } from '../http';
 import { hashPassword, passwordProblem, verifyAgainstDummy, verifyPassword } from '../password';
 import { LIMITS, countLimit, enforceLimit, rateLimited } from '../ratelimit';
-import { createSession, endIncomingSession, loadUser, sessionCookie, staleEmailClaim, toPublicUser } from '../session';
+import { EMAIL_CLAIM_TTL, createSession, endIncomingSession, loadUser, sessionCookie, staleEmailClaim, toPublicUser } from '../session';
 import { revokeTokens } from '../tokens';
 
 const INVALID_CREDENTIALS = () => new HttpError(401, 'invalid_credentials', 'That email and password do not match an account.');
@@ -140,10 +140,14 @@ export async function releaseStaleClaim(db: Db, email: string, now: number, exce
     .first<{ id: string; email: string; email_verified_at: number | null; email_set_at: number | null }>();
   if (!holder || holder.id === exceptUserId) return true;
   if (!staleEmailClaim(holder, now)) return false;
-  await db
-    .prepare('UPDATE users SET email = NULL, email_verified_at = NULL, email_set_at = NULL, password_hash = NULL, updated_at = ? WHERE id = ? AND email = ?')
-    .bind(now, holder.id, email)
-    .run();
+  // Recheck eligibility in the write: verification or a refreshed claim may have won the race.
+  const released = await db
+    .prepare(`UPDATE users SET email = NULL, email_verified_at = NULL, email_set_at = NULL, password_hash = NULL, updated_at = ?
+      WHERE id = ? AND email = ? AND email_verified_at IS NULL AND COALESCE(email_set_at, 0) <= ?
+      RETURNING id`)
+    .bind(now, holder.id, email, now - EMAIL_CLAIM_TTL)
+    .first<{ id: string }>();
+  if (!released) return false;
   await db.prepare("DELETE FROM identities WHERE user_id = ? AND provider = 'email'").bind(holder.id).run();
   await revokeTokens(db, holder.id, ['verify', 'reset'], now);
   return true;

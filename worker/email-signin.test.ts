@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { handleApi, type ApiEnv, type Db, type DbStatement } from './api.ts';
-import { normalizeEmail } from './auth/email.ts';
+import { normalizeEmail, releaseStaleClaim } from './auth/email.ts';
 import { DAY } from './session.ts';
 
 const ORIGIN = 'https://terminuscli.com';
@@ -162,4 +162,29 @@ test('sign-up: five per hour from one address, then 429', async () => {
   const s = setup();
   for (let i = 0; i < 5; i++) assert.equal((await s.register({ email: `learner${i}@example.com` })).status, 201);
   assert.equal((await s.register({ email: 'learner9@example.com' })).status, 429);
+});
+
+test('stale-claim release preserves a claim verified or refreshed after its initial read', async () => {
+  for (const change of ['email_verified_at', 'email_set_at']) {
+    const s = setup();
+    await s.register();
+    s.advance(DAY + 1);
+    const now = Date.UTC(2026, 9, 23) + DAY + 1;
+    let changed = false;
+    const db: Db = {
+      prepare(sql) {
+        if (sql.startsWith('UPDATE users SET email = NULL')) {
+          s.db.raw.prepare(`UPDATE users SET ${change} = ?`).run(now);
+          changed = true;
+        }
+        return s.db.prepare(sql);
+      },
+    };
+    assert.equal(await releaseStaleClaim(db, 'learner@example.com', now), false, change);
+    assert.equal(changed, true);
+    const row = s.db.raw.prepare('SELECT email, password_hash FROM users').get();
+    assert.equal(row?.email, 'learner@example.com');
+    assert.ok(row?.password_hash);
+    assert.equal(count(s.db, 'identities'), 1, 'the email identity is retained');
+  }
 });
