@@ -10,10 +10,13 @@
   // Set explicitly so a deploy never flips it off (the default follows workers_dev).
   "preview_urls": true,
   "compatibility_date": "2026-10-13",
-  // `wrangler deploy` builds first, so a deploy never ships a stale or missing dist/
+  // `wrangler deploy` and `wrangler preview` run this first, so a deploy never ships a stale or
+  // missing dist/, and Workers Builds (production and pull-request previews) only ships code that
+  // passes the unit tests and all three typechecks. The build image installs devDependencies
+  // (npm clean-install), which is where tsx, typescript and wrangler itself come from.
   "build": {
     // Absolute asset paths: with the SPA fallback, /any/path serves index.html, and its assets must still resolve from /
-    "command": "VITE_BASE=/ npm run build"
+    "command": "npm test && npm run lint && VITE_BASE=/ npm run build"
   },
   // Account API (sign-in, sessions). Only /api/* reaches it; see run_worker_first below.
   "main": "./worker/index.ts",
@@ -28,7 +31,7 @@
   "d1_databases": [
     {
       "binding": "DB",
-      // This site's own accounts database (main's terminuscli Worker uses the terminuscli database)
+      // The same accounts database as main's terminuscli Worker, so one account works on both sites
       "database_name": "terminalpractice",
       "database_id": "741adee3-13fb-48e7-90c1-34024d069bfa",
       "migrations_dir": "migrations"
@@ -36,7 +39,9 @@
   ],
   // Pull-request builds run `wrangler preview`, which needs its own preview-safe settings (nothing here
   // is inherited from above). Previews get sign-in turned off and an empty database of their own, so a
-  // preview link can never touch real accounts.
+  // preview link can never touch real accounts. The preview database is deliberately left empty (no
+  // migrations are applied to it): with sign-in off nothing ever writes to it, and /api/me answers
+  // "signed out" when the account tables are missing, so a stray session cookie cannot cause an error.
   "previews": {
     "vars": { "GITHUB_CLIENT_ID": "" },
     "d1_databases": [

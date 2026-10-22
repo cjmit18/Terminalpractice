@@ -12,6 +12,9 @@ import {
 
 const PERMISSIONS_LAB = '#/linux/lpi-104-5-permissions';
 const DISKPART_LAB = '#/windows/win-pbq-diskpart-partitioning';
+/** The lab's own count under "Your tasks", never the celebration note ("Task 4 of 4 done: ...") or its live region */
+const taskCount = (page: import('@playwright/test').Page, text: string) =>
+  page.getByRole('region', { name: 'Your tasks' }).getByText(text, { exact: true });
 
 test('permissions lab: typed commands complete every task, progress persists and can be reset', async ({ page }) => {
   await page.goto(PERMISSIONS_LAB);
@@ -33,13 +36,13 @@ test('permissions lab: typed commands complete every task, progress persists and
   // The header total and the lab's own count both move to 4
   await expect(headerProgress(page)).toHaveText(new RegExp(`^4 of ${before.total} (lab tasks |tasks )?done$`));
   await showLab(page);
-  await expect(page.getByText('4 of 4 done')).toBeVisible();
+  await expect(taskCount(page, '4 of 4 done')).toBeVisible();
   await expect(page.getByRole('heading', { level: 1 })).toContainText('Done');
 
   // Progress is saved in this browser
   await page.reload();
   await expect(headerProgress(page)).toHaveText(new RegExp(`^4 of ${before.total} (lab tasks |tasks )?done$`));
-  await expect(page.getByText('4 of 4 done')).toBeVisible();
+  await expect(taskCount(page, '4 of 4 done')).toBeVisible();
 
   // Reset it from the catalog, accepting the confirm dialog
   await page.goto('#/linux');
@@ -70,7 +73,7 @@ test('DiskPart lab: running every walkthrough step completes the lab', async ({ 
   await expect(page.getByText('Sent to the terminal')).toHaveCount(4);
 
   await page.getByRole('tab', { name: 'Tasks' }).click();
-  await expect(page.getByText('4 of 4 done')).toBeVisible();
+  await expect(taskCount(page, '4 of 4 done')).toBeVisible();
   await expect(page.getByRole('heading', { level: 1 })).toContainText('Done');
 
   // The commands went to the terminal and diskpart answered
@@ -98,6 +101,26 @@ test('keyboard users can Tab out of the terminal prompt', async ({ page, isMobil
   await expect(commandInput(page)).not.toBeFocused();
 });
 
+test('Tab completes the commands the first-steps labs teach', async ({ page, isMobile }) => {
+  test.skip(isMobile, 'same code path on both projects');
+  const tab = async (typed: string, expected: string) => {
+    await commandInput(page).fill(typed);
+    await commandInput(page).press('Tab');
+    await expect(commandInput(page)).toHaveValue(expected);
+  };
+  await page.goto('#/windows/win-000-first-steps');
+  await showTerminal(page);
+  // dir, diskpart and dism all start with di: nothing to add yet
+  await tab('di', 'di');
+  await tab('ty', 'type ');
+  await tab('he', 'help ');
+  await tab('cl', 'cls ');
+  await page.goto('#/linux/lpi-000-first-steps');
+  await showTerminal(page);
+  await tab('ma', 'man ');
+  await tab('pw', 'pwd ');
+});
+
 test('walkthrough steps run in the shell they are written for', async ({ page, isMobile }) => {
   // Walkthrough steps are written for the lab's default shell, even if the header picked the other one
   test.skip(isMobile, 'same code path on both projects');
@@ -107,7 +130,7 @@ test('walkthrough steps run in the shell they are written for', async ({ page, i
   await page.getByRole('button', { name: /^Run step 1/ }).click();
   await expect(terminalLog(page)).not.toContainText('is not recognized');
   await page.getByRole('tab', { name: 'Tasks' }).click();
-  await expect(page.getByText('1 of 3 done')).toBeVisible();
+  await expect(taskCount(page, '1 of 3 done')).toBeVisible();
 });
 
 test('clear in a command chain keeps the output that comes after it', async ({ page }) => {

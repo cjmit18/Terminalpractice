@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { ExamModule } from '../types/modules.ts';
 import type { LearningPath } from '../types/paths.ts';
-import { linuxSession } from '../terminal/testUtils.ts';
+import { linuxSession, windowsSession } from '../terminal/testUtils.ts';
 import { LEARNING_PATHS } from './paths.ts';
 import { ALL_MODULES } from '../lib/modules.ts';
 import { EMPTY_JOURNEY, Journey } from '../lib/journey.ts';
@@ -48,6 +48,29 @@ test('Badges: repeating one command fifty times earns at most "hello, world"', (
     prev = outcome;
   }
   assert.deepEqual(newlyEarned(BADGES, inputs(activity)), ['hello-world']);
+});
+
+/** One command in a fresh shell, as an outcome for the classifier. */
+function run(shell: 'bash' | 'cmd' | 'powershell', line: string): CommandOutcome {
+  const res = shell === 'bash' ? linuxSession()(line) : windowsSession(shell)(line);
+  return { line, exitCode: res.exitCode, stdout: res.stdout, stderr: res.stderr, stageExits: res.stageExits };
+}
+
+test('Badges: a manual page and a command\'s own --help are different acts, each with its own badge', () => {
+  const earned = (shell: 'bash' | 'cmd' | 'powershell', line: string) => {
+    const outcome = run(shell, line);
+    return newlyEarned(BADGES, inputs(addFacts(EMPTY_ACTIVITY, classifyCommand(outcome, shell), '2026-10-21')));
+  };
+  const flag = earned('bash', 'ls --help');
+  assert.ok(flag.includes('flag-help') && !flag.includes('man-man'), flag.join());
+  assert.ok(!earned('cmd', 'dir /?').includes('man-man'));
+  for (const [shell, line] of [['bash', 'man ls'], ['cmd', 'help cd'], ['powershell', 'Get-Help Get-Service']] as const) {
+    const page = earned(shell, line);
+    assert.ok(page.includes('man-man') && !page.includes('flag-help'), `${line}: ${page.join()}`);
+  }
+  // Only names you literally type are shown as commands
+  assert.equal(BADGES.find(b => b.id === 'hello-world')?.nameIsCommand, false);
+  assert.equal(BADGES.find(b => b.id === 'redirect')?.nameIsCommand, false);
 });
 
 test('Badges: earned once, kept on later checks, and survive a lab reset of progress', () => {

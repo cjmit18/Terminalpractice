@@ -84,7 +84,7 @@ test('CMD: standard users get Access is denied with an explanation', () => {
   createNode(run.fs(), 'C:\\Users\\Administrator\\secret.txt', 'file', 'private', true, 'Administrator', 'Administrators', 600);
   const md = run('mkdir C:\\Windows\\Evil');
   assert.equal(md.stderr, 'Access is denied.');
-  assert.match(md.explanation ?? '', /standard user .*C:\\Windows is protected/);
+  assert.match(md.explanation ?? '', /not elevated.*C:\\Windows is protected/);
   const redirect = run('echo x > C:\\Windows\\System32\\x.txt');
   assert.equal(redirect.stderr, 'Access is denied.');
   assert.ok(redirect.explanation);
@@ -144,14 +144,14 @@ test('Review: sfc before and after DISM, sfc /verifyonly, dism health checks', (
   assert.equal(run.state().sfcRepaired, false, '/verifyonly repairs nothing');
   assert.match(run('dism /online /cleanup-image /checkhealth').stdout, /The component store is repairable\./);
   const first = run('sfc /scannow');
-  assert.match(first.stdout, /found corrupt files but was unable to fix some\nof them/);
+  assert.match(first.stdout, /found corrupt files but was unable to fix some of them\.\nFor online repairs/);
   assert.equal(run.state().systemIntegrityCorrupted, true);
   assert.equal(run.state().sfcScanned, true, 'the scan ran');
   assert.equal(run.state().sfcRepaired, false, 'but could not repair while the component store is damaged');
   assert.match(first.explanation ?? '', /DISM/);
   run('dism /online /cleanup-image /restorehealth');
   assert.equal(run.state().dismRepaired, true);
-  assert.match(run('sfc /scannow').stdout, /found corrupt files and successfully repaired\nthem/);
+  assert.match(run('sfc /scannow').stdout, /found corrupt files and successfully repaired them\.\nFor online repairs/);
   assert.equal(run.state().systemIntegrityCorrupted, false);
   assert.match(run('sfc /scannow').stdout, /did not find any integrity violations/);
   assert.match(run('sfc').stdout, /SFC \[\/SCANNOW\]/);

@@ -5,7 +5,7 @@ import {
 } from './filesystem';
 import { ParsedCommand } from './parser';
 import {
-  splitBashChain, parseBashPipeline, wordText, expandWord, expandToString, assignmentOf, Expander, ExpansionError, Field,
+  splitBashChain, parseBashPipeline, checkBashSyntax, wordText, expandWord, expandToString, assignmentOf, Expander, ExpansionError, Field,
 } from './linux/shell';
 import { shellVariable, homeOf } from './linux/env';
 import { runChain, StageResult } from './chain';
@@ -23,9 +23,10 @@ import './linux/commands/accounts';
 import './linux/commands/printf';
 import './linux/commands/lookup';
 import './linux/commands/extra';
-import { helpOptionOutput } from './linux/commands/help';
+import { helpOptionOutput, programPath } from './linux/commands/help';
 import { syncKernelFiles } from './linux/virtualFs';
 import { expandArgs } from './linux/glob';
+import { checkOptions } from './linux/options';
 import { isNotSimulatedLinux } from './notSimulated';
 import { suggestLinux } from './suggest';
 
@@ -49,15 +50,30 @@ export function executeLinuxLine(
     ...state,
     commandHistory: [...(state.commandHistory ?? []), line].slice(-HISTORY_LIMIT),
   };
-  return runLinuxLine(line, cwd, fs, recorded, 0);
+  try {
+    return runLinuxLine(line, cwd, fs, recorded, 0, true);
+  } catch (e) {
+    // A simulator bug must never take the terminal down: report it and leave the machine as it was
+    const message = e instanceof Error ? e.message : String(e);
+    return { stdout: '', stderr: `bash: internal error: ${message}`, exitCode: 1, newCwd: cwd, newFs: fs, newState: recorded };
+  }
 }
 
-/** Runs a line without recording it in history (used for scripts and `bash -c`). */
-export function runLinuxLine(line: string, cwd: string, fs: FileNode, state: SystemState, depth: number): LinuxExecutionResult {
+/**
+ * Runs a line without recording it in history (used for scripts and `bash -c`). `tty` says whether
+ * the line's standard output is the terminal (ls then prints columns) or a pipe, file or $(...).
+ */
+export function runLinuxLine(line: string, cwd: string, fs: FileNode, state: SystemState, depth: number, tty = false): LinuxExecutionResult {
+  // bash parses the whole line first: a syntax error means nothing on it runs
+  const syntax = checkBashSyntax(line);
+  if (syntax) return { stdout: '', stderr: syntax, exitCode: 2, newCwd: cwd, newFs: fs, newState: { ...state, lastExitCode: 2 } };
   return runChain(splitBashChain(line), cwd, fs, state, (stage, c, f, s) => {
-    const res = executeLinuxPipeline(stage, c, f, s, depth);
+    // `! pipeline` inverts the pipeline's exit status
+    const bang = stage.match(/^!(?:\s+|$)/);
+    const res = executeLinuxPipeline(bang ? stage.slice(bang[0].length) : stage, c, f, s, depth, tty);
+    const exitCode = bang ? (res.exitCode === 0 ? 1 : 0) : res.exitCode;
     // $? reads the status of the last pipeline
-    return { ...res, newState: { ...res.newState, lastExitCode: res.exitCode } };
+    return { ...res, exitCode, newState: { ...res.newState, lastExitCode: exitCode } };
   });
 }
 
@@ -157,7 +173,8 @@ function executeLinuxPipeline(
   cwd: string,
   fs: FileNode,
   state: SystemState,
-  depth: number
+  depth: number,
+  tty: boolean
 ): LinuxExecutionResult {
   const stages = parseBashPipeline(pipelineStr);
   const pipeline = stages.map(st => st.words.map(wordText).join(' '));
@@ -170,7 +187,7 @@ function executeLinuxPipeline(
   const errors: string[] = [];
   const notes: string[] = [];
 
-  for (const stage of stages) {
+  for (const [stageIndex, stage] of stages.entries()) {
     let fd1: Sink = { kind: 'out' };
     let fd2: Sink = { kind: 'err' };
     let stdin = input;
@@ -243,6 +260,8 @@ function executeLinuxPipeline(
         }
       }
       if (stage.pipeStderr) fd2 = fd1;
+      // Only the last stage writes to the terminal, and only if its stdout was not redirected to a file
+      const stageTty = tty && stageIndex === stages.length - 1 && fd1.kind !== 'file';
 
       if (fields.length === 0) {
         // Only assignments (or a bare redirect such as "> file"): set the variables in this shell
@@ -259,11 +278,11 @@ function executeLinuxPipeline(
         args: rest.map(f => f.text),
         argGlobs: rest.some(f => f.glob) ? rest.map(f => f.glob) : undefined,
       };
-      if (!assignments.length) return runLinuxCommand(cmd, currentCwd, activeFs, activeState, stdin, depth, pipeline);
+      if (!assignments.length) return runLinuxCommand(cmd, currentCwd, activeFs, activeState, stdin, depth, pipeline, stageTty);
       // NAME=value cmd: the variables are set for this command only
       const saved = activeState.envVars;
       const runState = { ...activeState, envVars: { ...saved, ...Object.fromEntries(assignments.map(a => [a.name, a.value])) } };
-      const out = runLinuxCommand(cmd, currentCwd, activeFs, runState, stdin, depth, pipeline);
+      const out = runLinuxCommand(cmd, currentCwd, activeFs, runState, stdin, depth, pipeline, stageTty);
       return { ...out, newState: { ...out.newState, envVars: saved } };
     })();
 
@@ -307,6 +326,11 @@ function executeLinuxPipeline(
 
 setLineRunner(runLinuxLine);
 
+/** What to use instead of a real command the simulator does not have. */
+const NOT_SIMULATED_HINTS: Record<string, string> = {
+  adduser: 'adduser is the Debian/Ubuntu interactive front end to useradd. Here, use sudo useradd -m NAME (it creates the home directory and copies /etc/skel into it), then sudo passwd NAME.',
+};
+
 const SUDO_USAGE = 'usage: sudo -h | -K | -k | -V\nusage: sudo -v [-AknS] [-g group] [-h host] [-p prompt] [-u user]\nusage: sudo -l [-AknS] [-g group] [-h host] [-p prompt] [-U user] [-u user] [command]';
 const SUDO_GROUPS = ['sudo', 'wheel', 'admin'];
 const DENIAL = /Permission denied|Operation not permitted/;
@@ -319,7 +343,8 @@ function runLinuxCommand(
   state: SystemState,
   stdin: string,
   depth: number,
-  pipeline: string[] = []
+  pipeline: string[] = [],
+  tty = false
 ): StageResult {
   let { name, args } = cmd;
   // Pathname expansion happens in the calling shell, as the calling user, before sudo or the command runs
@@ -379,7 +404,19 @@ function runLinuxCommand(
   const ctx = new LinuxContext(name, args, stdin, cwd, fs, runState, isSudo);
   ctx.depth = depth;
   ctx.pipeline = pipeline;
+  ctx.tty = tty;
   if (!name) return ctx.fail('bash: : command not found', 127);
+
+  // /usr/bin/ls and /bin/ls are the ls program (the simulator's disk holds only a few binary stubs)
+  const program = name.match(/^\/(?:usr\/)?s?bin\/([^/]+)$/);
+  if (program) {
+    const path = programPath(program[1]);
+    const node = getNodeAtPath(fs, name, false);
+    if (path && (name === path || name === path.replace(/^\/usr/, '')) && (!node || /binary$/.test(node.content ?? ''))) {
+      name = program[1];
+      ctx.name = name;
+    }
+  }
 
   let res: StageResult;
   const binHelp = /^\/(usr\/)?s?bin\/[^/]+$/.test(name) ? helpOptionOutput(name.slice(name.lastIndexOf('/') + 1), args) : null;
@@ -390,12 +427,14 @@ function runLinuxCommand(
   } else {
     const handler = linuxCommands.get(name);
     if (!handler) {
-      if (isNotSimulatedLinux(name)) return ctx.fail(`bash: ${name}: this command exists on real systems but is not simulated here`, 127);
+      if (isNotSimulatedLinux(name)) return ctx.fail(`bash: ${name}: this command exists on real systems but is not simulated here`, 127, NOT_SIMULATED_HINTS[name]);
       return ctx.fail(`bash: ${name}: command not found`, 127, suggestLinux(name));
     }
     // --help is answered here, from the docs, so the command itself never runs
     const help = helpOptionOutput(name, args);
-    res = help ? ctx.result(help.stdout, help.stderr, help.exitCode) : handler(ctx);
+    // An option the real command does not know stops it before it does anything
+    const invalid = help ? null : checkOptions(name, args);
+    res = help ? ctx.result(help.stdout, help.stderr, help.exitCode) : invalid ? ctx.fail(invalid.stderr, invalid.code) : handler(ctx);
   }
 
   if (asUserState) {

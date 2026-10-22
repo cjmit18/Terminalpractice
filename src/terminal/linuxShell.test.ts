@@ -185,6 +185,10 @@ test('real commands that are not simulated say so', () => {
   assert.equal(res.exitCode, 127);
   assert.equal(run('sudo modprobe e1000e').stderr, 'bash: modprobe: this command exists on real systems but is not simulated here');
   assert.equal(run('frobnicate').stderr, 'bash: frobnicate: command not found');
+  // make is real: not "did you mean mawk"
+  const make = run('sudo make me a sandwich');
+  assert.equal(make.stderr, 'bash: make: this command exists on real systems but is not simulated here');
+  assert.ok(!make.explanation?.includes('mawk'), make.explanation);
   // The list only names commands the simulator does not run
   assert.deepEqual(NOT_SIMULATED_LINUX.filter(n => linuxCommands.has(n)), []);
 });
@@ -209,4 +213,19 @@ test('limits: a huge ping count or printf width never freezes the page', () => {
   assert.match(awk.stderr, /^awk: format width or precision is larger than this simulator allows/);
   assert.equal(run(`awk 'BEGIN{printf "%.150f", 1}'`).exitCode, 0, 'large precision is clamped, not thrown');
   assert.ok(Date.now() - t < 2000, 'all of the above returns quickly');
+});
+
+test('rm accepts the long forms --recursive and --force, full or abbreviated', () => {
+  const run = linuxSession();
+  run('mkdir -p tree/sub && touch tree/sub/f');
+  const r = run('rm --recursive tree');
+  assert.equal(r.exitCode, 0, r.stderr);
+  assert.equal(getNodeAtPath(run.fs(), '/home/student/tree', false), null);
+  run('mkdir -p t2/sub');
+  assert.equal(run('rm --rec t2').exitCode, 0);
+  assert.equal(getNodeAtPath(run.fs(), '/home/student/t2', false), null);
+  const f = run('rm --force missing-file');
+  assert.equal(f.exitCode, 0);
+  assert.equal(f.stderr, '');
+  assert.equal(run('rm --force').exitCode, 0);
 });

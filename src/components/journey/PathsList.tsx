@@ -10,35 +10,42 @@ import {
   pathPercent,
   pathStarted,
   resumeTarget,
+  reviewStatus,
   stepTitle,
+  whenText,
 } from '../../lib/journey';
-import { learnHref } from '../../lib/router';
+import { learnHref, reviewHref } from '../../lib/router';
 import { ProgressBar, primaryLinkClass, secondaryLinkClass, textLinkClass } from './shared';
 import { pathProgressText, stagesText } from './progressText';
 import { FirstStepsBanner } from './FirstStepsBanner';
 import { BadgesSection } from '../badges/BadgesSection';
+import { TodayAndWeek } from '../celebrate/TodayAndWeek';
 
 interface PathsListProps {
   paths: LearningPath[];
   src: CompletionSource;
   modulesById: Map<string, ExamModule>;
+  /** moduleId -> completed objective ids */
+  progress: Record<string, string[]>;
 }
 
 /** #/learn: every path, with where you are in each. */
-export const PathsList: React.FC<PathsListProps> = ({ paths, src, modulesById }) => {
+export const PathsList: React.FC<PathsListProps> = ({ paths, src, modulesById, progress }) => {
   const resume = resumeTarget(paths, src);
 
   return (
     <div className="max-w-3xl mx-auto w-full px-4 sm:px-6 py-8 sm:py-12">
       <header className="space-y-3">
-        <h1 className="text-2xl font-semibold text-text">Learning paths</h1>
+        <h1 id="learn-heading" tabIndex={-1} className="text-2xl font-semibold text-text focus:outline-none">
+          Learning paths
+        </h1>
         <p className="text-[15px] text-muted max-w-prose">
           Each path takes you through one exam in order: a short lesson, a lab to try it on a working system, then a
           few questions to check it stuck.
         </p>
       </header>
 
-      <FirstStepsBanner paths={paths} src={src} />
+      <FirstStepsBanner paths={paths} src={src} progress={progress} focusAfterDismissId="learn-heading" />
 
       {resume && (
         <p className="mt-6 text-[15px]">
@@ -49,6 +56,9 @@ export const PathsList: React.FC<PathsListProps> = ({ paths, src, modulesById })
           <span className="text-muted"> in {resume.path.title}</span>
         </p>
       )}
+
+      <ReviewEntry paths={paths} src={src} />
+      <TodayAndWeek />
 
       <ul className="mt-8 border-t border-line">
         {paths.map(path => {
@@ -126,5 +136,30 @@ export const PathsList: React.FC<PathsListProps> = ({ paths, src, modulesById })
         </p>
       </section>
     </div>
+  );
+};
+
+/**
+ * The way into the review queue, once the learner has answered checkpoint questions. Says whether
+ * anything is ready without nagging: no count of overdue questions.
+ */
+const ReviewEntry: React.FC<{ paths: LearningPath[]; src: CompletionSource }> = ({ paths, src }) => {
+  const { due, nextAt } = reviewStatus(paths, src);
+  if (due === 0 && nextAt === null) return null;
+  return (
+    <p className="mt-4 text-[15px]">
+      {due > 0 ? (
+        <>
+          <a href={reviewHref()} className={`${textLinkClass} font-medium`}>
+            Review a few questions
+          </a>
+          <span className="text-muted"> from the checkpoints you have taken, spaced out so they stick.</span>
+        </>
+      ) : (
+        <span className="text-muted">
+          Nothing to review right now. The next checkpoint question comes back {whenText(nextAt!)}.
+        </span>
+      )}
+    </p>
   );
 };

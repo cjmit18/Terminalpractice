@@ -2,6 +2,8 @@ import { FileNode } from '../../../types/terminal';
 import { writeFileContent, modeBits, toOctalField, getNodeAtPath } from '../../filesystem';
 import { parseOptions } from '../../textUtils';
 import { LinuxContext, LinuxResult, linuxCommands, createInDir } from '../context';
+import { MAX_PATH_DEPTH, pathDepth, treeHeight } from '../../limits';
+import { labNowIso } from '../../labClock';
 
 // cp and mv
 
@@ -119,6 +121,10 @@ function cp(ctx: LinuxContext): LinuxResult {
       errors.push(`cp: cannot copy a directory, '${m.src}', into itself, '${m.dest}'`);
       continue;
     }
+    if (pathDepth(m.destAbs) + (recursive ? treeHeight(node) : 1) - 1 > MAX_PATH_DEPTH) {
+      errors.push(`cp: cannot create ${node.type === 'directory' ? 'directory' : 'regular file'} '${m.dest}': File name too long`);
+      continue;
+    }
     copy(node, m.srcAbs, m.src, m.destAbs, m.dest);
   }
   return ctx.result(out.join('\n'), errors.join('\n'), errors.length ? 1 : 0);
@@ -138,6 +144,10 @@ function mv(ctx: LinuxContext): LinuxResult {
     if (m.destAbs === m.srcAbs) { errors.push(`mv: '${m.src}' and '${m.dest}' are the same file`); continue; }
     if (node.type === 'directory' && m.destAbs.startsWith(m.srcAbs + '/')) {
       errors.push(`mv: cannot move '${m.src}' to a subdirectory of itself, '${m.dest}'`);
+      continue;
+    }
+    if (pathDepth(m.destAbs) + treeHeight(node) - 1 > MAX_PATH_DEPTH) {
+      errors.push(`mv: cannot move '${m.src}' to '${m.dest}': File name too long`);
       continue;
     }
     const existing = ctx.node(m.destAbs);
@@ -170,7 +180,7 @@ function mv(ctx: LinuxContext): LinuxResult {
     }
     delete from.children![baseName(m.srcAbs)];
     node.name = baseName(m.destAbs);
-    node.updatedAt = new Date().toISOString();
+    node.updatedAt = labNowIso();
     to.children = { ...(to.children ?? {}), [node.name]: node };
     if (opts.flags.has('v')) out.push(`renamed '${m.src}' -> '${m.dest}'`);
   }
