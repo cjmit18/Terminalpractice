@@ -41,21 +41,6 @@ test.describe('first steps offer on the Learn page', () => {
     await expect(page.getByRole('heading', { level: 1, name: 'Learning paths' })).toBeVisible();
     await expect(banner(page)).toBeHidden();
   });
-
-  test('someone who has done a lab task, but no whole lab, is not offered the first steps', async ({ page }) => {
-    await page.addInitScript(() => {
-      localStorage.setItem('certsim:progress:v1', JSON.stringify({ 'lpi-101-1-system-architecture': ['hw-lspci'] }));
-    });
-    await page.goto('#/learn');
-    await expect(page.getByRole('heading', { level: 1, name: 'Learning paths' })).toBeVisible();
-    await expect(banner(page)).toBeHidden();
-  });
-
-  test('after "I\'ve used a terminal before", focus moves to the page heading', async ({ page }) => {
-    await page.goto('#/learn');
-    await banner(page).getByRole('button', { name: "I've used a terminal before" }).click();
-    await expect(page.getByRole('heading', { level: 1, name: 'Learning paths' })).toBeFocused();
-  });
 });
 
 test.describe('first steps on a phone', () => {

@@ -20,10 +20,6 @@ export const PROGRESS_KEY = 'certsim:progress:v1';
  * dropped. A reset therefore reaches every tab and is never undone by one. The one cost: an
  * objective a tab completes in the few milliseconds before another tab's reset reaches it is
  * dropped with the rest.
- *
- * Forward compatibility: the record keeps modules and objectives this build does not know (saved by
- * a newer build, e.g. in another tab after a deploy) through parse, merge and save, so an older tab
- * never deletes them. Only what is shown and counted is cleaned, with sanitizeProgress.
  */
 export interface ProgressRecord {
   done: Progress;
@@ -55,38 +51,17 @@ export function sanitizeProgress(raw: unknown, modules: ExamModule[]): Progress 
   return clean;
 }
 
-const isId = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= 200;
-
-/** Ids in canonical order: the known modules in module order, then any others sorted. */
-function canonicalKeys(keys: Iterable<string>, modules: ExamModule[]): string[] {
-  const all = new Set(keys);
-  const known = modules.map(m => m.id).filter(id => all.has(id));
-  const knownSet = new Set(known);
-  return [...known, ...[...all].filter(k => !knownSet.has(k)).sort()];
-}
-
-/**
- * The saved object (completed objectives and tombstones), well-formed and in canonical order, keeping
- * modules and objectives this build does not know (see the note on ProgressRecord). Known
- * objectives come first in the module's own order, unknown ones after them, sorted.
- */
+/** The saved object (completed objectives and tombstones), cleaned like sanitizeProgress. */
 export function sanitizeProgressRecord(raw: unknown, modules: ExamModule[]): ProgressRecord {
-  const data = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
-  const byId = new Map(modules.map(m => [m.id, m]));
-  const done: Progress = {};
-  for (const id of canonicalKeys(Object.keys(data).filter(k => k !== RESET_FIELD && isId(k)), modules)) {
-    const ids = data[id];
-    if (!Array.isArray(ids)) continue;
-    const given = new Set(ids.filter(isId));
-    const order = byId.get(id)?.objectives.map(o => o.id) ?? [];
-    const list = [...order.filter(o => given.has(o)), ...[...given].filter(o => !order.includes(o)).sort()];
-    if (list.length > 0) done[id] = list;
-  }
+  const done = sanitizeProgress(raw, modules);
   const resetAt: Record<string, number> = {};
+  const data = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
   const tombs = data[RESET_FIELD];
   if (tombs && typeof tombs === 'object' && !Array.isArray(tombs)) {
-    const t = tombs as Record<string, unknown>;
-    for (const id of canonicalKeys(Object.keys(t).filter(isId), modules)) if (isTime(t[id])) resetAt[id] = t[id] as number;
+    for (const mod of modules) {
+      const t = (tombs as Record<string, unknown>)[mod.id];
+      if (isTime(t)) resetAt[mod.id] = t;
+    }
   }
   return { done, resetAt };
 }
@@ -112,19 +87,17 @@ export function serializeProgress(r: ProgressRecord): string | null {
  * union of the objectives of each copy that has seen the newest reset of that module.
  */
 export function mergeProgress(a: ProgressRecord, b: ProgressRecord, modules: ExamModule[]): ProgressRecord {
-  const raw: Record<string, unknown> = {};
+  const raw: Record<string, string[]> = {};
   const resetAt: Record<string, number> = {};
-  // Every module either copy mentions, known to this build or not
-  const ids = new Set([a.done, b.done, a.resetAt, b.resetAt].flatMap(o => Object.keys(o)));
-  for (const id of ids) {
-    const ra = a.resetAt[id] ?? 0;
-    const rb = b.resetAt[id] ?? 0;
+  for (const mod of modules) {
+    const ra = a.resetAt[mod.id] ?? 0;
+    const rb = b.resetAt[mod.id] ?? 0;
     const r = Math.max(ra, rb);
-    if (r > 0) resetAt[id] = r;
-    const objs = [...(ra >= r ? (a.done[id] ?? []) : []), ...(rb >= r ? (b.done[id] ?? []) : [])];
-    if (objs.length) raw[id] = objs;
+    if (r > 0) resetAt[mod.id] = r;
+    const ids = [...(ra >= r ? (a.done[mod.id] ?? []) : []), ...(rb >= r ? (b.done[mod.id] ?? []) : [])];
+    if (ids.length) raw[mod.id] = ids;
   }
-  return sanitizeProgressRecord({ ...raw, [RESET_FIELD]: resetAt }, modules);
+  return { done: sanitizeProgress(raw, modules), resetAt };
 }
 
 export function completeObjective(r: ProgressRecord, moduleId: string, objectiveId: string): ProgressRecord {

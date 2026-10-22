@@ -3,13 +3,12 @@ import { createNode, writeFileContent } from '../../filesystem';
 import { WindowsContext, WindowsResult, cmdCommands } from '../context';
 import { cmdDoc } from '../../docs';
 import { hasConnectivity } from './network';
-import { BOOT_GP, applyGroupPolicy, gpresultTime, windowsNow } from '../clock';
 
 // CMD system tools: whoami, hostname, ver, systeminfo, tasklist, taskkill, sfc, dism, chkdsk,
 // bootrec, gpupdate, gpresult, net
 
 const NOT_ELEVATED = (ctx: WindowsContext, what: string) =>
-  `You are '${ctx.state.currentUser}' in a prompt that is not elevated. ${what} needs an elevated prompt: right-click Command Prompt and choose "Run as administrator".`;
+  `You are '${ctx.state.currentUser}', a standard user (not elevated). ${what} needs an elevated prompt: right-click Command Prompt and choose "Run as administrator".`;
 
 /** Core processes every Windows session has; the lab's own processes come from state. */
 const BASE_PROCESSES: ProcessItem[] = [
@@ -218,8 +217,7 @@ function sfc(ctx: WindowsContext): WindowsResult {
   }
   const head = ['Beginning system scan.  This process will take some time.', '', 'Beginning verification phase of system scan.', 'Verification 100% complete.', ''];
   const corrupted = ctx.state.systemIntegrityCorrupted;
-  // The Windows 10/11 wording
-  const log = 'For online repairs, details are included in the CBS log file located at\nwindir\\Logs\\CBS\\CBS.log. For example C:\\Windows\\Logs\\CBS\\CBS.log. For offline\nrepairs, details are included in the log file provided by the /OFFLOGFILE flag.';
+  const log = 'Details are included in the CBS.Log windir\\Logs\\CBS\\CBS.log. For example\nC:\\Windows\\Logs\\CBS\\CBS.log.';
   if (verify) {
     return ctx.ok([...head, corrupted
       ? `Windows Resource Protection found integrity violations.\n${log}`
@@ -233,12 +231,12 @@ function sfc(ctx: WindowsContext): WindowsResult {
   }
   if (!ctx.state.dismRepaired) {
     // SFC repairs files from the component store; while the store is damaged it cannot
-    return ctx.result([...head, `Windows Resource Protection found corrupt files but was unable to fix some of them.\n${log}`].join('\n'), '', 0,
+    return ctx.result([...head, `Windows Resource Protection found corrupt files but was unable to fix some\nof them. ${log}`].join('\n'), '', 0,
       'SFC takes its replacement files from the component store (WinSxS), which is damaged too. Repair the store with DISM /Online /Cleanup-Image /RestoreHealth, then run sfc /scannow again.');
   }
   ctx.state.sfcRepaired = true;
   ctx.state.systemIntegrityCorrupted = false;
-  return ctx.ok([...head, `Windows Resource Protection found corrupt files and successfully repaired them.\n${log}`].join('\n'));
+  return ctx.ok([...head, `Windows Resource Protection found corrupt files and successfully repaired\nthem. ${log}`].join('\n'));
 }
 
 function dism(ctx: WindowsContext): WindowsResult {
@@ -356,14 +354,8 @@ function systeminfo(ctx: WindowsContext): WindowsResult {
 }
 
 function gpupdate(ctx: WindowsContext): WindowsResult {
-  // gpupdate [/target:{computer | user}] [/force] [/wait:<value>] [/logoff] [/boot] [/sync]
-  const bad = ctx.args.find(a => !/^\/(target:\S*|force|wait:\S*|logoff|boot|sync)$/i.test(a));
-  if (bad !== undefined) return ctx.fail(`ERROR: Invalid argument/option - '${bad}'.\nType "GPUPDATE /?" for usage.`);
   const target = ctx.args.map(a => a.toLowerCase()).find(a => a.startsWith('/target:'))?.slice(8);
-  if (target !== undefined && target !== 'computer' && target !== 'user') return ctx.fail(`Invalid Syntax: "${target}" is not a valid value for /Target.`);
-  const wait = ctx.args.map(a => a.toLowerCase()).find(a => a.startsWith('/wait:'))?.slice(6);
-  if (wait !== undefined && !/^-?\d+$/.test(wait)) return ctx.fail(`Invalid Syntax: "${wait}" is not a valid value for /Wait.`);
-  applyGroupPolicy(ctx.state, target as 'computer' | 'user' | undefined);
+  if (target && target !== 'computer' && target !== 'user') return ctx.fail(`Invalid Syntax: "${target}" is not a valid value for /Target.`);
   const lines = ['Updating policy...', ''];
   if (target !== 'user') lines.push('Computer Policy update has completed successfully.');
   if (target !== 'computer') lines.push('User Policy update has completed successfully.');
@@ -396,12 +388,11 @@ function gpresult(ctx: WindowsContext): WindowsResult {
   if (!lower.includes('/r') && !lower.includes('/v') && !lower.includes('/z')) {
     return ctx.ok('GPRESULT [/S system [/U username [/P [password]]]] [/SCOPE scope]\n           [/USER targetusername] [/R | /V | /Z] [(/X | /H) <filename> [/F]]');
   }
-  const applied = ctx.state.gpApplied ?? {};
   const computer = [
     'COMPUTER SETTINGS',
     '------------------',
     `    CN=${host},OU=Workstations,DC=corp,DC=local`,
-    `    Last time Group Policy was applied: ${gpresultTime(applied.computer ?? BOOT_GP.computer)}`,
+    '    Last time Group Policy was applied: 10/19/2026 at 10:28:44 AM',
     '    Group Policy was applied from:      dc01.corp.local',
     '    Group Policy slow link threshold:   500 kbps',
     '    Domain Name:                        CORP',
@@ -417,20 +408,19 @@ function gpresult(ctx: WindowsContext): WindowsResult {
     'USER SETTINGS',
     '--------------',
     `    CN=${user},CN=Users,DC=corp,DC=local`,
-    `    Last time Group Policy was applied: ${gpresultTime(applied.user ?? BOOT_GP.user)}`,
+    '    Last time Group Policy was applied: 10/19/2026 at 10:29:02 AM',
     '    Group Policy was applied from:      dc01.corp.local',
     '',
     '    Applied Group Policy Objects',
     '    -----------------------------',
     '        Default Domain Policy',
   ];
-  const verbose = lower.includes('/v') || lower.includes('/z');
-  return ctx.result([
+  return ctx.ok([
     '',
     'Microsoft (R) Windows (R) Operating System Group Policy Result tool v2.0',
     '© Microsoft Corporation. All rights reserved.',
     '',
-    `Created on ${gpresultTime(windowsNow(ctx.state))}`,
+    `Created on 10/19/2026 at 10:30:15 AM`,
     '',
     `RSOP data for CORP\\${user} on ${host} : Logging Mode`,
     '-'.repeat(37 + user.length + host.length),
@@ -444,9 +434,7 @@ function gpresult(ctx: WindowsContext): WindowsResult {
     '',
     ...(scope === 'user' ? [] : [...computer, '']),
     ...(scope === 'computer' ? [] : userSection),
-  ].join('\n'), '', 0, verbose
-    ? 'This is the /R summary. On a real PC, /V and /Z go on to list each policy setting (security options, scripts, registry settings ...); those sections are not simulated here.'
-    : undefined);
+  ].join('\n'));
 }
 
 const BUILTIN_LOCAL_USERS = ['Administrator', 'DefaultAccount', 'Guest', 'Student', 'WDAGUtilityAccount'];
@@ -613,8 +601,6 @@ function netUserDomainChange(ctx: WindowsContext, operands: string[], switches: 
   const value = active!.split(':')[1]?.toLowerCase();
   if (value !== undefined && value !== 'yes' && value !== 'no') return ctx.fail(`${cmdDoc('net')!.topics!.user}${helpMsg(3505)}`, 1);
   existing.enabled = value !== 'no';
-  // Writing the account flags with /active:yes also clears a lockout, as Unlock-ADAccount does
-  if (value !== 'no') existing.locked = false;
   return ctx.ok(`${DC_NOTE}\n\n${DONE}`);
 }
 

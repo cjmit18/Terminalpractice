@@ -1,46 +1,21 @@
-import { WindowsService } from '../../../types/terminal';
+import { SystemState, WindowsService } from '../../../types/terminal';
 import { describeIdentity } from '../../filesystem';
-import { labNow } from '../../labClock';
 import { parseOptions, optionValue, padNum } from '../../textUtils';
 import { LinuxContext, LinuxResult, linuxCommands, createInDir } from '../context';
 import { DEFAULT_LINUX_DISKS, partitionLayout, KERNEL_RELEASE, KERNEL_VERSION, MEMORY_KIB, MODULES } from '../virtualFs';
 
 // System, hardware, processes, services, packages and archives
 
-/** The machine booted at 08:00:00 UTC on Monday 19 October 2026 (uptime -s and who -b agree). */
-const BOOT_MS = Date.UTC(2026, 9, 19, 8, 0, 0);
-
-/** Kernel ring buffer: seconds since boot and message. journalctl -k reads the same messages. */
-const KERNEL_LOG: [number, string][] = [
-  [0, 'Linux version 5.15.0-101-generic (buildd@lcy02-amd64-072) (gcc version 11.4.0)'],
-  [0, 'Command line: BOOT_IMAGE=/vmlinuz-5.15.0-101-generic root=UUID=8d6a8f1e ro quiet splash'],
-  [0.412891, 'ACPI: Core revision 20210604'],
-  [1.120542, 'ahci 0000:00:1f.2: AHCI 0001.0000 32 slots 6 ports 1.5 Gbps 0x3f impl SATA mode'],
-  [2.341209, 'e1000e: Intel(R) PRO/1000 Network Driver'],
-  [2.341512, 'e1000e 0000:00:19.0 eth0: (PCI Express:2.5GT/s:Width x1) 52:54:00:12:34:56'],
-  [3.150221, 'systemd[1]: Inserted module \'autofs4\''],
-  [4.201944, 'EXT4-fs (sda3): mounted filesystem with ordered data mode. Opts: (null)'],
-  [6300.118204, 'EXT4-fs (sda3): re-mounted. Opts: errors=remount-ro'],
-];
-
-/** "Oct 19 08:00:01": a kernel message's time as the journal prints it (all on boot day). */
-function syslogTime(t: number): string {
-  const d = new Date(BOOT_MS + Math.floor(t) * 1000);
-  const p2 = (n: number) => String(n).padStart(2, '0');
-  return `Oct ${p2(d.getUTCDate())} ${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}:${p2(d.getUTCSeconds())}`;
-}
-
-const DMESG = KERNEL_LOG.map(([t, msg]) => `[${t.toFixed(6).padStart(12)}] ${msg}`).join('\n');
-
-/** Wall-clock time of a kernel message, e.g. "Mon Oct 19 08:00:01 2026" (dmesg -T). */
-const kernelTime = (t: number) => formatDate(new Date(BOOT_MS + Math.floor(t) * 1000), '%a %b %e %H:%M:%S %Y');
-
-/** dmesg [-T] */
-function dmesg(ctx: LinuxContext): LinuxResult {
-  const opts = parseOptions(ctx.args, '', { ctime: 'T', kernel: 'k' });
-  if (!opts.flags.has('T')) return ctx.ok(DMESG);
-  return ctx.ok(KERNEL_LOG.map(([t, msg]) => `[${kernelTime(t)}] ${msg}`).join('\n'));
-}
+const DMESG = [
+  '[    0.000000] Linux version 5.15.0-101-generic (buildd@lcy02-amd64-072) (gcc version 11.4.0)',
+  '[    0.000000] Command line: BOOT_IMAGE=/vmlinuz-5.15.0-101-generic root=UUID=8d6a8f1e ro quiet splash',
+  '[    0.412891] ACPI: Core revision 20210604',
+  '[    1.120542] ahci 0000:00:1f.2: AHCI 0001.0000 32 slots 6 ports 1.5 Gbps 0x3f impl SATA mode',
+  '[    2.341209] e1000e: Intel(R) PRO/1000 Network Driver',
+  '[    2.341512] e1000e 0000:00:19.0 eth0: (PCI Express:2.5GT/s:Width x1) 52:54:00:12:34:56',
+  '[    3.150221] systemd[1]: Inserted module \'autofs4\'',
+  '[    4.201944] EXT4-fs (sda3): mounted filesystem with ordered data mode. Opts: (null)',
+].join('\n');
 
 /** PCI devices, in bus order as lspci prints them, with the driver bound to each. */
 const PCI: { addr: string; cls: string; desc: string; ids: string; sub: string; irq: number; driver?: string; modules?: string }[] = [
@@ -89,37 +64,22 @@ function lspci(ctx: LinuxContext): LinuxResult {
 const LSMOD = ['Module                  Size  Used by',
   ...MODULES.map(([n, size, count, users]) => `${n.padEnd(19)}${String(size).padStart(9)}  ${count}${users.length ? ` ${users.join(',')}` : ''}`)].join('\n');
 
-const JOURNAL_HEAD = '-- Journal begins at Mon 2026-10-19 08:00:00 UTC, ends at Mon 2026-10-19 10:25:00 UTC. --';
+const JOURNAL_HEAD = '-- Journal begins at Sun 2026-10-19 08:00:00 UTC, ends at Sun 2026-10-19 10:25:00 UTC. --';
 
 /** Journal entries with the systemd unit that logged them (kernel lines have none). */
 const JOURNAL: { unit?: string; line: string }[] = [
-  ...KERNEL_LOG.filter(([t]) => t < 3600).map(([t, msg]) => ({ line: `${syslogTime(t)} lpi-lab kernel: ${msg}` })),
   { unit: 'systemd-timesyncd', line: 'Oct 19 09:30:12 lpi-lab systemd[1]: Starting Network Time Synchronization...' },
   { unit: 'systemd-timesyncd', line: 'Oct 19 09:30:13 lpi-lab systemd[1]: Started Network Time Synchronization.' },
   { unit: 'ssh', line: 'Oct 19 09:30:14 lpi-lab systemd[1]: Starting OpenBSD Secure Shell server...' },
   { unit: 'ssh', line: 'Oct 19 09:30:14 lpi-lab sshd[1420]: Server listening on 0.0.0.0 port 22.' },
   { unit: 'ssh', line: 'Oct 19 09:30:14 lpi-lab systemd[1]: Started OpenBSD Secure Shell server.' },
-  { line: `${syslogTime(6300.118204)} lpi-lab kernel: EXT4-fs (sda3): re-mounted. Opts: errors=remount-ro` },
+  { line: 'Oct 19 09:45:00 lpi-lab kernel: EXT4-fs (sda3): re-mounted. Opts: errors=remount-ro' },
   { unit: 'ssh', line: 'Oct 19 10:00:22 lpi-lab sshd[1450]: Accepted publickey for student from 192.168.1.100 port 51220 ssh2' },
   { unit: 'nginx', line: 'Oct 19 10:15:30 lpi-lab nginx[2100]: [notice] configuration file /etc/nginx/nginx.conf test is successful' },
 ];
 
 function journalctl(ctx: LinuxContext): LinuxResult {
-  // -b takes an optional boot ID or offset (-b, -b 0, -b -1); only a following offset is its value
-  const args: string[] = [];
-  let bootOffset = '';
-  for (let i = 0; i < ctx.args.length; i++) {
-    const a = ctx.args[i];
-    const inline = a.match(/^(?:-b|--boot=)([+-]?\d+|[0-9a-f]{32})$/);
-    if (inline) { args.push('-b'); bootOffset = inline[1]; continue; }
-    args.push(a);
-    if ((a === '-b' || a === '--boot') && /^([+-]?\d+|[0-9a-f]{32})$/.test(ctx.args[i + 1] ?? '')) bootOffset = ctx.args[++i];
-  }
-  if (bootOffset && !/^(\+?0|6c1f0a3e2b7d4e5f8a9b0c1d2e3f4a5b)$/.test(bootOffset)) {
-    // The lab journal lives in /run/log/journal (volatile), so there is no earlier boot
-    return ctx.fail('Specifying boot ID or boot offset has no effect, no persistent journal was found.', 1);
-  }
-  const opts = parseOptions(args, 'unpS', { unit: 'u', lines: 'n', priority: 'p', dmesg: 'k', boot: 'b', 'no-pager': 'P', follow: 'f', since: 'S' });
+  const opts = parseOptions(ctx.args, 'unpbS', { unit: 'u', lines: 'n', priority: 'p', dmesg: 'k', boot: 'b', 'no-pager': 'P', follow: 'f', since: 'S' });
   const units = (opts.values.get('u') ?? []).map(u => u.replace(/\.service$/, ''));
   let entries = JOURNAL;
   if (opts.flags.has('k')) entries = entries.filter(e => !e.unit);
@@ -370,7 +330,7 @@ function systemctl(ctx: LinuxContext): LinuxResult {
           `● ${name}.service - ${s.displayName}`,
           `     Loaded: loaded (/lib/systemd/system/${name}.service; ${enabled(s) ? 'enabled' : 'disabled'}; vendor preset: enabled)`,
           active(s)
-            ? `     Active: active (running) since Mon 2026-10-19 10:14:00 UTC; 20min ago`
+            ? `     Active: active (running) since Sun 2026-10-19 10:14:00 UTC; 20min ago`
             : `     Active: inactive (dead)`,
         ].join('\n'));
       }
@@ -472,7 +432,7 @@ function dfHuman(kib: number): string {
 }
 
 function fdisk(ctx: LinuxContext): LinuxResult {
-  const opts = parseOptions(ctx.args, '', { list: 'l' });
+  const opts = parseOptions(ctx.args);
   const disks = linuxDisks(ctx);
   const target = opts.operands[0];
   const known = target ? disks.find(d => d.dev === target) : undefined;
@@ -569,8 +529,7 @@ function df(ctx: LinuxContext): LinuxResult {
       const fmt = (n: number) => (h ? (n < 1024 ? String(n) : dfHuman(n / 1024).replace(/[KMGT]$/, c => c)) : num(n));
       cols.push(fmt(x.inodes), fmt(x.iused), fmt(ifree), pct);
     } else {
-      // ext4 reserves 5% of its blocks for root; tmpfs reserves nothing
-      const avail = (x.type === 'tmpfs' ? x.kib : Math.round(x.kib * 0.95)) - x.usedKib;
+      const avail = Math.round(x.kib * 0.95) - x.usedKib;
       const pct = x.kib ? `${Math.ceil(x.usedKib / (x.usedKib + avail) * 100)}%` : '-';
       const fmt = (k: number) => (h ? dfHuman(k) : num(k));
       cols.push(fmt(x.kib), fmt(x.usedKib), fmt(Math.max(0, avail)), pct);
@@ -679,9 +638,9 @@ function date(ctx: LinuxContext): LinuxResult {
       return ctx.fail('date: cannot set date: Operation not permitted', 1,
         `${describeIdentity(ctx.user, ctx.groups)} Setting the system clock needs the CAP_SYS_TIME capability, which only root has; run it with sudo.`);
     }
-    return ctx.ok(formatDate(labNow(), '%a %b %e %H:%M:%S %Z %Y'));
+    return ctx.ok(formatDate(new Date(), '%a %b %e %H:%M:%S %Z %Y'));
   }
-  let when = labNow();
+  let when = new Date();
   const dArg = optionValue(opts, 'd');
   if (dArg) {
     const parsed = new Date(dArg);
@@ -752,7 +711,7 @@ linuxCommands.registerAll({
   clear: ctx => ctx.ok('\x1b[2J\x1b[0;0H'),
   hostname: ctx => ctx.ok(ctx.state.hostname),
   uname,
-  dmesg,
+  dmesg: ctx => ctx.ok(DMESG),
   lspci,
   lsmod: ctx => ctx.ok(LSMOD),
   journalctl,

@@ -26,10 +26,6 @@ interface TerminalViewProps {
   resetKey?: number;
   /** Learning facts noticed at the prompt: 'tab' (Tab completed a name), 'history' (an earlier command recalled) */
   onActivity?: (facts: string[]) => void;
-  /** bash prompt layout (the Sandbox lets learners pick one); 'standard' is user@host:~$ */
-  promptStyle?: 'standard' | 'bracket' | 'short' | 'host-first';
-  /** An extra line under the login banner (the Sandbox lets learners pick one) */
-  bannerLine?: string;
 }
 
 const SHELL_NAMES: Record<TerminalShell, string> = {
@@ -45,8 +41,8 @@ const BANNERS: Record<TerminalShell, string> = {
 };
 
 const COMPLETIONS: Record<'linux' | 'windows', string[]> = {
-  linux: ['cat', 'cd', 'chmod', 'chown', 'df', 'dmesg', 'echo', 'fdisk', 'grep', 'id', 'ip', 'journalctl', 'ls', 'lsmod', 'lspci', 'man', 'mkdir', 'ping', 'pwd', 'sort', 'sudo', 'systemctl', 'tar', 'umask', 'uniq', 'useradd', 'usermod', 'whoami'],
-  windows: ['cd', 'chkdsk', 'cls', 'dir', 'diskpart', 'dism', 'gpresult', 'gpupdate', 'help', 'ipconfig', 'netstat', 'nslookup', 'ping', 'sfc', 'taskkill', 'tasklist', 'tracert', 'type', 'Add-ADGroupMember', 'Get-ADUser', 'Get-Process', 'Get-Service', 'New-ADUser', 'Start-Service', 'Stop-Process', 'Test-NetConnection', 'Unlock-ADAccount'],
+  linux: ['cat', 'cd', 'chmod', 'chown', 'df', 'dmesg', 'echo', 'fdisk', 'grep', 'id', 'ip', 'journalctl', 'ls', 'lsmod', 'lspci', 'mkdir', 'ping', 'pwd', 'sort', 'sudo', 'systemctl', 'tar', 'umask', 'uniq', 'useradd', 'usermod', 'whoami'],
+  windows: ['chkdsk', 'diskpart', 'dism', 'gpresult', 'gpupdate', 'ipconfig', 'netstat', 'nslookup', 'ping', 'sfc', 'taskkill', 'tasklist', 'tracert', 'Add-ADGroupMember', 'Get-ADUser', 'Get-Process', 'Get-Service', 'New-ADUser', 'Start-Service', 'Stop-Process', 'Test-NetConnection', 'Unlock-ADAccount'],
 };
 
 const SYMBOL_KEYS = ['|', '>', '<', '&', '/', '~', '-', '_', '.', '$', '*', '"', "'", '\\', ':'];
@@ -84,8 +80,6 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
   readOnly = false,
   resetKey = 0,
   onActivity,
-  promptStyle = 'standard',
-  bannerLine,
 }) => {
   const [input, setInput] = useState('');
   const [copied, setCopied] = useState(false);
@@ -231,37 +225,6 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
     if (diskpart) {
       return <span className="select-none text-term-text">DISKPART&gt; </span>;
     }
-    if (promptShell === 'bash' && promptStyle !== 'standard') {
-      const path = tildePath(promptCwd, user);
-      const end = user === 'root' ? '# ' : '$ ';
-      if (promptStyle === 'bracket') {
-        return (
-          <span className="select-none">
-            <span className="text-term-muted">[</span>
-            <span className="text-term-user">{user}@{hostname}</span>{' '}
-            <span className="text-term-path">{path === '~' || path === '/' ? path : path.split('/').pop()}</span>
-            <span className="text-term-muted">]{end}</span>
-          </span>
-        );
-      }
-      if (promptStyle === 'short') {
-        return (
-          <span className="select-none">
-            <span className="text-term-path">{path}</span>
-            <span className="text-term-muted"> {end}</span>
-          </span>
-        );
-      }
-      return (
-        <span className="select-none">
-          <span className="text-term-user">{hostname}</span>
-          <span className="text-term-muted">:</span>
-          <span className="text-term-path">{path}</span>{' '}
-          <span className="text-term-user">{user}</span>
-          <span className="text-term-muted">{end}</span>
-        </span>
-      );
-    }
     if (promptShell === 'bash') {
       return (
         <span className="select-none">
@@ -288,39 +251,6 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
       </span>
     );
   };
-
-  // The history only changes with a command, not with each keystroke at the prompt
-  const historyView = React.useMemo(
-    () =>
-      history.map((item) => {
-        const stdoutText = item.errorOutput ? item.output.replace(item.errorOutput, '').trim() : item.output;
-        return (
-          <div key={item.id} className="mb-1.5">
-            <div className="break-all">
-              {renderPrompt(item.shell, item.cwd, item.user ?? currentUser, !!item.inDiskpart)}
-              <span>{item.command}</span>
-            </div>
-            {stdoutText && (
-              <pre className={`whitespace-pre-wrap break-words font-mono ${item.isError && !item.errorOutput ? 'text-term-error' : ''}`}>
-                {stdoutText}
-              </pre>
-            )}
-            {item.errorOutput && (
-              <pre className="whitespace-pre-wrap break-words font-mono text-term-error">{item.errorOutput}</pre>
-            )}
-            {/* A learning note, not shell output: set apart in the UI font so it never reads as part of the terminal */}
-            {item.explanation && (
-              <p className="mt-1 mb-2 border-l-2 border-term-line pl-3 font-sans text-[13px] leading-relaxed text-term-muted whitespace-pre-line">
-                <span className="font-medium text-term-text">Why: </span>
-                {item.explanation}
-              </p>
-            )}
-          </div>
-        );
-      }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [history, currentUser, hostname],
-  );
 
   const copyTerminalOutput = async () => {
     const text = history.map(h => `${h.command}\n${h.output}`).join('\n\n');
@@ -371,14 +301,34 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
         }}
       >
         <div role="log" aria-live="polite" aria-label="Terminal output">
-          {showBanner && (
-            <div className="mb-2">
-              <p className="text-term-muted">{BANNERS[shell]}</p>
-              {bannerLine && <p className="text-term-text">{bannerLine}</p>}
-            </div>
-          )}
+          {showBanner && <p className="text-term-muted mb-2">{BANNERS[shell]}</p>}
 
-          {historyView}
+          {history.map((item) => {
+            const stdoutText = item.errorOutput ? item.output.replace(item.errorOutput, '').trim() : item.output;
+            return (
+              <div key={item.id} className="mb-1.5">
+                <div className="break-all">
+                  {renderPrompt(item.shell, item.cwd, item.user ?? currentUser, !!item.inDiskpart)}
+                  <span>{item.command}</span>
+                </div>
+                {stdoutText && (
+                  <pre className={`whitespace-pre-wrap break-words font-mono ${item.isError && !item.errorOutput ? 'text-term-error' : ''}`}>
+                    {stdoutText}
+                  </pre>
+                )}
+                {item.errorOutput && (
+                  <pre className="whitespace-pre-wrap break-words font-mono text-term-error">{item.errorOutput}</pre>
+                )}
+                {/* A learning note, not shell output: set apart in the UI font so it never reads as part of the terminal */}
+                {item.explanation && (
+                  <p className="mt-1 mb-2 border-l-2 border-term-line pl-3 font-sans text-[13px] leading-relaxed text-term-muted whitespace-pre-line">
+                    <span className="font-medium text-term-text">Why: </span>
+                    {item.explanation}
+                  </p>
+                )}
+              </div>
+            );
+          })}
         </div>
 
         {!readOnly && (

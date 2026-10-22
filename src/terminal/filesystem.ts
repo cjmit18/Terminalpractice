@@ -1,5 +1,4 @@
 import { FileNode } from '../types/terminal';
-import { labNowIso } from './labClock';
 
 /**
  * Converts octal permission number (e.g. 755) to symbolic string ("rwxr-xr-x")
@@ -256,6 +255,20 @@ function traversalDenied(root: FileNode, path: string, user: string, group: stri
 const parentOf = (path: string) => '/' + path.split('/').filter(Boolean).slice(0, -1).join('/');
 
 /**
+ * Checks if a path can be traversed (x permission on all parent directories)
+ */
+export function checkPathTraversal(
+  root: FileNode,
+  path: string,
+  user: string,
+  group: string | string[],
+  isWindows = false
+): boolean {
+  if (isWindows) return true;
+  return findTraversalDenial(root, path, user, group) === null;
+}
+
+/**
  * Checks one permission on a node the caller already found, with an explanation on denial.
  * `purpose` is passed to explainNodeDenial (see there).
  */
@@ -291,7 +304,7 @@ export function writeFileContent(node: FileNode, content: string, append = false
   const prev = node.content || '';
   node.content = append ? prev + (prev && content ? separator : '') + content : content;
   node.size = node.content.length;
-  node.updatedAt = labNowIso();
+  node.updatedAt = new Date().toISOString();
 }
 
 /**
@@ -311,32 +324,10 @@ export function toOctalField(mode: number): number {
 }
 
 /**
- * Deep clones a file system tree. Iterative (no recursion), so even a very deep tree cannot
- * overflow the stack. Like the JSON copy it replaces, keys whose value is undefined are dropped.
+ * Deep clones a file system tree
  */
 export function cloneFileSystem(root: FileNode): FileNode {
-  const copyNode = (n: FileNode): FileNode => {
-    const out = {} as FileNode;
-    for (const k of Object.keys(n) as (keyof FileNode)[]) {
-      if (k === 'children' || n[k] === undefined) continue;
-      (out as unknown as Record<string, unknown>)[k] = n[k];
-    }
-    return out;
-  };
-  const top = copyNode(root);
-  const stack: [FileNode, FileNode][] = [[root, top]];
-  while (stack.length) {
-    const [src, dst] = stack.pop()!;
-    if (!src.children) continue;
-    const kids: Record<string, FileNode> = {};
-    for (const [name, child] of Object.entries(src.children)) {
-      const c = copyNode(child);
-      kids[name] = c;
-      stack.push([child, c]);
-    }
-    dst.children = kids;
-  }
-  return top;
+  return JSON.parse(JSON.stringify(root));
 }
 
 /**
@@ -469,7 +460,7 @@ export function createNode(
     octal,
     owner,
     group,
-    updatedAt: labNowIso(),
+    updatedAt: new Date().toISOString(),
     children: type === 'directory' ? {} : undefined,
   };
 

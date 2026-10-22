@@ -1,6 +1,6 @@
 # Plan: user accounts and login
 
-Status: Phase 1 (Worker API skeleton) and Phase 2 (GitHub sign-in) are built and deployed on `https://terminuscli.com`; sign-in stays hidden until the GitHub App is created and configured (see `docs/GITHUB_SIGNIN_SETUP.md`). Phases 3 to 5 are planned. The sections below describe the whole design; the parts that exist are marked as built.
+Status: Phases 1 and 2 (Worker API, GitHub sign-in) are built; the GitHub App still has to be created (see `docs/GITHUB_SIGNIN_SETUP.md`). Phases 3 to 5 are planned.
 
 ## Goal
 
@@ -10,20 +10,9 @@ Out of scope for the first version: leaderboards, social features, teacher/class
 
 ## What exists today
 
-- The Worker `terminuscli` (`worker/index.ts`, `worker/api.ts`) on `https://terminuscli.com`: static files are served straight from the edge, and only `/api/*` runs Worker code, with a D1 database for accounts (`migrations/0001_accounts.sql`). GitHub Pages serves a signed-out copy (`VITE_ACCOUNTS=off`).
-- Built API: `GET /api/health`, GitHub sign-in (`/api/auth/github/start`, `/api/auth/github/callback`), `GET /api/me`, `POST /api/logout`. No progress is stored on the server yet.
-- Progress lives in this browser only. Storage keys:
-
-  | Key | Storage | Holds |
-  |---|---|---|
-  | `certsim:progress:v1` | localStorage | lab objectives completed, plus a reset marker per module |
-  | `certsim:journey:v1` | localStorage | learning paths: lessons read, best quiz scores, last step |
-  | `certsim:activity:v1` | localStorage | activity facts, practice days, earned badges, and the badge and celebration settings |
-  | `certsim:theme` | localStorage | chosen theme (absent means "follow the system") |
-  | `certsim:firststeps-dismissed` | localStorage | the first-steps banner was dismissed |
-  | `certsim:chunk-reload` | sessionStorage | time of the last reload after a deploy (stops a reload loop) |
-
-- A service worker caches the app for offline use and never caches or answers `/api/*`.
+- A static site (no server code) on Cloudflare Workers static assets, also on GitHub Pages.
+- Progress lives in `localStorage`: lab objectives (`certsim:progress:v1`) and the learning paths journey (`certsim:journey:v1`: lessons read, best quiz scores, last step), plus the theme.
+- A service worker caches the whole app for offline use.
 
 ## Recommendation in one paragraph
 
@@ -43,41 +32,36 @@ Turn the existing Worker into a small API next to the static files: `/api/*` run
 ```
 Browser (React app, service worker)
    │  static files (/, /assets/*)        ─────►  Workers static assets (as today)
-   │  /api/* (fetch, cookie)             ─────►  Worker script (worker/index.ts)
+   │  /api/* (fetch, cookie)             ─────►  Worker script (new)
                                                     ├── D1: users, identities, sessions, progress
                                                     └── Secrets: OAuth client IDs/secrets
 ```
 
-`wrangler.jsonc` has the Worker entry point and `"run_worker_first": ["/api/*"]` (built), so only API calls reach the script; static files are served straight from the edge.
+`wrangler.jsonc` gains a Worker entry point and `"run_worker_first": ["/api/*"]` so only API calls reach the script; static files keep being served straight from the edge.
 
 ### Data model (D1)
-
-`users`, `identities` and `sessions` are built, as in `migrations/0001_accounts.sql`; the two progress tables are Phase 3.
 
 ```sql
 CREATE TABLE users (
   id            TEXT PRIMARY KEY,            -- random UUID
-  display_name  TEXT NOT NULL,               -- GitHub name, or the username when the name is empty
+  display_name  TEXT,
   avatar_url    TEXT,                        -- from the provider (not displayed yet; no third-party images)
-  created_at    INTEGER NOT NULL             -- Unix ms
+  created_at    INTEGER NOT NULL
 );
 
-CREATE TABLE identities (                    -- one user can later link Google, email, passkeys
-  provider      TEXT NOT NULL,               -- 'github' today; later 'google' | 'email' | 'passkey'
-  provider_id   TEXT NOT NULL,               -- the provider's stable user id, as text
+CREATE TABLE identities (                    -- one user can link GitHub, Google, email, passkeys
+  provider      TEXT NOT NULL,               -- 'github' | 'google' | 'email' | 'passkey'
+  provider_id   TEXT NOT NULL,               -- the provider's stable user id
   user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  login         TEXT,                        -- e.g. GitHub username, shown in the account menu
   PRIMARY KEY (provider, provider_id)
 );
-CREATE INDEX identities_user ON identities(user_id);
 
 CREATE TABLE sessions (
   token_hash    TEXT PRIMARY KEY,            -- SHA-256 of the cookie token; the raw token is never stored
   user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  expires_at    INTEGER NOT NULL,            -- Unix ms
+  expires_at    INTEGER NOT NULL,
   created_at    INTEGER NOT NULL
 );
-CREATE INDEX sessions_user ON sessions(user_id);
 
 -- Phase 3. One row per earned item, so each one carries the reset epoch it was earned under
 CREATE TABLE progress_items (
@@ -101,18 +85,17 @@ CREATE TABLE progress_epochs (
 );
 ```
 
-Progress is stored as one row per earned item, not as JSON documents, because each item has to carry the reset epoch it was earned under (see Syncing). Per-item rows also allow per-objective views, such as teacher dashboards, later without a migration.
+Storing progress as JSON documents keeps the server simple and matches what the app already saves. If teacher dashboards come later, normalise into per-objective rows then.
 
 ### API
 
 | Method and path | Purpose |
 |---|---|
-| `GET /api/health` | `{ "ok": true }` (built) |
-| `GET /api/auth/:provider/start` | Starts OAuth: creates `state` (short-lived cookie together with the page to return to), redirects to the provider (built for `github`) |
-| `GET /api/auth/:provider/callback` | Verifies `state`, exchanges the code, finds or creates the user, sets the session cookie, and redirects back to the page saved at start, or to `#/learn` when none was saved or it is not an in-app route (built for `github`) |
-| `GET /api/me` | Always 200 with `{ user, providers }`: the signed-in user, or `user: null` when signed out, and which sign-in methods are configured (built) |
-| `POST /api/logout` | Deletes the session row and clears the cookie; same-origin requests only (built) |
-| `GET /api/progress` | The user's stored progress items and current epochs |
+| `GET /api/auth/:provider/start` | Starts OAuth: creates `state` (short-lived cookie together with the page to return to), redirects to the provider |
+| `GET /api/auth/:provider/callback` | Verifies `state`, exchanges the code, finds or creates the user, sets the session cookie, redirects to `/#/learn` |
+| `GET /api/me` | Who is signed in (or 401) |
+| `POST /api/logout` | Deletes the session row and clears the cookie |
+| `GET /api/progress` | The stored progress documents |
 | `PUT /api/progress` | Sends queued items with their epochs; the server keeps those matching the current epochs, merges, and returns the result plus current epochs |
 | `POST /api/progress/reset` | Raises a scope's epoch and deletes its items (same-origin only) |
 | `GET /api/account/export` | All of the user's data as JSON |
@@ -158,11 +141,11 @@ The merge and epoch rules are pure TypeScript shared by the app and the Worker, 
 
 ### App changes
 
-- `src/lib/account.ts`: `useAccount()` hook (`/api/me`), sign-in links, sign-out (built).
-- Header: a "Sign in" button (or the user's name with a small menu: Sync status, Export data, Sign out, Delete account). Built so far: the button, and a menu with the name, the GitHub username and Sign out.
+- `src/lib/account.ts`: `useAccount()` hook (`/api/me`), sign-in links, sign-out.
+- Header: a "Sign in" button (or the user's name with a small menu: Sync status, Export data, Sign out, Delete account).
 - `src/lib/progress.ts` / `journey.ts`: call the sync after each local save when signed in.
 - A small account page (`#/account`): linked sign-in methods, export, delete, and a plain-language privacy note.
-- Service worker: never cache or intercept `/api/*` (built in Phase 1).
+- Service worker: never cache or intercept `/api/*` (today it caches every same-origin GET).
 
 ## Security and privacy checklist
 
@@ -179,25 +162,25 @@ The merge and epoch rules are pure TypeScript shared by the app and the Worker, 
 
 - Unit: merge rules (union, best score), session token hashing, OAuth state checks.
 - Sync cases, as unit tests on the shared rules and as Worker route tests: **reset then reconnect** (A resets, offline B uploads its old snapshot, nothing comes back; B's work after syncing the reset is kept), **two accounts in one browser** (A signs out, B signs in: none of A's progress reaches B), **late response after an account switch** is discarded, **signed-out progress is imported only after Add**.
-- Worker: route tests in `worker/api.test.ts`, run by `npm test` with Node's test runner against Node's built-in SQLite (`node:sqlite`) with the real migration and a fake GitHub (built for Phases 1 and 2).
+- Worker: route tests with Cloudflare's Vitest integration against a local D1.
 - E2E (Playwright): a fake OAuth provider route in test builds, then sign in, sync between two browser contexts, sign out, delete account. Existing signed-out tests keep passing unchanged.
 
 ## Phases
 
-| Phase | Status | Delivers | Done when |
-|---|---|---|---|
-| 1. Worker API skeleton | **Built** | `main` Worker, `/api/health`, D1 database and migrations, service worker ignores `/api` | Deployed; static site unchanged; e2e green |
-| 2. GitHub sign-in | **Built** (waits for the GitHub App) | OAuth flow, sessions, `/api/me`, Sign in / Sign out in the header | A user can sign in and out on production |
-| 3. Progress sync | Planned | Account-scoped storage, merge and epoch rules, `GET/PUT /api/progress`, reset endpoint, opt-in import, per-account offline queue | Progress made on one device appears on another; offline work survives; the reset and shared-browser cases above pass |
-| 4. Account page | Planned | Export, delete, privacy note, Google sign-in | A user can export and delete everything |
-| 5. More sign-in options | Planned | Email one-time codes (needs an email provider), passkeys | Optional, based on demand |
+| Phase | Delivers | Done when |
+|---|---|---|
+| 1. Worker API skeleton | `main` Worker, `/api/health`, D1 database and migrations, service worker ignores `/api` | Deployed; static site unchanged; e2e green |
+| 2. GitHub sign-in | OAuth flow, sessions, `/api/me`, Sign in / Sign out in the header | A user can sign in and out on production |
+| 3. Progress sync | Account-scoped storage, merge and epoch rules, `GET/PUT /api/progress`, reset endpoint, opt-in import, per-account offline queue | Progress made on one device appears on another; offline work survives; the reset and shared-browser cases above pass |
+| 4. Account page | Export, delete, privacy note, Google sign-in | A user can export and delete everything |
+| 5. More sign-in options | Email one-time codes (needs an email provider), passkeys | Optional, based on demand |
 
 Each phase is a separate PR with its own tests.
 
 ## Decisions (made)
 
-1. **Sign-in:** GitHub first, through a **GitHub App** rather than an OAuth App, because a GitHub App takes up to 10 callback URLs: the custom domain, the `workers.dev` address and `localhost`, and more domains later without removing the old ones.
-2. **Domain:** `https://terminuscli.com`, a custom domain on the `terminuscli` Worker. The Worker builds the callback URL from the address it was reached on, so another domain needs no code change (steps in `docs/GITHUB_SIGNIN_SETUP.md`, "Adding another domain").
+1. **Sign-in:** GitHub first, through a **GitHub App** rather than an OAuth App, because a GitHub App takes up to 10 callback URLs: the `workers.dev` address and `localhost` now, the custom domain added later without removing the old one.
+2. **Domain:** `*.workers.dev` for now; a custom domain later. The Worker builds the callback URL from the address it was reached on, so switching needs no code change (steps in `docs/GITHUB_SIGNIN_SETUP.md`).
 3. **Minimum age:** 13, stated in the privacy note when the account page arrives (Phase 4).
 4. **Email:** not collected. Sign-in reads only the public GitHub profile (id, username, name), which needs no GitHub permissions.
 5. **GitHub Pages:** stays as a signed-out copy for now (`VITE_ACCOUNTS=off` hides sign-in there).

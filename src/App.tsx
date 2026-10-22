@@ -1,12 +1,17 @@
-import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { BottomNav, Header } from './components/Header';
 import { ModuleSelector } from './components/ModuleSelector';
 import { ModuleRunner } from './components/ModuleRunner';
 import { ExamModule } from './types/modules';
 import { SystemState } from './types/terminal';
-import { Route, Section, TrackSection, isTrackSection, navSection, replaceRoute, routeHref, useHashRoute } from './lib/router';
-import { completeObjective, countDone, progressCodec, PROGRESS_KEY, resetModules, sanitizeProgress } from './lib/progress';
+import { Route, Section, TrackSection, isTrackSection, replaceRoute, routeHref, useHashRoute } from './lib/router';
+import { completeObjective, countDone, progressCodec, PROGRESS_KEY, resetModules } from './lib/progress';
 import { useSyncedStorage } from './lib/syncedStorage';
 import { useTheme } from './lib/theme';
 import { ALL_MODULES, TRACK_MODULES, TRACK_NAMES, topicLabel } from './lib/modules';
@@ -20,10 +25,8 @@ import {
   labPlacements,
   markRead,
   quizPassed,
-  recordAnswer,
   recordQuizScore,
   resetPath,
-  sanitizeJourney,
   stepAfter,
   stepKey,
   stepTitle,
@@ -33,13 +36,10 @@ import { LEARNING_PATHS } from './data/paths';
 import { PathsList } from './components/journey/PathsList';
 import { PathOverview } from './components/journey/PathOverview';
 import { StepPage } from './components/journey/StepPage';
-import { ReviewPage } from './components/journey/ReviewPage';
 import { PageErrorBoundary } from './components/PageErrorBoundary';
 import { lazyWithReload, reloadOnPreloadError } from './lib/chunkReload';
-import { ACTIVITY_KEY, activityCodec, addFacts, addPractice, quizMissFact, resetFact } from './lib/activity';
+import { ACTIVITY_KEY, activityCodec, addFacts, quizMissFact, resetFact } from './lib/activity';
 import { GameLayerProvider } from './components/celebrate/GameLayer';
-import { CHALLENGES_BY_ID } from './data/challenges';
-import { BadgePage } from './components/badges/BadgePage';
 
 const MODULES_BY_ID = new Map(ALL_MODULES.map(m => [m.id, m]));
 // How lab progress and the journey are saved and shared with the app's other open tabs
@@ -54,9 +54,6 @@ const LAB_PLACEMENTS = labPlacements(LEARNING_PATHS);
 reloadOnPreloadError();
 const SimulatorsHub = lazyWithReload(() => import('./components/SimulatorsHub').then(m => ({ default: m.SimulatorsHub })));
 const SandboxMode = lazyWithReload(() => import('./components/SandboxMode').then(m => ({ default: m.SandboxMode })));
-const ChallengesPage = lazyWithReload(() =>
-  import('./components/challenges/ChallengesPage').then(m => ({ default: m.ChallengesPage })),
-);
 const CommandEncyclopedia = lazyWithReload(() =>
   import('./components/CommandEncyclopedia').then(m => ({ default: m.CommandEncyclopedia })),
 );
@@ -75,17 +72,15 @@ export default function App() {
   const [theme, setTheme] = useTheme();
   // moduleId -> completed objective ids (plus reset tombstones), saved in localStorage and kept in
   // step with other open tabs: saves merge with what is stored, other tabs' saves merge in here
-  const [progressRecord, setProgressRecord, progressFromOtherTab] = useSyncedStorage(PROGRESS_KEY, PROGRESS_CODEC);
-  // The record also keeps what a newer build saved; only known labs and tasks are shown and counted
-  const progress = useMemo(() => sanitizeProgress(progressRecord.done, ALL_MODULES), [progressRecord.done]);
+  const [progressRecord, setProgressRecord] = useSyncedStorage(PROGRESS_KEY, PROGRESS_CODEC);
+  const progress = progressRecord.done;
   // The lab last open in each track, so coming back to a track returns you to it
   const [lastLab, setLastLab] = useState<Record<TrackSection, string | null>>({ linux: null, windows: null });
   // The lab track used last, for the single Labs item in the phone nav
   const [lastTrack, setLastTrack] = useState<TrackSection>('linux');
   // Lessons read, quiz scores and the last step opened in the learning paths, saved and shared like progress
-  const [journeyRecord, setJourney, journeyFromOtherTab] = useSyncedStorage(JOURNEY_KEY, JOURNEY_CODEC);
-  const journey = useMemo(() => sanitizeJourney(journeyRecord, LEARNING_PATHS), [journeyRecord]);
-  const [activity, setActivity, activityFromOtherTab] = useSyncedStorage(ACTIVITY_KEY, ACTIVITY_CODEC);
+  const [journey, setJourney] = useSyncedStorage(JOURNEY_KEY, JOURNEY_CODEC);
+  const [activity, setActivity] = useSyncedStorage(ACTIVITY_KEY, ACTIVITY_CODEC);
   // The last learning page open this session, so the Learn link brings you back to it
   const [lastLearnHref, setLastLearnHref] = useState<string | null>(null);
   const mainRef = useRef<HTMLElement>(null);
@@ -217,13 +212,9 @@ export default function App() {
   const trackModules = track ? TRACK_MODULES[track] : [];
   const activeModule = moduleId ? trackModules.find(m => m.id === moduleId) ?? null : null;
   const routeKey = routeHref(route);
-  // #/sandbox/challenge[/<id>]: the mini challenges
-  const challengeRoute = route.section === 'sandbox' && 'challengeId' in route ? route : null;
-  const challengeTitle = challengeRoute?.challengeId ? CHALLENGES_BY_ID.get(challengeRoute.challengeId)?.title : undefined;
 
   // Learning path routes
   const learnRoute = route.section === 'learn' ? route : null;
-  const reviewOpen = learnRoute?.page === 'review';
   const activePath = learnRoute?.pathId ? LEARNING_PATHS.find(p => p.id === learnRoute.pathId) ?? null : null;
   // Memoized so a rerender (e.g. another tab's journey save) is not mistaken for opening the step again
   const routeStepId = learnRoute?.stepId;
@@ -271,21 +262,18 @@ export default function App() {
       activeModule ? `${topicLabel(activeModule)} ${activeModule.title}` : null,
       activeStep ? stepTitle(activeStep.step, MODULES_BY_ID) : null,
       activePath?.title,
-      challengeTitle,
-      challengeRoute ? 'Challenges' : null,
-      reviewOpen ? 'Review' : null,
-      route.section === 'badge' ? 'Badge' : PAGE_TITLES[route.section],
+      PAGE_TITLES[route.section],
       'Terminus CertSim',
     ];
     document.title = parts.filter(Boolean).join(' · ');
-  }, [routeKey, activeModule, activePath, activeStep, route.section, challengeTitle, challengeRoute, reviewOpen]);
+  }, [routeKey, activeModule, activePath, activeStep, route.section]);
 
   const handleObjectiveComplete = (moduleId: string, objectiveId: string) =>
     setProgressRecord(prev => completeObjective(prev, moduleId, objectiveId));
 
   const handleMarkRead = (pathId: string, stepId: string) => {
     setJourney(j => markRead(j, pathId, stepId));
-    setActivity(a => addPractice(a, []));
+    setActivity(a => addFacts(a, []));
   };
   const handleQuizScore = (pathId: string, stepId: string, score: QuizScore) => {
     const path = LEARNING_PATHS.find(p => p.id === pathId);
@@ -296,19 +284,14 @@ export default function App() {
       !quizPassed(score, step.passMark) &&
       !quizPassed(journey.quiz[stepKey(pathId, stepId)], step.passMark);
     setJourney(j => recordQuizScore(j, pathId, stepId, score));
-    // Any quiz attempt counts toward the weekly goal
-    setActivity(a => addPractice(a, missed ? [quizMissFact(pathId, stepId)] : []));
+    setActivity(a => addFacts(a, missed ? [quizMissFact(pathId, stepId)] : []));
   };
-  // Each checkpoint or review answer, for the review queue
-  const handleAnswer = (pathId: string, questionId: string, right: boolean) =>
-    setJourney(j => recordAnswer(j, pathId, questionId, right));
 
   const resetTrackProgress = (t: TrackSection) => {
     const ids = TRACK_MODULES[t].map(m => m.id);
     setProgressRecord(prev => resetModules(prev, ids));
-    // Labs started but not finished: finishing one later earns "Fresh start" (as Reset lab does; a finished lab does not count)
-    const finished = labCheck(progress, ALL_MODULES);
-    setActivity(a => addFacts(a, ids.filter(id => (progress[id] ?? []).length > 0 && !finished(id)).map(resetFact)));
+    // Labs that had progress: finishing one again later earns "Fresh start"
+    setActivity(a => addFacts(a, ids.filter(id => (progress[id] ?? []).length > 0).map(resetFact)));
   };
 
   // A lab opened from the lab lists that is also a step in a path: where that path goes next
@@ -347,7 +330,6 @@ export default function App() {
       modules={ALL_MODULES}
       progress={progress}
       journey={journey}
-      fromOtherTab={[activityFromOtherTab, progressFromOtherTab, journeyFromOtherTab]}
     >
     <div className="h-dvh flex flex-col bg-bg text-text font-sans">
       <a
@@ -362,7 +344,7 @@ export default function App() {
       </a>
 
       <Header
-        current={navSection(route.section)}
+        current={route.section}
         hrefs={hrefs}
         tasksDone={tasksDone}
         tasksTotal={tasksTotal}
@@ -372,11 +354,7 @@ export default function App() {
 
       <main id="main" ref={mainRef} tabIndex={-1} className="flex-1 min-h-0 overflow-y-auto focus:outline-none">
         <PageErrorBoundary resetKey={routeKey}>
-        {reviewOpen && <ReviewPage paths={LEARNING_PATHS} src={src} onAnswer={handleAnswer} />}
-
-        {learnRoute && !learnRoute.pathId && !reviewOpen && (
-          <PathsList paths={LEARNING_PATHS} src={src} modulesById={MODULES_BY_ID} progress={progress} />
-        )}
+        {learnRoute && !learnRoute.pathId && <PathsList paths={LEARNING_PATHS} src={src} modulesById={MODULES_BY_ID} />}
 
         {activePath && !learnRoute?.stepId && (
           <PathOverview
@@ -400,7 +378,6 @@ export default function App() {
             onObjectiveComplete={handleObjectiveComplete}
             onMarkRead={handleMarkRead}
             onQuizScore={handleQuizScore}
-            onAnswer={handleAnswer}
           />
         )}
 
@@ -432,15 +409,9 @@ export default function App() {
           </Suspense>
         )}
 
-        {route.section === 'sandbox' && !challengeRoute && (
+        {route.section === 'sandbox' && (
           <Suspense fallback={loading}>
             <SandboxMode />
-          </Suspense>
-        )}
-
-        {challengeRoute && (
-          <Suspense fallback={loading}>
-            <ChallengesPage challengeId={challengeRoute.challengeId} />
           </Suspense>
         )}
 
@@ -449,12 +420,10 @@ export default function App() {
             <CommandEncyclopedia />
           </Suspense>
         )}
-
-        {route.section === 'badge' && <BadgePage badgeId={route.badgeId} />}
         </PageErrorBoundary>
       </main>
 
-      <BottomNav current={navSection(route.section)} hrefs={hrefs} labsHref={hrefs[lastTrack]} />
+      <BottomNav current={route.section} hrefs={hrefs} labsHref={hrefs[lastTrack]} />
     </div>
     </GameLayerProvider>
   );

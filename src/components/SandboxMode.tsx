@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useState } from 'react';
 import { TerminalShell, SystemState } from '../types/terminal';
 import { createDefaultLinuxFs, createDefaultWindowsFs } from '../terminal/filesystem';
 import { TerminalView } from './TerminalView';
@@ -8,8 +8,6 @@ import { PageHeader, ResetButton } from './lab/PageHeader';
 import { FolderTree, X } from 'lucide-react';
 import { useGameLayer } from './celebrate/GameLayer';
 import { sandboxFacts } from '../lib/activity';
-import { BANNER_TEXT, SandboxLook } from './settings/SandboxLook';
-import { clearSandboxTry, peekSandboxTry } from './fieldguide/tryInSandbox';
 
 const LINUX_STATE: SystemState = {
   hostname: 'sandbox-linux',
@@ -165,59 +163,25 @@ const EXAMPLES: Record<TerminalShell, string[]> = {
   powershell: ['Get-Service', 'Get-Process', 'Test-NetConnection 8.8.8.8 -Port 53'],
 };
 
-const linuxState = (host: string): SystemState => ({ ...LINUX_STATE, hostname: host || LINUX_STATE.hostname });
-const windowsState = (host: string): SystemState => {
-  const name = host ? host.toUpperCase() : WINDOWS_STATE.hostname;
-  return { ...WINDOWS_STATE, hostname: name, envVars: { ...WINDOWS_STATE.envVars, COMPUTERNAME: name } };
-};
-const newLinux = (host = '') => createSession(createDefaultLinuxFs(), linuxState(host), LINUX_HOME);
-const newWindows = (host = '') => createSession(createDefaultWindowsFs(), windowsState(host), WINDOWS_HOME);
+const newLinux = () => createSession(createDefaultLinuxFs(), LINUX_STATE, LINUX_HOME);
+const newWindows = () => createSession(createDefaultWindowsFs(), WINDOWS_STATE, WINDOWS_HOME);
 
 export const SandboxMode: React.FC = () => {
-  // A command offered by "Try it in the Sandbox" (the field guide, the Reference page)
-  const [offered] = useState(peekSandboxTry);
-  useEffect(() => clearSandboxTry(), []);
-  const [shell, setShell] = useState<TerminalShell>(offered?.shell ?? 'bash');
-  const [panel, setPanel] = useState<'files' | 'look' | null>(null);
-  const showFiles = panel === 'files';
+  const [shell, setShell] = useState<TerminalShell>('bash');
+  const [showFiles, setShowFiles] = useState(false);
   // Counts resets, so the terminal shows the login banner of the fresh machine
   const [resetCount, setResetCount] = useState(0);
 
   // bash runs on one machine; Command Prompt and PowerShell share the Windows one
-  // Commands here are tagged as done in the Sandbox (for "Free play"), and three in a day count
-  // toward the weekly goal
-  const { record, sandboxCommand, prefs, unlocks } = useGameLayer();
-  const host = unlocks.hostname ? prefs.sandboxHost : '';
-  const promptStyle = unlocks.prompt ? prefs.promptStyle : 'standard';
-  const bannerLine = unlocks.banner ? BANNER_TEXT[prefs.bannerLine] : '';
-  const recordSandbox = (facts: string[]) => {
-    record(sandboxFacts(facts));
-    sandboxCommand();
-  };
-  const linux = useShellSession(() => newLinux(host), undefined, recordSandbox);
-  const windows = useShellSession(() => newWindows(host), undefined, recordSandbox);
-
-  // A new machine name applies to the running machines too, without a reset
-  const appliedHost = useRef(host);
-  useEffect(() => {
-    if (appliedHost.current === host) return;
-    appliedHost.current = host;
-    const l = linuxState(host);
-    const w = windowsState(host);
-    linux.setSystemState({ ...linux.session.state, hostname: l.hostname });
-    windows.setSystemState({
-      ...windows.session.state,
-      hostname: w.hostname,
-      envVars: { ...windows.session.state.envVars, COMPUTERNAME: w.hostname },
-    });
-  }, [host, linux, windows]);
+  // Commands here are tagged as done in the Sandbox (for "Free play")
+  const { record } = useGameLayer();
+  const recordSandbox = (facts: string[]) => record(sandboxFacts(facts));
+  const linux = useShellSession(newLinux, undefined, recordSandbox);
+  const windows = useShellSession(newWindows, undefined, recordSandbox);
 
   const isLinux = shell === 'bash';
   const machine = isLinux ? linux : windows;
   const { session } = machine;
-  const examples =
-    offered && offered.shell === shell ? [offered.command, ...EXAMPLES[shell].filter(e => e !== offered.command)] : EXAMPLES[shell];
-  const anyUnlock = unlocks.hostname || unlocks.prompt || unlocks.banner;
 
   return (
     <div className="flex flex-col h-full min-h-0 overflow-hidden bg-bg text-text">
@@ -227,28 +191,10 @@ export const SandboxMode: React.FC = () => {
         shellSwitch={{ shells: SHELLS, value: shell, onChange: setShell }}
         actions={
           <>
-            <a
-              href="#/sandbox/challenge"
-              className="inline-flex items-center h-10 sm:h-9 px-2 rounded-md text-sm font-medium text-accent hover:bg-surface-2"
-            >
-              Challenges
-            </a>
-            {anyUnlock && (
-              <button
-                type="button"
-                aria-pressed={panel === 'look'}
-                onClick={() => setPanel(v => (v === 'look' ? null : 'look'))}
-                className={`inline-flex items-center h-10 sm:h-9 px-3 rounded-md border text-sm font-medium transition-colors ${
-                  panel === 'look' ? 'bg-accent-soft text-accent border-accent-soft' : 'bg-surface border-line-strong hover:bg-surface-2'
-                }`}
-              >
-                Your machine
-              </button>
-            )}
             <button
               type="button"
               aria-pressed={showFiles}
-              onClick={() => setPanel(v => (v === 'files' ? null : 'files'))}
+              onClick={() => setShowFiles(v => !v)}
               className={`inline-flex items-center gap-1.5 h-10 sm:h-9 px-3 rounded-md border text-sm font-medium transition-colors ${
                 showFiles ? 'bg-accent-soft text-accent border-accent-soft' : 'bg-surface border-line-strong hover:bg-surface-2'
               }`}
@@ -257,7 +203,7 @@ export const SandboxMode: React.FC = () => {
               Files
             </button>
             <ResetButton label="Reset" onClick={() => {
-                machine.reset(isLinux ? newLinux(host) : newWindows(host));
+                machine.reset(isLinux ? newLinux() : newWindows());
                 setResetCount(n => n + 1);
               }}
             />
@@ -267,7 +213,7 @@ export const SandboxMode: React.FC = () => {
 
       <div className="flex-1 min-h-0 flex gap-4 p-3 sm:p-4 overflow-hidden">
         {/* On phones the file tree takes the terminal's place while it is open */}
-        <div className={`flex-1 min-w-0 min-h-0 ${panel ? 'hidden md:flex' : 'flex'}`}>
+        <div className={`flex-1 min-w-0 min-h-0 ${showFiles ? 'hidden md:flex' : 'flex'}`}>
           <TerminalView
             shell={shell}
             cwd={session.cwd}
@@ -279,33 +225,9 @@ export const SandboxMode: React.FC = () => {
             isDiskpartActive={!isLinux && session.diskpartActive}
             currentUser={session.state.currentUser}
             hostname={session.state.hostname}
-            suggestedCommands={examples}
-            promptStyle={promptStyle}
-            bannerLine={bannerLine || undefined}
+            suggestedCommands={EXAMPLES[shell]}
           />
         </div>
-
-        {panel === 'look' && (
-          <aside
-            aria-label="Your machine"
-            className="w-full md:w-[26rem] shrink-0 min-h-0 flex flex-col rounded-md border border-line bg-surface overflow-hidden"
-          >
-            <div className="flex items-center justify-between gap-3 pl-4 pr-1 h-11 border-b border-line shrink-0">
-              <h2 className="text-base font-semibold">Your machine</h2>
-              <button
-                type="button"
-                onClick={() => setPanel(null)}
-                aria-label="Close your machine settings"
-                className="inline-flex items-center justify-center size-10 sm:size-8 rounded-sm text-muted hover:text-text hover:bg-surface-2"
-              >
-                <X className="size-4" aria-hidden="true" />
-              </button>
-            </div>
-            <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3">
-              <SandboxLook defaultHost={LINUX_STATE.hostname} user={linux.session.state.currentUser} host={linux.session.state.hostname} />
-            </div>
-          </aside>
-        )}
 
         {showFiles && (
           <aside
@@ -316,7 +238,7 @@ export const SandboxMode: React.FC = () => {
               <h2 className="text-base font-semibold">Files</h2>
               <button
                 type="button"
-                onClick={() => setPanel(null)}
+                onClick={() => setShowFiles(false)}
                 aria-label="Close files"
                 className="inline-flex items-center justify-center size-10 sm:size-8 rounded-sm text-muted hover:text-text hover:bg-surface-2"
               >

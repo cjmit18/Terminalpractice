@@ -13,10 +13,6 @@ interface QuizViewProps {
   onScore: (score: QuizScore) => void;
   /** Where Continue goes once passed, and what it is called */
   next: { href: string; title: string };
-  /** Each answer as it is checked, for the review queue */
-  onAnswer?: (questionId: string, right: boolean) => void;
-  /** A line under "You passed", e.g. that the stage's lessons are now marked as known */
-  passedNote?: string | null;
 }
 
 const buttonClass = (primary: boolean) => (primary ? primaryLinkClass : secondaryLinkClass);
@@ -26,7 +22,7 @@ const buttonClass = (primary: boolean) => (primary ? primaryLinkClass : secondar
  * under the choices you just made, which is the point of a checkpoint, and on a phone
  * there is never a long page to scroll back through to find the feedback.
  */
-export const QuizView: React.FC<QuizViewProps> = ({ step, best, onScore, next, onAnswer, passedNote }) => {
+export const QuizView: React.FC<QuizViewProps> = ({ step, best, onScore, next }) => {
   const total = step.questions.length;
   const needed = correctNeeded(total, step.passMark);
   const [index, setIndex] = useState(0);
@@ -69,7 +65,6 @@ export const QuizView: React.FC<QuizViewProps> = ({ step, best, onScore, next, o
     }
     focusTarget.current = 'feedback';
     setChecked(true);
-    onAnswer?.(question.id, selected === question.answer);
   };
 
   const advance = () => {
@@ -118,7 +113,6 @@ export const QuizView: React.FC<QuizViewProps> = ({ step, best, onScore, next, o
         passed={quizPassed({ correct, total }, step.passMark)}
         previousBest={previousBest}
         next={next}
-        passedNote={passedNote}
         onRetry={retry}
         headingRef={resultRef}
       />
@@ -166,7 +160,7 @@ export const QuizView: React.FC<QuizViewProps> = ({ step, best, onScore, next, o
   );
 };
 
-export interface QuestionBlockProps {
+interface QuestionBlockProps {
   question: QuizQuestion;
   number: number;
   total: number;
@@ -178,7 +172,7 @@ export interface QuestionBlockProps {
 }
 
 /** Native radios inside a fieldset: arrow keys, Space and screen reader grouping come for free. */
-export const QuestionBlock: React.FC<QuestionBlockProps> = ({
+const QuestionBlock: React.FC<QuestionBlockProps> = ({
   question,
   number,
   total,
@@ -253,7 +247,7 @@ export const QuestionBlock: React.FC<QuestionBlockProps> = ({
   );
 };
 
-export const Feedback = React.forwardRef<HTMLDivElement, { question: QuizQuestion; selected: number | null }>(
+const Feedback = React.forwardRef<HTMLDivElement, { question: QuizQuestion; selected: number | null }>(
   ({ question, selected }, ref) => {
     const right = selected === question.answer;
     return (
@@ -294,7 +288,6 @@ interface QuizResultProps {
   passed: boolean;
   previousBest: QuizScore | undefined;
   next: { href: string; title: string };
-  passedNote?: string | null;
   onRetry: () => void;
   headingRef: React.RefObject<HTMLHeadingElement | null>;
 }
@@ -312,7 +305,6 @@ const QuizResult: React.FC<QuizResultProps> = ({
   passed,
   previousBest,
   next,
-  passedNote,
   onRetry,
   headingRef,
 }) => {
@@ -337,7 +329,6 @@ const QuizResult: React.FC<QuizResultProps> = ({
             Not passed yet. You need {needed} of {total} to pass.
           </p>
         )}
-        {passed && passedNote && <p className="text-sm text-muted">{passedNote}</p>}
         {comparison && <p className="text-sm text-muted">{comparison}</p>}
       </section>
 

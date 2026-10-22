@@ -1,10 +1,7 @@
 import { ExamModule } from '../types/modules';
 import { FileNode, SystemState } from '../types/terminal';
 import { createDefaultLinuxFs, getNodeAtPath } from '../terminal/filesystem';
-import {
-  countedSourceIps, extractedSourceIps, failedLinesFound, financeDirShown, modulesListed, mountsShown, partitionTableListed,
-  passwdEntryShown, pciListed, sarahCreated, sarahHomeChecked, sataInDmesg,
-} from './verifiers';
+import { countedSourceIps, extractedSourceIps, financeDirShown, passwdEntryShown, sarahCreated, sarahHomeOwned, sataInDmesg } from './verifiers';
 import { WELCOME_MARKER, folderListed, helpRead, notesEntered, welcomeRead, workingDirShown } from './firstStepsVerifiers';
 
 const baseLinuxState: SystemState = {
@@ -94,12 +91,6 @@ export const LPI_MODULES: ExamModule[] = [
     estimatedMinutes: 15,
     scenarioDescription: 'The finance folder at /home/student/finance is mode 777, so every account on this machine can read and change the payroll file inside it. Lock it down: the owner gets full access, the finance group can list and enter it, and everyone else gets nothing. Make root the owner and finance the group, then set your shell\'s umask to 027 so new files you create are not readable by others.',
     systemContext: 'Host: lpi-lab01 | User: student (can use sudo) | Directory: /home/student',
-    ticket: {
-      from: 'Priya Raman',
-      role: 'Finance',
-      ask: 'Anyone with a login on the Linux server can open the payroll folder right now. Could you make it private to the finance team before Friday\'s pay run?',
-      thanks: 'Thanks, payroll is private again.',
-    },
     defaultShell: 'bash',
     allowedShells: ['bash'],
     simType: 'permission-matrix',
@@ -223,12 +214,6 @@ export const LPI_MODULES: ExamModule[] = [
     estimatedMinutes: 20,
     scenarioDescription: 'Someone tried to brute-force SSH on this server this morning. The security team wants to know which IP addresses failed to log in and how many times each. Pull the "Failed password" lines out of /var/log/auth.log, extract the source address, and count the attempts per address, all in one pipeline.',
     systemContext: 'Host: lpi-lab01 | Log: /var/log/auth.log',
-    ticket: {
-      from: 'Tomás Herrera',
-      role: 'Security',
-      ask: 'Someone kept guessing SSH passwords on our server this morning. Could you tell me which address it came from and how many tries it made?',
-      thanks: 'Thanks. That address is now blocked at the firewall.',
-    },
     defaultShell: 'bash',
     allowedShells: ['bash'],
     simType: 'terminal-only',
@@ -240,7 +225,7 @@ export const LPI_MODULES: ExamModule[] = [
         nudge: 'You want the tool that prints only the lines matching a pattern. The pattern has a space in it, so think about quotes.',
         shape: 'grep "______ ________" /var/log/auth.log',
         hint: 'Run grep "Failed password" /var/log/auth.log. Keep the quotes: without them, grep searches for "Failed" alone, reports that a file called password does not exist, and still prints the lines that contain Failed.',
-        verifier: (_, __, ctx) => failedLinesFound(ctx),
+        verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && /grep/.test(ctx.command) && ctx.stdout.includes('198.51.100.44'),
       },
       {
         id: 'obj-pipe-awk',
@@ -303,12 +288,6 @@ export const LPI_MODULES: ExamModule[] = [
     estimatedMinutes: 10,
     scenarioDescription: 'A new virtual server has just been handed over to you. Before it goes into service, check what hardware the kernel can see: list the PCI devices, confirm the e1000e network driver module is loaded, and find the SATA controller in the kernel boot messages.',
     systemContext: 'Host: lpi-lab01 (QEMU virtual machine)',
-    ticket: {
-      from: 'Aiko Tanaka',
-      role: 'Warehouse',
-      ask: 'The new server for the warehouse scanners has just arrived. Before we rely on it, could you check that it can see its network card and disk controller?',
-      thanks: 'Thanks, the scanners move onto it tomorrow.',
-    },
     defaultShell: 'bash',
     allowedShells: ['bash'],
     simType: 'terminal-only',
@@ -320,7 +299,7 @@ export const LPI_MODULES: ExamModule[] = [
         nudge: 'Many hardware listing tools are named "ls" plus the name of a bus. Network and video cards sit on the PCI bus.',
         shape: 'ls___',
         hint: 'Run lspci. On a real system, lspci -k also shows which kernel driver handles each device.',
-        verifier: (_, __, ctx) => pciListed(ctx),
+        verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && /^(sudo\s+)?lspci\b/.test(ctx.command.trim()) && ctx.stdout.includes('Ethernet'),
       },
       {
         id: 'hw-lsmod',
@@ -328,8 +307,8 @@ export const LPI_MODULES: ExamModule[] = [
         description: 'Check that the e1000e module is loaded.',
         nudge: 'Drivers loaded into the kernel are called modules, and the tool that lists them follows the same "ls" naming. A pipe to grep narrows the list.',
         shape: 'ls___ | grep e1000e',
-        hint: 'Run lsmod, or lsmod | grep e1000e to show only that module. lsmod formats /proc/modules, so grep e1000e /proc/modules works too.',
-        verifier: (_, __, ctx) => modulesListed(ctx),
+        hint: 'Run lsmod, or lsmod | grep e1000e to show only that module.',
+        verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && ctx.command.includes('lsmod') && (ctx.stdout.includes('e1000e') || ctx.stdout.includes('Module')),
       },
       {
         id: 'hw-dmesg',
@@ -383,12 +362,6 @@ export const LPI_MODULES: ExamModule[] = [
     estimatedMinutes: 15,
     scenarioDescription: 'Sarah joins the engineering team today. Create the account sarah with a home directory at /home/sarah and /bin/bash as the login shell, and add her to the developers group as a supplementary group. Then check her entry in /etc/passwd.',
     systemContext: 'Host: lpi-lab01 | User: student (can use sudo)',
-    ticket: {
-      from: 'Daniel Mensah',
-      role: 'Engineering',
-      ask: 'Sarah joins my team today. Could you set up her login on the build server and add her to the developers group?',
-      thanks: 'Thanks, Sarah is logged in and already building.',
-    },
     defaultShell: 'bash',
     allowedShells: ['bash'],
     simType: 'terminal-only',
@@ -409,7 +382,7 @@ export const LPI_MODULES: ExamModule[] = [
         nudge: 'Ask ls for a long listing of the directory itself, not of what is inside it.',
         shape: 'ls -__ /home/sarah',
         hint: 'Run ls -ld /home/sarah.',
-        verifier: (fs, _, ctx) => sarahHomeChecked(fs, ctx),
+        verifier: (fs) => sarahHomeOwned(fs),
       },
       {
         id: 'usr-verify-passwd',
@@ -463,12 +436,6 @@ export const LPI_MODULES: ExamModule[] = [
     estimatedMinutes: 15,
     scenarioDescription: 'You are taking over this server and want to know how its disk is laid out before you change anything. Read the partition table with fdisk -l and find the /boot, swap and root partitions, then use df -h to see what is mounted where and how full it is.',
     systemContext: 'Host: lpi-lab01 | Disk: /dev/sda, 50 GiB, GPT',
-    ticket: {
-      from: 'Fatima Al-Sayed',
-      role: 'IT lead',
-      ask: 'You are looking after the old file server from today. Before you change anything, could you note how its disk is laid out and how full it is?',
-      thanks: 'Thanks, that layout is in our team notes now.',
-    },
     defaultShell: 'bash',
     allowedShells: ['bash'],
     simType: 'diskpart',
@@ -480,7 +447,7 @@ export const LPI_MODULES: ExamModule[] = [
         nudge: 'The partitioning tool can list partition tables without changing anything. It reads the disk device directly, so it needs root.',
         shape: 'sudo fdisk -_',
         hint: 'Run sudo fdisk -l. It needs root because it reads the disk device directly.',
-        verifier: (_, __, ctx) => partitionTableListed(ctx),
+        verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && ctx.command.includes('fdisk') && ctx.command.includes('-l') && ctx.stdout.includes('Disk /dev/sda'),
       },
       {
         id: 'disk-df',
@@ -489,7 +456,7 @@ export const LPI_MODULES: ExamModule[] = [
         nudge: 'The tool that reports free disk space has an option for human-readable sizes such as M and G.',
         shape: 'df -_',
         hint: 'Run df -h.',
-        verifier: (_, __, ctx) => mountsShown(ctx),
+        verifier: (_, __, ctx) => !!ctx && ctx.exitCode === 0 && /^(sudo\s+)?df\b/.test(ctx.command.trim()) && ctx.stdout.includes('/boot'),
       },
     ],
     initialFs: createDefaultLinuxFs(),
@@ -528,12 +495,6 @@ export const LPI_MODULES: ExamModule[] = [
     estimatedMinutes: 5,
     scenarioDescription: 'This is a practice Linux computer. Its terminal is the dark box beside these instructions (on a phone, tap Terminal at the top). A file called welcome.txt is waiting in your home folder. Each task below is one short command: type it, press Enter, and the task is ticked off. Typing something wrong is fine; the terminal tells you what went wrong and you can simply try again.',
     systemContext: 'Computer: lpi-lab01 | You are: student | Starting folder: /home/student (your home folder, shown as ~)',
-    ticket: {
-      from: 'Grace Chen',
-      role: 'IT lead',
-      ask: 'Welcome to Northwind Supplies. Before your first real ticket, take a few minutes to find your way around this practice computer.',
-      thanks: 'Thanks for taking the time. Your first real tickets are waiting in the labs.',
-    },
     defaultShell: 'bash',
     allowedShells: ['bash'],
     simType: 'terminal-only',
@@ -544,7 +505,7 @@ export const LPI_MODULES: ExamModule[] = [
         description: 'The terminal is always working inside one folder. Ask which one: type pwd and press Enter.',
         nudge: 'pwd is short for "print working directory". Directory is another word for folder, so it means "show me the folder I am in".',
         shape: 'p_d   (three lower-case letters, no spaces)',
-        hint: 'Type pwd and press Enter. It prints /home/student: the student folder, inside the home folder, starting from the very top of the whole filesystem (the first /). That is your home folder.',
+        hint: 'Type pwd and press Enter. It prints /home/student: the student folder, inside the home folder, starting from the very top of the disk (the first /). That is your home folder.',
         verifier: (_, __, ctx) => workingDirShown('linux', ctx),
       },
       {
@@ -629,7 +590,7 @@ export const LPI_MODULES: ExamModule[] = [
         step: 1,
         title: 'See where you are',
         command: 'pwd',
-        explanation: 'pwd prints /home/student. Reading from the left: the first / is the top of the whole filesystem, home is a folder there, and student is a folder inside home.',
+        explanation: 'pwd prints /home/student. Reading from the left: the first / is the top of the disk, home is a folder there, and student is a folder inside home.',
         underlyingConcept: 'Every command runs "in" a folder, called the working directory. When you name a file without saying where it is, the terminal looks for it in that folder.',
       },
       {
@@ -663,7 +624,7 @@ export const LPI_MODULES: ExamModule[] = [
     ],
     examTips: [
       'Linux is case sensitive: ls, Ls and LS are three different names, and only ls is a command. The same goes for file and folder names.',
-      'pwd, ls, cat, cd and man appear throughout both LPIC-1 exams. Later labs build on exactly these five ideas.',
+      'pwd, ls, cd and cat appear throughout both LPIC-1 exams. Later labs build on exactly these five ideas.',
       'In a real terminal, man opens a page you can scroll. Press the space bar to go down a page and q to quit back to the prompt.',
     ],
   },

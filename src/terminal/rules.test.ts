@@ -9,6 +9,8 @@ import {
   getNodeAtPath, 
   createNode,
   applyChmod,
+  applySpecialBits,
+  getSpecialBits,
   getUserGroups,
 } from './filesystem.ts';
 import { parsePipelinedLine, tokenizeArgs, extractStderrRedirect, splitChainedCommandLine } from './parser.ts';

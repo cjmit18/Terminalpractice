@@ -12,9 +12,6 @@ import { TasksPanel, ConceptsPanel, WalkthroughPanel } from './lab/LabManual';
 import { PageHeader, ResetButton, segmentClass } from './lab/PageHeader';
 import { useGameLayer } from './celebrate/GameLayer';
 import { LabRecap } from './celebrate/LabRecap';
-import { TicketThanks } from './lab/Ticket';
-import { CHALLENGES } from '../data/challenges';
-import { routeHref } from '../lib/router';
 import { hintFact, resetFact } from '../lib/activity';
 
 interface ModuleRunnerProps {
@@ -25,8 +22,6 @@ interface ModuleRunnerProps {
   onObjectiveComplete: (moduleId: string, objectiveId: string) => void;
   /** Where to go after this lab, when it is part of a path (shown in the recap once it is done) */
   next?: { href: string; title: string } | null;
-  /** Shown under the lab recap once the lab is finished here (a path's stage recap) */
-  recap?: React.ReactNode;
 }
 
 type SideTab = 'tasks' | 'simulator' | 'concepts' | 'walkthrough';
@@ -39,7 +34,6 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
   completedObjectiveIds,
   onObjectiveComplete,
   next,
-  recap,
 }) => {
   const { record, announce } = useGameLayer();
   const [activeShell, setActiveShell] = useState<TerminalShell>(module.defaultShell);
@@ -137,11 +131,8 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
     if (savedKeyRef.current === savedKey) return;
     savedKeyRef.current = savedKey;
     const saved = new Set(completedObjectiveIds);
-    // Judge by machine state only: the last command's result is not evidence that outlives the reset,
-    // so running that command again counts straight away
-    const machine: ShellSession = { ...session, lastResult: undefined };
     for (const obj of module.objectives) {
-      if (completedRef.current.has(obj.id) && !saved.has(obj.id) && passes(obj, machine)) rearmRef.current.add(obj.id);
+      if (completedRef.current.has(obj.id) && !saved.has(obj.id) && passes(obj, session)) rearmRef.current.add(obj.id);
       if (saved.has(obj.id)) rearmRef.current.delete(obj.id);
     }
     completedRef.current = saved;
@@ -179,16 +170,12 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
     if (!module.objectives.every(o => completedRef.current.has(o.id))) record([resetFact(module.id)]);
   };
 
-  // A hint opened for a task not done yet: finishing that task afterwards earns "Hints are tools"
-  const handleHint = useCallback((objectiveId: string) => {
-    if (!completedRef.current.has(objectiveId)) record([hintFact(module.id, objectiveId)]);
-  }, [record, module.id]);
+  // A hint opened for a task: finishing that task afterwards earns "Hints are tools"
+  const handleHint = useCallback((objectiveId: string) => record([hintFact(module.id, objectiveId)]), [record, module.id]);
 
   const total = module.objectives.length;
   const done = module.objectives.filter(o => completed.has(o.id)).length;
   const isComplete = total > 0 && done === total;
-  // Offered in the recap: a mini challenge that runs on this lab's machine
-  const challenge = CHALLENGES.find(c => c.machineFrom === module.id);
   const { state } = session;
 
   const renderSimulator = () => {
@@ -315,21 +302,7 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
             className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 py-6"
           >
             <div hidden={currentTab !== 'tasks'}>
-              {isComplete && finishedHere && (
-                <>
-                  <TicketThanks ticket={module.ticket} />
-                  {challenge && (
-                    <p className="mb-4 text-sm">
-                      <span className="text-muted">A short challenge on this machine: </span>
-                      <a href={routeHref({ section: 'sandbox', challengeId: challenge.id })} className="font-medium text-accent underline-offset-2 hover:underline rounded-sm">
-                        {challenge.title}
-                      </a>
-                    </p>
-                  )}
-                  <LabRecap module={module} passedBy={passedBy} next={next ?? null} />
-                  {recap}
-                </>
-              )}
+              {isComplete && finishedHere && <LabRecap module={module} passedBy={passedBy} next={next ?? null} />}
               <TasksPanel key={module.id} module={module} completed={completed} onHint={objectiveId => handleHint(objectiveId)} />
             </div>
             {module.simType !== 'terminal-only' && <div hidden={currentTab !== 'simulator'} className="h-full">{renderSimulator()}</div>}

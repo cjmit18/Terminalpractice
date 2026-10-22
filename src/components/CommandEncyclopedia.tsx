@@ -2,33 +2,12 @@ import React, { useRef, useState } from 'react';
 import { COMMAND_REFERENCE, CommandRefEntry } from '../data/commandReference';
 import { ArrowLeft, Search, X } from 'lucide-react';
 import { Button, CodeBlock, Segmented, cx } from './sims/ui';
-import { FieldGuide } from './fieldguide/FieldGuide';
-import { offerInSandbox } from './fieldguide/tryInSandbox';
-import type { TerminalShell } from '../types/terminal';
 
 interface CommandEncyclopediaProps {
   onSelectCommand?: (cmd: string) => void;
 }
 
 type Platform = 'all' | 'linux' | 'windows';
-type View = 'reference' | 'guide';
-
-/** The shell a Reference entry runs in, for "Try it in the Sandbox" */
-const entryShell = (cmd: CommandRefEntry): TerminalShell =>
-  cmd.platform !== 'windows' ? 'bash' : /^[A-Z][a-z]+-[A-Z]/.test(cmd.name) ? 'powershell' : 'cmd';
-
-const ViewSwitch: React.FC<{ value: View; onChange: (v: View) => void }> = ({ value, onChange }) => (
-  <Segmented<View>
-    label="View"
-    value={value}
-    onChange={onChange}
-    className="flex w-full"
-    options={[
-      { value: 'reference', label: 'Reference' },
-      { value: 'guide', label: 'Your field guide' },
-    ]}
-  />
-);
 
 const PLATFORM_LABEL: Record<CommandRefEntry['platform'], string> = {
   linux: 'Linux',
@@ -48,7 +27,6 @@ const matches = (cmd: CommandRefEntry, q: string) =>
 export const CommandEncyclopedia: React.FC<CommandEncyclopediaProps> = ({
   onSelectCommand,
 }) => {
-  const [view, setView] = useState<View>('reference');
   const [search, setSearch] = useState('');
   const [platformFilter, setPlatformFilter] = useState<Platform>('all');
   const [selectedName, setSelectedName] = useState<string>(COMMAND_REFERENCE[0]?.name ?? '');
@@ -80,28 +58,6 @@ export const CommandEncyclopedia: React.FC<CommandEncyclopediaProps> = ({
     articleRef.current?.scrollTo({ top: 0 });
   };
 
-  if (view === 'guide') {
-    return (
-      <div className="h-full min-h-0 overflow-y-auto bg-bg text-text">
-        <header className="mx-auto w-full max-w-3xl space-y-3 px-4 pt-5 sm:px-8 md:pt-8">
-          <h1 className="text-2xl font-semibold">Your field guide</h1>
-          <div className="max-w-sm">
-            <ViewSwitch value={view} onChange={setView} />
-          </div>
-        </header>
-        <FieldGuide
-          hasReference={name => COMMAND_REFERENCE.some(c => c.name === name)}
-          onOpenReference={name => {
-            setSearch('');
-            setPlatformFilter('all');
-            setView('reference');
-            open(name);
-          }}
-        />
-      </div>
-    );
-  }
-
   return (
     <div className="flex h-full min-h-0 flex-col bg-bg text-text md:flex-row">
       {/* Command list */}
@@ -117,7 +73,6 @@ export const CommandEncyclopedia: React.FC<CommandEncyclopediaProps> = ({
             <h1 className="text-2xl font-semibold">Command reference</h1>
             <p className="mt-0.5 text-sm text-muted">The commands the labs use, with the options the exams ask about.</p>
           </div>
-          <ViewSwitch value={view} onChange={setView} />
           <div className="relative">
             <label htmlFor="ref-search" className="sr-only">Search commands</label>
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" aria-hidden />
@@ -265,14 +220,13 @@ export const CommandEncyclopedia: React.FC<CommandEncyclopediaProps> = ({
             </section>
 
             <footer className="mt-10 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
-              <Button
-                variant="secondary"
-                onClick={() =>
-                  onSelectCommand ? onSelectCommand(selected.name) : offerInSandbox({ shell: entryShell(selected), command: selected.name })
-                }
-              >
-                Try <span className="font-mono">{selected.name}</span> in the Sandbox
-              </Button>
+              {onSelectCommand ? (
+                <Button variant="secondary" onClick={() => onSelectCommand(selected.name)}>
+                  Try <span className="font-mono">{selected.name}</span> in the sandbox
+                </Button>
+              ) : (
+                <span />
+              )}
               {next && (
                 <button
                   type="button"

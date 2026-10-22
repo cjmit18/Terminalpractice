@@ -14,7 +14,7 @@ export type Announcement =
 
 export interface Batch {
   text: string;
-  /** Contains a badge or milestone: the note stays longer (15 s instead of 6 s, paused while hovered or focused) */
+  /** Contains a badge or milestone: the note stays until dismissed */
   lasting: boolean;
   confetti: boolean;
 }

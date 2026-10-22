@@ -6,13 +6,12 @@ import { Row, getProcessRows, matchServices, processTable, serviceObject, servic
 import { getADGroupMemberRows, getADUserRows, listView, searchADAccountRows } from './psAD';
 import { tcpConnectionRows, tcpTable } from './psSystem';
 import { NATIVE_TOOLS } from './help';
-import { childItems, itemTable } from './psFiles';
 
 // The PowerShell object pipeline: a source cmdlet produces objects, Where-Object, Sort-Object,
 // Select-Object, Select-String and Measure-Object transform them, and a cmdlet such as
 // Stop-Process or Unlock-ADAccount can consume them (binding each object by property name).
 
-type Kind = 'service' | 'process' | 'aduser' | 'tcp' | 'file' | 'string' | 'custom';
+type Kind = 'service' | 'process' | 'aduser' | 'tcp' | 'string' | 'custom';
 interface Objects { kind: Kind; items: Row[]; /** Show as a list even with few properties (Measure-Object). */ list?: boolean }
 
 /** The canonical cmdlet name for a name or alias (sort -> Sort-Object), lower case. */
@@ -44,21 +43,19 @@ function source(ctx: WindowsContext, stage: PsStage, runNative: (line: string) =
     case 'search-adaccount': return rowsOr(searchADAccountRows(sub), 'aduser');
     case 'get-adgroupmember': return rowsOr(getADGroupMemberRows(sub), 'aduser');
     case 'get-nettcpconnection': return rowsOr(tcpConnectionRows(sub), 'tcp');
-    case 'get-childitem': {
-      const r = childItems(sub);
-      if ('exitCode' in r) return r;
-      if (r.errors.length) return psCommands.get('Get-ChildItem')!(sub)!;
-      // -Name passes the names on as strings
-      return r.nameOnly ? { kind: 'string', items: r.names.map(n => ({ Name: n, '': n })) } : { kind: 'file', items: r.items };
-    }
   }
   // A quoted string (or several, comma-separated) on its own is output as is
   if (!stage.tokens.length && /^["']/.test(stage.raw)) return { kind: 'string', items: [{ '': stage.name }] };
   const handler = psCommands.get(stage.name);
-  if (handler && ['get-content', 'write-output'].includes(name)) {
+  if (handler && ['get-content', 'write-output', 'get-childitem'].includes(name)) {
     const res = handler(sub);
     if (!res) return sub.fail('');
     if (res.exitCode !== 0) return res;
+    if (name === 'get-childitem') {
+      // Items as their names, so filters on Name work
+      const named = handler(stageContext(ctx, psStage(`${stage.raw} -Name`)));
+      return { kind: 'string', items: strings(named?.stdout ?? '').map(r => ({ Name: r[''], '': r[''] })) };
+    }
     return { kind: 'string', items: strings(res.stdout) };
   }
   if (NATIVE_TOOLS.includes(stage.name.toLowerCase().replace(/\.exe$/, ''))) {
@@ -162,7 +159,7 @@ const STATUS_RANK: Record<string, number> = { Stopped: 1, StartPending: 2, StopP
 function sortObjects(ctx: WindowsContext, objs: Objects, stage: PsStage): Objects | WindowsResult {
   const b = bindCmdlet(stage.raw, 'Sort-Object', stage.tokens, { Property: { kind: 'list', position: 0 }, Descending: { kind: 'switch' }, Unique: { kind: 'switch' }, CaseSensitive: { kind: 'switch' } });
   if (typeof b === 'string') return ctx.fail(b);
-  const defaults: Record<Kind, string> = { service: 'Name', process: 'ProcessName', aduser: 'Name', tcp: 'LocalPort', file: 'Name', string: '', custom: '' };
+  const defaults: Record<Kind, string> = { service: 'Name', process: 'ProcessName', aduser: 'Name', tcp: 'LocalPort', string: '', custom: '' };
   const keys = b.list('Property') ?? [defaults[objs.kind]];
   const dir = b.has('Descending') ? -1 : 1;
   const sorted = [...objs.items].sort((x, y) => {
@@ -277,7 +274,6 @@ function render(objs: Objects & { list?: boolean }, format?: 'table' | 'list'): 
     case 'process': return processTable(items);
     case 'aduser': return format === 'table' ? tableView(items) : listView(items);
     case 'tcp': return tcpTable(items);
-    case 'file': return itemTable(items);
     case 'string': return items.map(i => String(i[''] ?? Object.values(i)[0] ?? '')).join('\n');
     default:
       if (objs.list || Object.keys(items[0]).length >= 5) return listView(items);

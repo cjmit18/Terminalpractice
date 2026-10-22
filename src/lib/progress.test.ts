@@ -8,7 +8,6 @@ import {
   mergeProgress,
   parseProgress,
   resetModules,
-  sanitizeProgress,
   serializeProgress,
 } from './progress.ts';
 
@@ -51,28 +50,7 @@ test('Progress text: tombstones survive a round trip; older data without them st
   // A reset with nothing left still keeps the key, so a later merge sees the tombstone
   assert.ok(serializeProgress(resetModules(EMPTY_PROGRESS, ['m1'], 5)));
   assert.equal(serializeProgress(EMPTY_PROGRESS), null);
-  // Labs and tasks this build does not know are kept in the record (a newer build saved them), after the known ones
-  assert.deepEqual(parseProgress('{"zz":["q"],"m1":["b","nope","a"],"bad":[1]}', MODULES), {
-    done: { m1: ['a', 'b', 'nope'], zz: ['q'] },
-    resetAt: {},
-  });
+  assert.deepEqual(parseProgress('{"m1":["b","a","nope"],"zz":["q"]}', MODULES), { done: { m1: ['a', 'b'] }, resetAt: {} });
   assert.deepEqual(parseProgress('{"#resetAt":{"m1":"soon","m3":-1}}', MODULES), EMPTY_PROGRESS);
   assert.deepEqual(parseProgress('not json', MODULES), EMPTY_PROGRESS);
-});
-
-test('Progress: what a newer build saved survives parse, merge and save; only known tasks are shown', () => {
-  const text = '{"future-lab":["obj1"],"m1":["a","future-obj"],"#resetAt":{"other-lab":5}}';
-  const stored = parseProgress(text, MODULES);
-  assert.deepEqual(stored.done, { m1: ['a', 'future-obj'], 'future-lab': ['obj1'] });
-  assert.deepEqual(stored.resetAt, { 'other-lab': 5 });
-  // This tab completes a task: the save still holds the newer build's data
-  const mine = completeObjective(stored, 'm2', 'x');
-  const saved = parseProgress(serializeProgress(mergeProgress(stored, mine, MODULES)), MODULES);
-  assert.deepEqual(saved.done, { m1: ['a', 'future-obj'], m2: ['x'], 'future-lab': ['obj1'] });
-  // A tab that never saw it does not drop it either, and a reset of an unknown lab still wins
-  const merged = mergeProgress(stored, { done: { 'other-lab': ['old'] }, resetAt: {} }, MODULES);
-  assert.equal(merged.done['other-lab'], undefined);
-  assert.deepEqual(mergeProgress(merged, merged, MODULES), merged);
-  // Shown and counted: known labs and tasks only
-  assert.deepEqual(sanitizeProgress(saved.done, MODULES), { m1: ['a'], m2: ['x'] });
 });

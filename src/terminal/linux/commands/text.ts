@@ -7,6 +7,8 @@ import { runAwk, AwkError } from '../awk';
 
 // Text processing: echo, cat, head, tail, grep, awk, sed, sort, uniq, wc, cut, tr
 
+const joinOut = (parts: string[]) => parts.filter(p => p !== '').join('\n');
+
 /** Ends a command that read inputs: stdout plus any per-file errors, exit code `errCode` on error. */
 function finish(ctx: LinuxContext, stdout: string, errors: string[], errCode: number, okCode = 0): LinuxResult {
   return ctx.result(stdout, errors.join('\n'), errors.length ? errCode : okCode);
@@ -24,46 +26,11 @@ function echo(ctx: LinuxContext): LinuxResult {
   return ctx.ok(text);
 }
 
-/** cat -v: control characters as ^X, DEL as ^?, bytes above 127 as M-x (tabs and newlines stay). */
-function showNonprinting(line: string, tabs: boolean): string {
-  let out = '';
-  for (const ch of line) {
-    let code = ch.codePointAt(0)!;
-    let pre = '';
-    if (code > 255) { out += ch; continue; }
-    if (code >= 128) { pre = 'M-'; code -= 128; }
-    if (code === 9 && !pre) out += tabs ? '^I' : '\t';
-    else if (code < 32) out += `${pre}^${String.fromCharCode(code + 64)}`;
-    else if (code === 127) out += `${pre}^?`;
-    else out += pre + String.fromCharCode(code);
-  }
-  return out;
-}
-
 function cat(ctx: LinuxContext): LinuxResult {
-  const opts = parseOptions(ctx.args, '', {
-    'show-all': 'A', 'number-nonblank': 'b', 'show-ends': 'E', number: 'n', 'squeeze-blank': 's', 'show-tabs': 'T', 'show-nonprinting': 'v',
-  });
-  const f = opts.flags;
-  // -A is -vET, -e is -vE, -t is -vT
-  const nonprinting = f.has('v') || f.has('A') || f.has('e') || f.has('t');
-  const ends = f.has('E') || f.has('A') || f.has('e');
-  const tabs = f.has('T') || f.has('A') || f.has('t');
+  const opts = parseOptions(ctx.args);
   const { inputs, errors } = readInputs(ctx, opts.operands);
   let out = inputs.map(i => i.text).join('\n');
-  if (f.has('s') || f.has('b') || f.has('n') || nonprinting || ends || tabs) {
-    let lines = toLines(out);
-    if (f.has('s')) lines = lines.filter((l, i) => !(l === '' && i > 0 && lines[i - 1] === ''));
-    let n = 0;
-    lines = lines.map(l => {
-      let text = nonprinting ? showNonprinting(l, tabs) : tabs ? l.replace(/\t/g, '^I') : l;
-      if (ends) text += '$';
-      if (f.has('b')) return l === '' ? text : `${padNum(++n, 6)}\t${text}`;
-      if (f.has('n')) return `${padNum(++n, 6)}\t${text}`;
-      return text;
-    });
-    out = lines.join('\n');
-  }
+  if (opts.flags.has('n')) out = toLines(out).map((l, i) => `${padNum(i + 1, 6)}\t${l}`).join('\n');
   return finish(ctx, out, errors, 1);
 }
 
@@ -78,9 +45,7 @@ function headOrTail(which: 'head' | 'tail') {
     if (isNaN(num) || (bytes !== undefined && isNaN(parseInt(bytes, 10)))) {
       return ctx.fail(`${which}: invalid number of ${bytes !== undefined ? 'bytes' : 'lines'}: '${bytes ?? spec}'`);
     }
-    // head -c N can read N bytes from /dev/zero or /dev/urandom
-    const endless = which === 'head' && bytes !== undefined && parseInt(bytes, 10) > 0 ? parseInt(bytes, 10) : undefined;
-    const { inputs, errors } = readInputs(ctx, opts.operands, undefined, endless);
+    const { inputs, errors } = readInputs(ctx, opts.operands);
     const pick = (text: string): string => {
       if (bytes !== undefined) {
         const b = parseInt(bytes, 10);

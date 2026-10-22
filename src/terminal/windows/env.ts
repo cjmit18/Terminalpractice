@@ -84,32 +84,6 @@ export function setErrorLevel(state: SystemState, command: string, exitCode: num
   state.envVars = { ...(state.envVars ?? {}), '=ExitCode': String(exitCode) };
 }
 
-/**
- * Expands the automatic variables $PWD ($PWD.Path) and $HOME to their paths, outside single
- * quotes. A bare one becomes a quoted value so a space in the path stays in one argument.
- */
-export function expandPowerShellAutomatic(line: string, cwd: string, state: SystemState): string {
-  const values: Record<string, string> = { pwd: cwd, home: `C:\\Users\\${state.currentUser}` };
-  let result = '';
-  let quote: '"' | "'" | null = null;
-  for (let i = 0; i < line.length;) {
-    const ch = line[i];
-    if (ch === '`' && i + 1 < line.length) { result += line.slice(i, i + 2); i += 2; continue; }
-    if ((ch === '"' || ch === "'") && (!quote || quote === ch)) { quote = quote ? null : ch; result += ch; i++; continue; }
-    // Outside quotes $PWD.Path is the path too; inside "..." it is $PWD followed by the text .Path
-    const m = ch === '$' && quote !== "'" ? line.slice(i).match(quote ? /^\$(pwd|home)\b/i : /^\$(pwd\b(?:\.Path\b)?|home\b)/i) : null;
-    if (m) {
-      const value = values[m[1].slice(0, m[1].startsWith('h') || m[1].startsWith('H') ? 4 : 3).toLowerCase()];
-      result += quote === '"' ? value.replace(/[`"$]/g, c => `\`${c}`) : `'${value.replace(/'/g, "''")}'`;
-      i += m[0].length;
-      continue;
-    }
-    result += ch;
-    i++;
-  }
-  return result;
-}
-
 /** Expands $env:NAME in a PowerShell line. */
 export function expandPowerShellEnv(line: string, state: SystemState): string {
   const vars = windowsEnvironment(state);

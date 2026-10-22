@@ -3,7 +3,6 @@ import { WindowsContext, WindowsResult, psCommands } from './context';
 import { PsBound, PsParamSpec, bindCmdlet, psError } from './psUtil';
 import { connections, hasConnectivity, resolveHost } from './cmd/network';
 import { lineMatcher } from './psPipeline';
-import { applyGroupPolicy } from './clock';
 
 // PowerShell counterparts of CMD tools that labs accept as answers: Clear-DnsClientCache,
 // Test-Connection, Repair-WindowsImage, Invoke-GPUpdate, Get-NetTCPConnection and Select-String.
@@ -17,7 +16,7 @@ function bind(ctx: WindowsContext, cmdlet: string, spec: Record<string, PsParamS
 const isResult = (b: PsBound | WindowsResult): b is WindowsResult => 'exitCode' in b;
 
 const NOT_ELEVATED = (ctx: WindowsContext, what: string) =>
-  `You are '${ctx.state.currentUser}' in a prompt that is not elevated. ${what} needs an elevated PowerShell (Run as administrator).`;
+  `You are '${ctx.state.currentUser}', a standard user (not elevated). ${what} needs an elevated PowerShell (Run as administrator).`;
 
 /** The CIM "Access denied" block the NetTCPIP/DnsClient cmdlets print for a standard user. */
 const cimDenied = (ctx: WindowsContext, cmdlet: string, cls: string) =>
@@ -117,8 +116,7 @@ function invokeGPUpdate(ctx: WindowsContext): WindowsResult {
   if (target && !['computer', 'user'].includes(target.toLowerCase())) {
     return ctx.fail(psError(ctx.raw, 'Invoke-GPUpdate', `Cannot validate argument on parameter 'Target'. The argument "${target}" does not belong to the set "Computer,User" specified by the ValidateSet attribute.`, 'InvalidData', '', 'ParameterBindingValidationException', 'ParameterArgumentValidationError'));
   }
-  applyGroupPolicy(ctx.state, target?.toLowerCase() as 'computer' | 'user' | undefined);
-  // Unlike gpupdate, it runs silently when it succeeds
+  // Like gpupdate, it runs silently when it succeeds
   return ctx.ok();
 }
 

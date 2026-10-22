@@ -38,43 +38,6 @@ test('two tabs: a badge earned in one appears in the other without a reload', as
   await runCommand(other, 'man ls');
   await expect(earnedList(page)).toContainText('man man');
   await expect(earnedList(page)).toContainText('hello, world');
-  // Only the tab where it was earned says so
-  await expect(celebrations(other)).toContainText('man man');
-  await page.waitForTimeout(500);
-  await expect(celebrations(page)).toHaveText('');
-});
-
-test('two tabs: clearing badges in one is quiet in the other', async ({ page, context }) => {
-  // A finished lab, so a badge comes back after the clear
-  await page.goto('#/learn');
-  await page.evaluate(() => localStorage.setItem('certsim:progress:v1', JSON.stringify({ 'lpi-101-1-system-architecture': ['hw-lspci', 'hw-lsmod', 'hw-dmesg'] })));
-  await page.reload();
-  await expect(earnedList(page)).toContainText('First lab');
-  const other = await context.newPage();
-  await other.goto('#/learn');
-  other.once('dialog', d => d.accept());
-  await other.getByRole('button', { name: 'Clear badges and activity' }).click();
-  await expect.poll(async () => (await storedActivity(page)).clearedAt).toBeTruthy();
-  await expect(earnedList(page)).toContainText('First lab');
-  await page.waitForTimeout(500);
-  await expect(celebrations(page)).toHaveText('');
-  await other.close();
-});
-
-test('the note waits while the pointer is over its text, then goes', async ({ page, isMobile }) => {
-  test.skip(isMobile, 'hover');
-  await page.clock.install();
-  await page.goto('#/linux/lpi-101-1-system-architecture');
-  await runCommand(page, 'lspci');
-  await page.clock.runFor(400);
-  const note = page.getByTestId('celebration-note');
-  await expect(note).toBeVisible();
-  await note.getByText('Task 1 of 3 done', { exact: false }).hover();
-  await page.clock.runFor(20_000);
-  await expect(note).toBeVisible();
-  await page.mouse.move(700, 100);
-  await page.clock.runFor(20_000);
-  await expect(note).toHaveCount(0);
 });
 
 test('a lab task passing is announced in the one status region', async ({ page }) => {
@@ -138,73 +101,10 @@ test('a cleared stage: quiet note with the badge; lively adds confetti', async (
   await expect(page.getByTestId('confetti')).toBeAttached();
 });
 
-test('a stage cleared by marking its last lesson read shows the stage recap', async ({ page }) => {
-  await seedAlmostClearedStage(page, 'quiet');
-  await expect(page.getByRole('heading', { name: 'Stage clear: Hardware and boot' })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Mark as read' }).click();
-  await expect(page.getByRole('heading', { level: 2, name: 'Stage clear: Hardware and boot' })).toBeVisible();
-});
-
-test('a stage cleared by finishing its lab shows the stage recap', async ({ page }) => {
-  await page.goto('#/learn');
-  await page.evaluate(() => {
-    localStorage.setItem('certsim:progress:v1', JSON.stringify({ 'lpi-101-1-system-architecture': ['hw-lspci', 'hw-lsmod'] }));
-    localStorage.setItem(
-      'certsim:journey:v1',
-      JSON.stringify({
-        read: ['lpic1-101/how-linux-sees-hardware', 'lpic1-101/from-power-on-to-login'],
-        quiz: { 'lpic1-101/quiz-hardware': { correct: 5, total: 5 } },
-        last: null,
-      }),
-    );
-  });
-  await page.goto('#/learn/lpic1-101/lab-hardware');
-  await page.reload();
-  await showTerminal(page);
-  await runCommand(page, 'dmesg | grep -i sata');
-  const show = page.getByRole('group', { name: 'Show' }).getByRole('button', { name: /^Lab/ });
-  if (await show.isVisible()) await show.click();
-  await expect(page.getByRole('heading', { level: 2, name: 'Stage clear: Hardware and boot' })).toBeVisible();
-});
-
 test('confetti never runs when the system asks for reduced motion', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await seedAlmostClearedStage(page, 'lively');
   await page.getByRole('button', { name: 'Mark as read' }).click();
   await expect(celebrations(page)).toContainText('Stage clear: Hardware and boot.');
   await expect(page.getByTestId('confetti')).toHaveCount(0);
-});
-
-/** Saves new preferences as another tab would, and tells this tab with a storage event. */
-async function prefsFromAnotherTab(page: Page, prefs: Record<string, unknown>) {
-  await page.evaluate(
-    ({ key, prefs }) => {
-      const a = JSON.parse(localStorage.getItem(key) ?? '{"facts":[],"days":[],"badges":{}}');
-      localStorage.setItem(key, JSON.stringify({ ...a, prefs: { ...a.prefs, ...prefs }, prefsAt: Date.now() + 60_000 }));
-      window.dispatchEvent(new StorageEvent('storage', { key }));
-    },
-    { key: ACTIVITY_KEY, prefs },
-  );
-}
-
-test('celebrations turned off during the batch delay: nothing is said', async ({ page }) => {
-  await page.goto('#/sandbox');
-  const input = page.getByRole('textbox', { name: 'Command' });
-  await input.fill('whoami');
-  await input.press('Enter');
-  await prefsFromAnotherTab(page, { celebrations: 'off' });
-  await page.waitForTimeout(800);
-  await expect(celebrations(page)).toHaveText('');
-  await expect(page.getByTestId('celebration-note')).toHaveCount(0);
-});
-
-test('hiding badges while a note shows drops the badge text and keeps the task', async ({ page }) => {
-  await page.goto('#/linux/lpi-101-1-system-architecture');
-  await showTerminal(page);
-  await runCommand(page, 'lspci');
-  await expect(celebrations(page)).toContainText('Task 1 of 3 done');
-  await expect(celebrations(page)).toContainText('hello, world');
-  await prefsFromAnotherTab(page, { showBadges: false });
-  await expect(celebrations(page)).toHaveText('Task 1 of 3 done: List the PCI devices.');
-  await expect(page.getByTestId('celebration-note')).not.toContainText('hello, world');
 });

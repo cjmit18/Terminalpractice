@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ExamModule, ModuleObjective } from '../../types/modules';
 import { Check, CheckCircle2 } from 'lucide-react';
-import { TicketAsk } from './Ticket';
 
 /**
  * Hints in the data read like `Execute: chmod 750 dir` or `Run "ls -ld dir" to ...`.
@@ -69,7 +68,6 @@ export const TasksPanel: React.FC<TasksPanelProps> = ({ module, completed, onHin
   return (
     <div className="space-y-8 max-w-prose">
       <section className="space-y-3">
-        <TicketAsk ticket={module.ticket} />
         <p className="text-[15px] leading-relaxed">{module.scenarioDescription}</p>
         <p className="text-sm text-muted">{module.systemContext.split(/\s*\|\s*/).join(' · ')}</p>
       </section>
@@ -181,16 +179,12 @@ const HintCostNote = () => <p className="text-sm text-muted">Hints never cost an
  */
 const HintLadder: React.FC<HintLadderProps> = ({ id, rungs, count, onReveal, onHide, note }) => {
   const more = count < rungs.length;
-  // "Show more" goes away with the last rung, and "Hide hints" when hiding: keep keyboard focus on the hint controls
+  // "Show more" goes away with the last rung; keep keyboard focus on the hint controls
   const hideRef = useRef<HTMLButtonElement>(null);
-  const showRef = useRef<HTMLButtonElement>(null);
   const focusHide = useRef(false);
-  const focusShow = useRef(false);
   useEffect(() => {
     if (focusHide.current) hideRef.current?.focus();
-    if (focusShow.current) showRef.current?.focus();
     focusHide.current = false;
-    focusShow.current = false;
   }, [count]);
 
   return (
@@ -198,7 +192,6 @@ const HintLadder: React.FC<HintLadderProps> = ({ id, rungs, count, onReveal, onH
       <div className="flex flex-wrap gap-x-4">
         {more && (
           <button
-            ref={showRef}
             type="button"
             onClick={() => {
               focusHide.current = count + 1 === rungs.length;
@@ -212,14 +205,7 @@ const HintLadder: React.FC<HintLadderProps> = ({ id, rungs, count, onReveal, onH
           </button>
         )}
         {count > 0 && (
-          <button
-            ref={hideRef}
-            type="button"
-            onClick={() => {
-              focusShow.current = true;
-              onHide();
-            }}
-            className="text-sm text-accent hover:underline underline-offset-2 py-1">
+          <button ref={hideRef} type="button" onClick={onHide} className="text-sm text-accent hover:underline underline-offset-2 py-1">
             Hide hints
           </button>
         )}

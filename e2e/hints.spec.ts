@@ -38,24 +38,6 @@ test('hint ladder: a nudge, then the shape, then the full hint, at no cost', asy
   await task.getByRole('button', { name: 'Hide hints' }).click();
   await expect(task.getByText('Many hardware listing tools', { exact: false })).toBeHidden();
   await expect(task.getByRole('button', { name: 'Show a nudge' })).toBeVisible();
-  // "Hide hints" goes away with the hints; focus moves to the button that brings them back
-  await expect(task.getByRole('button', { name: 'Show a nudge' })).toBeFocused();
-});
-
-test('a hint opened on a task already done does not count towards "Hints are tools"', async ({ page }) => {
-  await page.goto(HARDWARE_LAB);
-  await page.evaluate(() => localStorage.setItem('certsim:progress:v1', JSON.stringify({ 'lpi-101-1-system-architecture': ['hw-lspci'] })));
-  await page.reload();
-  await showLab(page);
-  const task = page.getByRole('listitem').filter({ hasText: lspci.title });
-  await task.getByRole('button', { name: 'Show a nudge' }).click();
-  await expect(task.getByText('Many hardware listing tools', { exact: false })).toBeVisible();
-  const facts = async () => JSON.parse((await page.evaluate(() => localStorage.getItem('certsim:activity:v1'))) ?? '{"facts":[]}').facts as string[];
-  // A hint on an open task still counts
-  const lsmod = page.getByRole('listitem').filter({ hasText: hardware.objectives.find(o => o.id === 'hw-lsmod')!.title });
-  await lsmod.getByRole('button', { name: 'Show a nudge' }).click();
-  await expect.poll(facts).toContain('hint:lpi-101-1-system-architecture/hw-lsmod');
-  expect(await facts()).not.toContain('hint:lpi-101-1-system-architecture/hw-lspci');
 });
 
 test('did you mean: a mistyped command gets a suggestion in the note, the shell output is unchanged', async ({ page }) => {

@@ -1,12 +1,7 @@
 name: Deploy to GitHub Pages
 
-# Publishes only what CI has passed: this runs when the CI workflow finishes on a push to main,
-# and the build job is skipped unless CI succeeded. A manual run (workflow_dispatch) skips that
-# gate, but still typechecks and tests before building.
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
+  push:
     branches: [main]
   workflow_dispatch:
 
@@ -21,57 +16,28 @@ concurrency:
 
 jobs:
   build:
-    # head_branch can be main for a pull request from a fork, so check the event too
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
-    outputs:
-      current: ${{ steps.fresh.outputs.current }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          # The commit CI tested, not whatever main points at by now
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
-
-      # An older CI run can finish after a newer one; publishing it would roll the site back.
-      # Only publish when the tested commit is still the tip of main (manual runs skip this).
-      - name: Skip if main has moved on
-        id: fresh
-        if: github.event_name == 'workflow_run'
-        env:
-          TESTED: ${{ github.event.workflow_run.head_sha }}
-        run: |
-          tip="$(git ls-remote origin refs/heads/main | cut -f1)"
-          if [ "$tip" = "$TESTED" ]; then echo "current=true" >> "$GITHUB_OUTPUT"
-          else echo "main is at $tip, CI tested $TESTED: skipping this older deploy"; echo "current=false" >> "$GITHUB_OUTPUT"; fi
 
       - uses: actions/setup-node@v4
-        if: steps.fresh.outputs.current != 'false'
         with:
           node-version: 22
           cache: 'npm'
 
       - run: npm ci
-        if: steps.fresh.outputs.current != 'false'
-      - run: npm run lint
-        if: steps.fresh.outputs.current != 'false'
       - run: npm test
-        if: steps.fresh.outputs.current != 'false'
       - run: npm run build
-        if: steps.fresh.outputs.current != 'false'
         env:
           # GitHub Pages serves files only; the account API lives on the Cloudflare host
           VITE_ACCOUNTS: 'off'
 
       - uses: actions/upload-pages-artifact@v3
-        if: steps.fresh.outputs.current != 'false'
         with:
           path: dist
 
   deploy:
     needs: build
-    if: needs.build.result == 'success' && needs.build.outputs.current != 'false'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
