@@ -4,20 +4,28 @@ test.describe('sign-in not configured', () => {
   test('no sign-in control is shown', async ({ page }) => {
     await page.goto('#/learn');
     await expect(page.getByRole('heading', { level: 1, name: 'Learning paths' })).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Sign in with GitHub' })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'Sign in', exact: true })).toHaveCount(0);
+    // Settings stay reachable without accounts
+    await expect(page.getByRole('banner').getByRole('link', { name: 'Settings' })).toBeVisible();
   });
 });
 
 test.describe('signed out, GitHub sign-in available', () => {
   test.use({ me: { user: null, providers: { github: true } } });
 
-  test('Sign in goes to the API and asks to come back to the current page', async ({ page }) => {
+  test('Sign in opens the account page, whose GitHub button goes to the API', async ({ page }) => {
     await page.goto('#/reference');
-    const link = page.getByRole('link', { name: 'Sign in with GitHub' });
-    await expect(link).toBeVisible();
-    const href = new URL((await link.getAttribute('href'))!);
+    const link = page.getByRole('banner').getByRole('link', { name: 'Sign in', exact: true });
+    await expect(link).toHaveAttribute('href', '#/account');
+    await link.click();
+    const github = page.getByRole('link', { name: 'Continue with GitHub' });
+    await expect(github).toBeVisible();
+    // Only the methods the server offers are shown
+    await expect(page.getByRole('link', { name: 'Continue with Google' })).toHaveCount(0);
+    await expect(page.getByRole('tab', { name: 'Create account' })).toHaveCount(0);
+    const href = new URL((await github.getAttribute('href'))!);
     expect(href.pathname).toBe('/api/auth/github/start');
-    expect(href.searchParams.get('return')).toBe('#/reference');
+    expect(href.searchParams.get('return')).toBe('#/account');
   });
 });
 
@@ -32,7 +40,7 @@ test.describe('signed in', () => {
     const logout = page.waitForRequest(req => req.url().endsWith('/api/logout') && req.method() === 'POST');
     await page.getByRole('button', { name: 'Sign out' }).click();
     await logout;
-    await expect(page.getByRole('link', { name: 'Sign in with GitHub' })).toBeVisible();
+    await expect(page.getByRole('banner').getByRole('link', { name: 'Sign in', exact: true })).toBeVisible();
   });
 
   test('Escape closes the menu and returns focus to the button', async ({ page }) => {

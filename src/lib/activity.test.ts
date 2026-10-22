@@ -25,6 +25,7 @@ import {
   sandboxFacts,
   serializeActivity,
   setPrefs,
+  prefsOf,
 } from './activity.ts';
 
 /** Runs lines in a real simulated shell and classifies each, the way useShellSession does. */
@@ -287,6 +288,17 @@ test('Sandbox looks: hostname and styles are validated', () => {
   assert.deepEqual(parseActivity(serializeActivity(a)).prefs, { sandboxHost: 'my-box', promptStyle: 'bracket', bannerLine: 'calm' });
   const bad = parseActivity(JSON.stringify({ facts: [], days: [], badges: {}, prefs: { sandboxHost: 'Bad Name!', promptStyle: 'neon' } }));
   assert.equal(bad.prefs, undefined);
+});
+
+test('Basic config: default Sandbox shell and terminal text size are optional and validated', () => {
+  const a = setPrefs(EMPTY_ACTIVITY, { defaultShell: 'powershell', termFontSize: 'l' }, 1);
+  assert.deepEqual(parseActivity(serializeActivity(a)).prefs, { defaultShell: 'powershell', termFontSize: 'l' });
+  const bad = parseActivity(JSON.stringify({ facts: [], days: [], badges: {}, prefs: { defaultShell: 'zsh', termFontSize: 'xl' } }));
+  assert.equal(bad.prefs, undefined);
+  // Older records without them read as the defaults
+  const old = parseActivity(JSON.stringify({ facts: [], days: [], badges: {}, prefs: { weeklyGoal: 2 } }));
+  assert.equal(prefsOf(old).defaultShell, 'bash');
+  assert.equal(prefsOf(old).termFontSize, 'm');
 });
 
 test('Privacy holds for the new records: first-seen days, the day recap and practice keep registry names only', () => {

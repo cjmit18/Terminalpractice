@@ -177,7 +177,9 @@ export const SandboxMode: React.FC = () => {
   // A command offered by "Try it in the Sandbox" (the field guide, the Reference page)
   const [offered] = useState(peekSandboxTry);
   useEffect(() => clearSandboxTry(), []);
-  const [shell, setShell] = useState<TerminalShell>(offered?.shell ?? 'bash');
+  const { record, sandboxCommand, prefs, unlocks } = useGameLayer();
+  // Opens with the shell chosen in Settings, unless a "Try it" link asked for another
+  const [shell, setShell] = useState<TerminalShell>(offered?.shell ?? prefs.defaultShell);
   const [panel, setPanel] = useState<'files' | 'look' | null>(null);
   const showFiles = panel === 'files';
   // Counts resets, so the terminal shows the login banner of the fresh machine
@@ -186,7 +188,6 @@ export const SandboxMode: React.FC = () => {
   // bash runs on one machine; Command Prompt and PowerShell share the Windows one
   // Commands here are tagged as done in the Sandbox (for "Free play"), and three in a day count
   // toward the weekly goal
-  const { record, sandboxCommand, prefs, unlocks } = useGameLayer();
   const host = unlocks.hostname ? prefs.sandboxHost : '';
   const promptStyle = unlocks.prompt ? prefs.promptStyle : 'standard';
   const bannerLine = unlocks.banner ? BANNER_TEXT[prefs.bannerLine] : '';

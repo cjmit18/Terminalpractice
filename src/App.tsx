@@ -5,7 +5,7 @@ import { ModuleSelector } from './components/ModuleSelector';
 import { ModuleRunner } from './components/ModuleRunner';
 import { ExamModule } from './types/modules';
 import { SystemState } from './types/terminal';
-import { Route, Section, TrackSection, isTrackSection, navSection, replaceRoute, routeHref, useHashRoute } from './lib/router';
+import { AccountPage, Route, Section, TrackSection, isTrackSection, navSection, replaceRoute, routeHref, useHashRoute } from './lib/router';
 import { completeObjective, countDone, progressCodec, resetModules, sanitizeProgress } from './lib/progress';
 import { useSyncedStorage } from './lib/syncedStorage';
 import { useTheme } from './lib/theme';
@@ -58,9 +58,21 @@ const SandboxMode = lazyWithReload(() => import('./components/SandboxMode').then
 const ChallengesPage = lazyWithReload(() =>
   import('./components/challenges/ChallengesPage').then(m => ({ default: m.ChallengesPage })),
 );
+const AccountPortal = lazyWithReload(() =>
+  import('./components/account/AccountPortal').then(m => ({ default: m.AccountPortal })),
+);
 const CommandEncyclopedia = lazyWithReload(() =>
   import('./components/CommandEncyclopedia').then(m => ({ default: m.CommandEncyclopedia })),
 );
+
+const ACCOUNT_TITLES: Record<AccountPage, string> = {
+  home: 'Account',
+  settings: 'Settings',
+  security: 'Security',
+  forgot: 'Reset your password',
+  verify: 'Confirm your email',
+  reset: 'Choose a new password',
+};
 
 const PAGE_TITLES: Record<Section, string> = {
   learn: 'Learn',
@@ -292,7 +304,7 @@ export default function App() {
       challengeTitle,
       challengeRoute ? 'Challenges' : null,
       reviewOpen ? 'Review' : null,
-      route.section === 'badge' ? 'Badge' : PAGE_TITLES[route.section],
+      route.section === 'badge' ? 'Badge' : route.section === 'account' ? ACCOUNT_TITLES[route.page] : PAGE_TITLES[route.section],
       'Terminus CertSim',
     ];
     document.title = parts.filter(Boolean).join(' · ');
@@ -383,6 +395,7 @@ export default function App() {
 
       <Header
         current={navSection(route.section)}
+        settingsOpen={route.section === 'account' && route.page === 'settings'}
         hrefs={hrefs}
         tasksDone={tasksDone}
         tasksTotal={tasksTotal}
@@ -474,6 +487,12 @@ export default function App() {
         )}
 
         {route.section === 'badge' && <BadgePage badgeId={route.badgeId} />}
+
+        {route.section === 'account' && (
+          <Suspense fallback={loading}>
+            <AccountPortal page={route.page} theme={theme} onThemeChange={setTheme} />
+          </Suspense>
+        )}
         </PageErrorBoundary>
       </main>
 

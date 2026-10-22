@@ -18,7 +18,7 @@ interface Option<T> {
   detail?: string;
 }
 
-function RadioGroup<T extends string>({
+export function RadioGroup<T extends string>({
   legend,
   name,
   value,
@@ -56,7 +56,10 @@ function RadioGroup<T extends string>({
   );
 }
 
-/** Badges and celebrations settings: show or hide badges, how to celebrate, and clearing it all. */
+/**
+ * Badges and celebrations settings: show or hide badges, how to celebrate, the weekly goal, and
+ * clearing it all. Shown on #/account/settings, signed in or not.
+ */
 export const GameSettings: React.FC = () => {
   const { prefs, setPrefs, clear } = useGameLayer();
   const id = useId();
@@ -69,17 +72,17 @@ export const GameSettings: React.FC = () => {
   };
 
   return (
-    <section aria-labelledby={`${id}-heading`} className="space-y-5 pt-2">
-      <h3 id={`${id}-heading`} className="text-sm font-semibold text-text">
-        Settings for badges, celebrations and your weekly goal
-      </h3>
+    <section aria-labelledby={`${id}-heading`} className="space-y-5">
+      <h2 id={`${id}-heading`} className="text-base font-semibold text-text">
+        Badges, celebrations and your weekly goal
+      </h2>
       <RadioGroup
         legend="Badges"
         name={`${id}-badges`}
         value={prefs.showBadges ? 'show' : 'hide'}
         options={[
           { value: 'show', label: 'Show' },
-          { value: 'hide', label: 'Hide', detail: 'Hides this list and the notes about badges.' },
+          { value: 'hide', label: 'Hide', detail: 'Hides badges on the Learn page and the notes about them.' },
         ]}
         onChange={v => setPrefs({ showBadges: v === 'show' })}
       />

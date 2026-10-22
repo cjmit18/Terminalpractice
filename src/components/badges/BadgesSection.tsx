@@ -2,10 +2,9 @@ import React from 'react';
 import { BadgeCheck, Circle } from 'lucide-react';
 import { Badge, BadgeFamily, FAMILY_LABEL } from '../../data/badges';
 import { useGameLayer } from '../celebrate/GameLayer';
-import { GameSettings } from '../settings/GameSettings';
 import { BadgeName } from './BadgeName';
 import { ProgressSummary } from './ProgressSummary';
-import { badgeHref } from '../../lib/router';
+import { accountHref, badgeHref } from '../../lib/router';
 
 const FAMILIES: BadgeFamily[] = ['curiosity', 'resilience', 'milestone'];
 
@@ -20,7 +19,8 @@ const earnedDate = (t: number) => {
 /**
  * "Your badges" on the Learn page: earned badges first with what they mean, then the ones still
  * to earn with how, in muted text. Hidden badges only appear once earned. No totals: badges are
- * feedback, not a checklist. The settings for the whole game layer sit at the end.
+ * feedback, not a checklist. The settings for the whole game layer live on #/account/settings;
+ * a quiet link to them sits at the end.
  */
 export const BadgesSection: React.FC = () => {
   const { activity, badges, prefs } = useGameLayer();
@@ -29,11 +29,16 @@ export const BadgesSection: React.FC = () => {
     return (
       <section aria-labelledby="badges-heading" className="mt-16 pt-6 border-t border-line max-w-prose space-y-4">
         <h2 id="badges-heading" className="text-base font-semibold text-text">
-          Badges and celebrations
+          Badges
         </h2>
-        <p className="text-sm text-muted">Badges are hidden. You can show them again here.</p>
+        <p className="text-sm text-muted">
+          Badges are hidden. You can show them again in{' '}
+          <a href={accountHref('settings')} className="text-accent underline-offset-2 hover:underline rounded-sm">
+            Settings
+          </a>
+          .
+        </p>
         <ProgressSummary />
-        <GameSettings />
       </section>
     );
   }
@@ -98,10 +103,20 @@ export const BadgesSection: React.FC = () => {
       )}
 
       <ProgressSummary />
-      <GameSettings />
+      <SettingsLink />
     </section>
   );
 };
+
+/** Where the badges, celebrations and weekly goal settings moved to */
+const SettingsLink: React.FC = () => (
+  <p className="text-sm text-muted">
+    <a href={accountHref('settings')} className="text-accent underline-offset-2 hover:underline rounded-sm">
+      Settings
+    </a>{' '}
+    for badges, celebrations, your weekly goal and the Sandbox.
+  </p>
+);
 
 const EarnedBadge: React.FC<{ badge: Badge; at: number }> = ({ badge, at }) => (
   <li className="flex items-start gap-3" data-badge={badge.id}>

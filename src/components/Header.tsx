@@ -1,9 +1,10 @@
 import React from 'react';
-import { BookOpen, GraduationCap, Layers, Monitor, Moon, SquareTerminal, Sun, Terminal } from 'lucide-react';
+import { BookOpen, GraduationCap, Layers, Monitor, Moon, Settings, SquareTerminal, Sun, Terminal } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { Section } from '../lib/router';
+import { Section, accountHref } from '../lib/router';
 import { ThemeChoice } from '../lib/theme';
 import { AccountMenu } from './AccountMenu';
+import { useApplyTerminalFontSize } from './settings/SettingsPage';
 
 /** Desktop navigation, one row. */
 export const NAV_ITEMS: { section: Section; label: string }[] = [
@@ -27,7 +28,7 @@ const PHONE_NAV_ITEMS: { key: PhoneNavKey; label: string; icon: LucideIcon }[] =
   { key: 'sandbox', label: 'Sandbox', icon: Terminal },
   { key: 'reference', label: 'Reference', icon: BookOpen },
 ];
-const phoneKey = (section: Section): PhoneNavKey => (section === 'linux' || section === 'windows' ? 'labs' : section);
+const phoneKey = (section: Section | null): PhoneNavKey | null => (section === 'linux' || section === 'windows' ? 'labs' : section);
 
 const THEME_OPTIONS: { value: ThemeChoice; label: string; icon: LucideIcon }[] = [
   { value: 'system', label: 'Match system theme', icon: Monitor },
@@ -36,7 +37,10 @@ const THEME_OPTIONS: { value: ThemeChoice; label: string; icon: LucideIcon }[] =
 ];
 
 interface HeaderProps {
-  current: Section;
+  /** null on pages outside the nav (account, settings) */
+  current: Section | null;
+  /** Whether #/account/settings is open, to mark the Settings link */
+  settingsOpen?: boolean;
   hrefs: Record<Section, string>;
   tasksDone: number;
   tasksTotal: number;
@@ -44,7 +48,9 @@ interface HeaderProps {
   onThemeChange: (theme: ThemeChoice) => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ current, hrefs, tasksDone, tasksTotal, theme, onThemeChange }) => {
+export const Header: React.FC<HeaderProps> = ({ current, settingsOpen, hrefs, tasksDone, tasksTotal, theme, onThemeChange }) => {
+  // The terminal text size setting applies on every page; the header is always there
+  useApplyTerminalFontSize();
   return (
     <header className="shrink-0 bg-surface border-b border-line">
       <div className="flex items-center gap-4 lg:gap-8 h-14 px-4 lg:px-6">
@@ -75,14 +81,26 @@ export const Header: React.FC<HeaderProps> = ({ current, hrefs, tasksDone, tasks
           })}
         </nav>
 
-        <div className="ml-auto flex items-center gap-3 lg:gap-4 shrink-0">
-          {/* Hidden only at tablet widths, where the top nav needs the room; phones use the bottom nav */}
-          <p className="md:hidden lg:block text-sm text-muted whitespace-nowrap tabular-nums">
+        <div className="ml-auto flex items-center gap-1 md:gap-3 lg:gap-4 shrink-0">
+          {/* Hidden only at tablet widths, where the top nav needs the room; phones use the bottom nav.
+              Very narrow phones drop it so the buttons keep their size */}
+          <p className="max-[379px]:hidden md:hidden lg:block mr-2 md:mr-0 text-sm text-muted whitespace-nowrap tabular-nums">
             {tasksDone} of {tasksTotal}
             <span className="hidden xl:inline"> lab tasks</span> done
           </p>
           <ThemeSwitch theme={theme} onChange={onThemeChange} />
           <ThemeCycleButton theme={theme} onChange={onThemeChange} />
+          <a
+            href={accountHref('settings')}
+            aria-label="Settings"
+            title="Settings"
+            aria-current={settingsOpen ? 'page' : undefined}
+            className={`flex items-center justify-center w-10 h-10 md:w-9 md:h-9 rounded-md hover:bg-surface-2 ${
+              settingsOpen ? 'text-accent' : 'text-muted hover:text-text'
+            }`}
+          >
+            <Settings className="w-5 h-5 md:w-4 md:h-4" aria-hidden="true" />
+          </a>
           <AccountMenu />
         </div>
       </div>
@@ -125,7 +143,7 @@ const ThemeCycleButton: React.FC<{ theme: ThemeChoice; onChange: (t: ThemeChoice
       type="button"
       onClick={() => onChange(next.value)}
       aria-label={`${current.label}. Switch to ${next.label.toLowerCase()}`}
-      className="md:hidden flex items-center justify-center w-10 h-10 -mr-2 rounded-md text-muted hover:text-text hover:bg-surface-2"
+      className="md:hidden flex items-center justify-center w-10 h-10 rounded-md text-muted hover:text-text hover:bg-surface-2"
     >
       <Icon className="w-5 h-5" aria-hidden="true" />
     </button>
@@ -133,7 +151,7 @@ const ThemeCycleButton: React.FC<{ theme: ThemeChoice; onChange: (t: ThemeChoice
 };
 
 /** Phone-only navigation pinned to the bottom of the screen. */
-export const BottomNav: React.FC<{ current: Section; hrefs: Record<Section, string>; labsHref: string }> = ({
+export const BottomNav: React.FC<{ current: Section | null; hrefs: Record<Section, string>; labsHref: string }> = ({
   current,
   hrefs,
   labsHref,

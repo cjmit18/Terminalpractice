@@ -364,7 +364,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
       {/* Output and the active input line */}
       <div
         ref={scrollRef}
-        className="flex-1 min-h-0 overflow-y-auto terminal-scrollbar px-3 sm:px-4 py-3 font-mono text-[13px] sm:text-sm leading-relaxed"
+        className="flex-1 min-h-0 overflow-y-auto terminal-scrollbar px-3 sm:px-4 py-3 font-mono text-[length:var(--term-font-size,13px)] sm:text-[length:var(--term-font-size,14px)] leading-relaxed"
         onClick={() => {
           // Clicking anywhere focuses the prompt, unless the user is selecting output to copy
           if (!window.getSelection()?.toString()) inputRef.current?.focus();
