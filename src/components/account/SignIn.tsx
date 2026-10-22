@@ -3,7 +3,7 @@ import { Github } from 'lucide-react';
 import { login, oauthStartHref, register, type Providers } from '../../lib/account';
 import { accountHref } from '../../lib/router';
 import { Field, FormError, PasswordField, primaryButton, secondaryButton, textLink, useFocusFirstError } from './forms';
-import { displayNameError, emailError, newPasswordError, type ErrorField } from './messages';
+import { displayNameError, emailError, newPasswordError, normalizeEmail, type ErrorField } from './messages';
 
 /** Google's "G", drawn in the current text color: no image or script is loaded from Google. */
 const GoogleMark: React.FC = () => (
@@ -128,7 +128,7 @@ const SignInForm: React.FC<{ emailSending: boolean }> = ({ emailSending }) => {
       return;
     }
     setBusy(true);
-    const r = await login({ email: email.trim(), password });
+    const r = await login({ email: normalizeEmail(email), password });
     setBusy(false);
     // The password never outlives the request
     setPassword('');
@@ -199,7 +199,7 @@ const CreateAccountForm: React.FC<{ emailSending: boolean }> = ({ emailSending }
       return;
     }
     setBusy(true);
-    const r = await register({ email: email.trim(), password, displayName: displayName.trim(), ageConfirmed: true });
+    const r = await register({ email: normalizeEmail(email), password, displayName: displayName.trim(), ageConfirmed: true });
     setBusy(false);
     setPassword('');
     if (!r.ok) {

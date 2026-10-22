@@ -1,11 +1,12 @@
-import React from 'react';
-import { useAccount } from '../../lib/account';
+import React, { useEffect, useState } from 'react';
+import { clearHashQuery, readHashParam, useAccount } from '../../lib/account';
 import { accountHref, learnHref, type AccountPage } from '../../lib/router';
 import type { ThemeChoice } from '../../lib/theme';
 import { SettingsPage } from '../settings/SettingsPage';
 import { Dashboard } from './Dashboard';
 import { ForgotPage, ResetPage, VerifyPage } from './EmailLinkPages';
 import { FormNote, textLink } from './forms';
+import { returnErrorMessage } from './messages';
 import { SecurityPage } from './SecurityPage';
 import { PrivacyNote, SignInCard } from './SignIn';
 
@@ -24,12 +25,35 @@ const TITLES: Record<AccountPage, string> = {
   reset: 'Choose a new password',
 };
 
+/**
+ * `?error=<code>` that the server adds when it sends the browser back after linking Google or GitHub,
+ * or after signing in again to confirm it is you. Read once per page, then taken out of the URL so a
+ * reload or a shared link does not show it again.
+ */
+function useReturnError(page: AccountPage): string | null {
+  const [code, setCode] = useState<string | null>(null);
+  useEffect(() => {
+    setCode(null);
+    if (page !== 'home' && page !== 'security') return;
+    const read = () => {
+      const c = readHashParam('error');
+      if (!c) return;
+      setCode(c);
+      clearHashQuery();
+    };
+    read();
+    window.addEventListener('hashchange', read);
+    return () => window.removeEventListener('hashchange', read);
+  }, [page]);
+  return code;
+}
 
 /** #/account and its pages. Settings work signed out; everything else follows the account state. */
 export const AccountPortal: React.FC<Props> = ({ page, theme, onThemeChange }) => {
   // notice: what just happened (signed out everywhere, account deleted), until the next sign-in
   const { account, providers, emailSending, notice } = useAccount();
   const signedIn = account.status === 'signed-in';
+  const returnError = useReturnError(page);
 
   let title = TITLES[page];
   if (page === 'home') title = signedIn ? `Hello, ${account.user.name}` : account.status === 'signed-out' ? 'Sign in' : 'Account';
@@ -76,6 +100,11 @@ export const AccountPortal: React.FC<Props> = ({ page, theme, onThemeChange }) =
         <h1 className="text-2xl font-semibold text-text break-words">{title}</h1>
         {(signedIn || page === 'settings') && <AccountTabs page={page} signedIn={signedIn} />}
       </header>
+      {returnError && (
+        <p role="alert" data-testid="return-error" className="rounded-md bg-danger-soft px-3 py-2 text-sm text-danger max-w-prose">
+          {returnErrorMessage(returnError)}
+        </p>
+      )}
       {notice && account.status === 'signed-out' && (page === 'home' || page === 'security') && <FormNote message={notice} />}
       {body}
     </div>

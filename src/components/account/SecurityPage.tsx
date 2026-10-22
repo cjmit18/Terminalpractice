@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useId, useState } from 'react';
+import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Github, Mail } from 'lucide-react';
 import {
   changeEmail,
@@ -7,21 +7,58 @@ import {
   downloadExport,
   getAccount,
   oauthStartHref,
+  reauthHref,
+  reauthWithPassword,
   signOutEverywhere,
   unlinkIdentity,
   updateDisplayName,
   type AccountDetails,
   type AccountUser,
+  type ApiResult,
   type OAuthProvider,
   type Providers,
 } from '../../lib/account';
 import { replaceRoute } from '../../lib/router';
 import { Field, FormError, FormNote, PasswordField, dangerButton, secondaryButton, useFocusFirstError } from './forms';
-import { displayNameError, emailError, newPasswordError, type ErrorField } from './messages';
+import { displayNameError, emailError, newPasswordError, normalizeEmail, type ErrorField } from './messages';
 
 const PROVIDER_NAME: Record<string, string> = { google: 'Google', github: 'GitHub', email: 'Email and password' };
 
 const sectionClass = 'space-y-4 pt-8 border-t border-line first:pt-0 first:border-t-0';
+
+const OAUTH: OAuthProvider[] = ['google', 'github'];
+
+/** The providers a 403 `reauth_required` offers, or null when the answer is something else */
+const reauthProviders = (r: ApiResult<unknown>): OAuthProvider[] | null =>
+  !r.ok && r.code === 'reauth_required' ? OAUTH.filter(p => r.providers?.includes(p)) : null;
+
+/**
+ * After 403 `reauth_required` (an account without a password): sign in again with a linked
+ * provider, which brings you back to this page to try again.
+ */
+const ReauthNotice: React.FC<{ providers: OAuthProvider[] | null }> = ({ providers }) => {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (providers) ref.current?.focus();
+  }, [providers]);
+  if (!providers) return null;
+  return (
+    <div ref={ref} tabIndex={-1} role="alert" data-testid="reauth" className="space-y-3 rounded-md border border-line-strong bg-surface-2 px-3 py-3 focus:outline-none">
+      <p className="text-sm text-text">For your security, sign in again to continue.</p>
+      {providers.length > 0 ? (
+        <div className="flex flex-wrap gap-2">
+          {providers.map(p => (
+            <a key={p} href={reauthHref(p)} className={secondaryButton}>
+              Sign in again with {PROVIDER_NAME[p]}
+            </a>
+          ))}
+        </div>
+      ) : (
+        <p className="text-sm text-muted">Sign out, sign in again, then come back here.</p>
+      )}
+    </div>
+  );
+};
 
 /** #/account/security: name, password, email, sign-in methods, sessions, export and delete. */
 export const SecurityPage: React.FC<{ user: AccountUser; providers: Providers; emailSending: boolean }> = ({
@@ -60,7 +97,7 @@ export const SecurityPage: React.FC<{ user: AccountUser; providers: Providers; e
       )}
       <SignOutEverywhere />
       <ExportData />
-      <DeleteAccount />
+      <DeleteAccount hasPassword={details?.hasPassword ?? false} />
     </div>
   );
 };
@@ -110,6 +147,7 @@ const PasswordForm: React.FC<{ hasPassword: boolean; email?: string; onDone: () 
   const [errors, setErrors] = useState<Errors>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [reauth, setReauth] = useState<OAuthProvider[] | null>(null);
   const [busy, setBusy] = useState(false);
   const { formRef, errorRef, focusErrors } = useFocusFirstError();
 
@@ -117,6 +155,7 @@ const PasswordForm: React.FC<{ hasPassword: boolean; email?: string; onDone: () 
     e.preventDefault();
     setNote(null);
     setFormError(null);
+    setReauth(null);
     const errs: Errors = {};
     if (hasPassword && !current) errs.currentPassword = 'Enter your current password.';
     const pwErr = newPasswordError(next, email);
@@ -130,6 +169,8 @@ const PasswordForm: React.FC<{ hasPassword: boolean; email?: string; onDone: () 
     setCurrent('');
     setNext('');
     if (!r.ok) {
+      const providers = reauthProviders(r);
+      if (providers) return setReauth(providers);
       if (r.field === 'currentPassword' || r.field === 'password') setErrors({ [r.field]: r.message });
       else setFormError(r.message);
       return focusErrors();
@@ -157,6 +198,7 @@ const PasswordForm: React.FC<{ hasPassword: boolean; email?: string; onDone: () 
         <button type="submit" disabled={busy} className={secondaryButton}>
           {hasPassword ? 'Change password' : 'Set password'}
         </button>
+        <ReauthNotice providers={reauth} />
         <FormNote message={note} />
       </form>
     </section>
@@ -174,6 +216,7 @@ const EmailForm: React.FC<{ current: string | null; hasPassword: boolean; emailS
   const [errors, setErrors] = useState<Errors>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [reauth, setReauth] = useState<OAuthProvider[] | null>(null);
   const [busy, setBusy] = useState(false);
   const { formRef, errorRef, focusErrors } = useFocusFirstError();
 
@@ -181,18 +224,21 @@ const EmailForm: React.FC<{ current: string | null; hasPassword: boolean; emailS
     e.preventDefault();
     setNote(null);
     setFormError(null);
+    setReauth(null);
     const errs: Errors = {};
     const emErr = emailError(email);
     if (emErr) errs.email = emErr;
-    if (hasPassword && !password) errs.currentPassword = 'Enter your password to confirm it is you.';
+    if (hasPassword && !password) errs.currentPassword = 'Enter your current password to confirm it is you.';
     setErrors(errs);
     if (Object.keys(errs).length) return focusErrors();
     setBusy(true);
-    const sentTo = email.trim();
-    const r = await changeEmail(hasPassword ? { email: sentTo, password } : { email: sentTo });
+    const sentTo = normalizeEmail(email);
+    const r = await changeEmail(hasPassword ? { email: sentTo, currentPassword: password } : { email: sentTo });
     setBusy(false);
     setPassword('');
     if (!r.ok) {
+      const providers = reauthProviders(r);
+      if (providers) return setReauth(providers);
       if (r.field === 'email' || r.field === 'currentPassword') setErrors({ [r.field]: r.message });
       else if (r.field === 'password') setErrors({ currentPassword: r.message });
       else setFormError(r.message);
@@ -233,11 +279,12 @@ const EmailForm: React.FC<{ current: string | null; hasPassword: boolean; emailS
           error={errors.email}
         />
         {hasPassword && (
-          <PasswordField label="Password" value={password} onChange={setPassword} autoComplete="current-password" error={errors.currentPassword} />
+          <PasswordField label="Current password" value={password} onChange={setPassword} autoComplete="current-password" error={errors.currentPassword} />
         )}
         <button type="submit" disabled={busy} className={secondaryButton}>
           {current ? 'Change email' : 'Add email'}
         </button>
+        <ReauthNotice providers={reauth} />
         <FormNote message={note} />
       </form>
     </section>
@@ -254,25 +301,70 @@ const formatDate = (t: number | string) => {
 };
 
 const LinkedMethods: React.FC<{ details: AccountDetails; providers: Providers; onChange: () => void }> = ({ details, providers, onChange }) => {
+  const id = useId();
+  const [password, setPassword] = useState('');
+  const [passwordError, setPasswordError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [reauth, setReauth] = useState<OAuthProvider[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const { formRef, focusErrors } = useFocusFirstError();
+  const { hasPassword } = details;
   const linked = new Set(details.identities.map(i => i.provider));
-  const linkable = (['google', 'github'] as OAuthProvider[]).filter(p => providers[p] && !linked.has(p));
+  const linkable = OAUTH.filter(p => providers[p] && !linked.has(p));
   const methods = details.identities.length + (details.hasPassword && !linked.has('email') ? 1 : 0);
+  // An unconfirmed email could belong to someone else: linking waits until it is confirmed
+  const unverified = !!details.user.email && !details.emailVerified;
 
-  const unlink = async (provider: string) => {
+  const start = () => {
     setError(null);
     setNote(null);
+    setReauth(null);
+    setPasswordError(null);
+  };
+  /** Accounts with a password type it first; false (and the field marked) when it is missing */
+  const needPassword = () => {
+    if (!hasPassword || password) return true;
+    setPasswordError('Enter your current password to confirm it is you.');
+    focusErrors();
+    return false;
+  };
+  const failed = (r: ApiResult<unknown>) => {
+    if (r.ok) return;
+    const reauthWith = reauthProviders(r);
+    if (reauthWith) setReauth(reauthWith);
+    else if (r.field === 'currentPassword') {
+      setPasswordError(r.message);
+      focusErrors();
+    } else setError(r.message);
+  };
+
+  const unlink = async (provider: string) => {
+    start();
+    if (!needPassword()) return;
     setBusy(provider);
-    const r = await unlinkIdentity(provider);
+    const r = await unlinkIdentity(provider, hasPassword ? password : undefined);
     setBusy(null);
-    if (!r.ok) {
-      setError(r.message);
-      return;
-    }
+    setPassword('');
+    if (!r.ok) return failed(r);
     setNote(`${PROVIDER_NAME[provider] ?? provider} is no longer linked.`);
     onChange();
+  };
+
+  /** With a password: confirm it first (POST /api/account/reauth), then go to Google/GitHub to link */
+  const link = async (provider: OAuthProvider) => {
+    start();
+    const href = oauthStartHref(provider, { link: true, returnTo: '#/account/security' });
+    if (!hasPassword) return window.location.assign(href);
+    if (!needPassword()) return;
+    setBusy(provider);
+    const r = await reauthWithPassword(password);
+    setPassword('');
+    if (!r.ok) {
+      setBusy(null);
+      return failed(r);
+    }
+    window.location.assign(href);
   };
 
   return (
@@ -310,22 +402,58 @@ const LinkedMethods: React.FC<{ details: AccountDetails; providers: Providers; o
           </li>
         ))}
       </ul>
+      {hasPassword && (details.identities.length > 0 || (linkable.length > 0 && !unverified)) && (
+        <form ref={formRef} onSubmit={e => e.preventDefault()} noValidate>
+          <PasswordField
+            label="Current password"
+            value={password}
+            onChange={v => {
+              setPassword(v);
+              setPasswordError(null);
+            }}
+            autoComplete="current-password"
+            error={passwordError}
+          />
+          <p className="mt-1.5 text-sm text-muted">Needed to link or unlink a way to sign in.</p>
+        </form>
+      )}
       {error && (
         <p role="alert" className="rounded-md bg-danger-soft px-3 py-2 text-sm text-danger">
           {error}
         </p>
       )}
+      <ReauthNotice providers={reauth} />
       <FormNote message={note} />
       {methods <= 1 && details.identities.length > 0 && (
         <p className="text-sm text-muted">Link another account or set a password first if you want to unlink this one.</p>
       )}
       {linkable.length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {linkable.map(p => (
-            <a key={p} href={oauthStartHref(p, { link: true, returnTo: '#/account/security' })} className={secondaryButton}>
-              Link {PROVIDER_NAME[p]}
-            </a>
-          ))}
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-2">
+            {linkable.map(p =>
+              hasPassword || unverified ? (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => link(p)}
+                  disabled={unverified || busy !== null}
+                  aria-describedby={unverified ? `${id}-verify` : undefined}
+                  className={secondaryButton}
+                >
+                  Link {PROVIDER_NAME[p]}
+                </button>
+              ) : (
+                <a key={p} href={oauthStartHref(p, { link: true, returnTo: '#/account/security' })} className={secondaryButton}>
+                  Link {PROVIDER_NAME[p]}
+                </a>
+              ),
+            )}
+          </div>
+          {unverified && (
+            <p id={`${id}-verify`} className="text-sm text-muted">
+              Verify your email first, then you can link Google or GitHub.
+            </p>
+          )}
         </div>
       )}
     </section>
@@ -394,25 +522,46 @@ const ExportData: React.FC = () => {
   );
 };
 
-const DeleteAccount: React.FC = () => {
+const DeleteAccount: React.FC<{ hasPassword: boolean }> = ({ hasPassword }) => {
   const id = useId();
   const [typed, setTyped] = useState('');
+  const [password, setPassword] = useState('');
+  // An older page may not know the account has a password: the server's answer shows the field
+  const [askPassword, setAskPassword] = useState(false);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [reauth, setReauth] = useState<OAuthProvider[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const { formRef, focusErrors } = useFocusFirstError();
+  const withPassword = hasPassword || askPassword;
   const confirmed = typed.trim().toLowerCase() === 'delete';
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setReauth(null);
+    setPasswordError(null);
     if (!confirmed) {
       setError('Type the word delete to confirm.');
       return;
     }
+    if (withPassword && !password) {
+      setPasswordError('Enter your current password to confirm it is you.');
+      return focusErrors();
+    }
     setBusy(true);
     setError(null);
-    const r = await deleteAccount();
+    const r = await deleteAccount(withPassword ? password : undefined);
     setBusy(false);
+    setPassword('');
+    if (r.ok) return replaceRoute({ section: 'account', page: 'home' });
+    const providers = reauthProviders(r);
+    if (providers) return setReauth(providers);
+    if (r.field === 'currentPassword') {
+      setAskPassword(true);
+      setPasswordError(r.message);
+      return focusErrors();
+    }
     setTyped('');
-    if (!r.ok) setError(r.message);
-    else replaceRoute({ section: 'account', page: 'home' });
+    setError(r.message);
   };
   return (
     <section aria-labelledby="delete-h" className={sectionClass}>
@@ -423,7 +572,7 @@ const DeleteAccount: React.FC = () => {
         Deletes your account, its sign-in methods and the progress saved to it. This can’t be undone. Progress saved in
         this browser stays, and the app keeps working without an account.
       </p>
-      <form onSubmit={submit} noValidate className="space-y-3">
+      <form ref={formRef} onSubmit={submit} noValidate className="space-y-3">
         <div className="space-y-1.5">
           <label htmlFor={`${id}-confirm`} className="block text-sm font-medium text-text">
             Type <span className="font-mono">delete</span> to confirm
@@ -448,9 +597,13 @@ const DeleteAccount: React.FC = () => {
             </p>
           )}
         </div>
+        {withPassword && (
+          <PasswordField label="Current password" value={password} onChange={setPassword} autoComplete="current-password" error={passwordError} />
+        )}
         <button type="submit" disabled={!confirmed || busy} className={dangerButton}>
           Delete my account
         </button>
+        <ReauthNotice providers={reauth} />
       </form>
     </section>
   );

@@ -1,4 +1,4 @@
-import type { Page, Route } from '@playwright/test';
+import type { Locator, Page, Route } from '@playwright/test';
 import { test, expect, expectNoHorizontalOverflow, commandInput } from './fixtures';
 
 // The account portal (#/account, docs/ACCOUNTS_API.md) against a stubbed API: the preview server has
@@ -51,7 +51,7 @@ const PROGRESS_STUBS: Record<string, Handler> = {
   'POST progress/reset': () => ({ json: { epochs: {} } }),
 };
 
-const passwordInput = (page: Page, label = 'Password') => page.getByLabel(label, { exact: true });
+const passwordInput = (page: Page | Locator, label = 'Password') => page.getByLabel(label, { exact: true });
 
 test.describe('signed out', () => {
   test.use({ allowConsoleErrors: true });
@@ -324,8 +324,9 @@ test.describe('security', () => {
     await page.goto('#/account/security');
     await expect(page.getByRole('heading', { level: 1, name: 'Security' })).toBeVisible();
 
-    const current = passwordInput(page, 'Current password');
-    const next = passwordInput(page, 'New password');
+    const pwSection = page.getByRole('region', { name: 'Change password' });
+    const current = passwordInput(pwSection, 'Current password');
+    const next = passwordInput(pwSection, 'New password');
     await expect(current).toHaveAttribute('autocomplete', 'current-password');
     await page.getByRole('button', { name: 'Change password' }).click();
     await expect(current).toBeFocused();
@@ -348,11 +349,10 @@ test.describe('security', () => {
       newPassword: 'new password 22',
     });
 
-    // Linked methods: link Google, and the last method cannot be removed
-    const link = page.getByRole('link', { name: 'Link Google' });
-    const href = new URL((await link.getAttribute('href'))!);
-    expect(href.pathname).toBe('/api/auth/google/start');
-    expect(href.searchParams.get('link')).toBe('1');
+    // Linked methods: the last method cannot be removed (the email is not confirmed, so no linking yet)
+    await expect(page.getByRole('button', { name: 'Link Google' })).toBeDisabled();
+    const methods = page.getByRole('region', { name: 'Ways to sign in' });
+    await methods.getByLabel('Current password', { exact: true }).fill('old password 1');
     await page.getByRole('button', { name: 'Unlink GitHub' }).click();
     await expect(page.getByRole('alert').filter({ hasText: 'only way you can sign in' })).toBeVisible();
     expect(onlyHttpErrors(consoleErrors)).toEqual([]);
@@ -371,11 +371,18 @@ test.describe('security', () => {
     await expect(del).toBeDisabled();
     await confirm.fill('delete');
     await expect(del).toBeEnabled();
+    // The account has a password: it is asked for too
+    const pw = page.getByRole('region', { name: 'Delete account' }).getByLabel('Current password', { exact: true });
+    await del.click();
+    await expect(pw).toBeFocused();
+    await expect(pw).toHaveAccessibleDescription('Enter your current password to confirm it is you.');
+    expect(calls.some(c => c.key === 'DELETE account')).toBe(false);
+    await pw.fill('my password 1');
     await del.click();
     await expect(page).toHaveURL(/#\/account$/);
     await expect(page.getByText('Your account and everything linked to it, synced progress included, were deleted.', { exact: false })).toBeVisible();
     await expect(page.getByRole('banner').getByRole('link', { name: 'Sign in', exact: true })).toBeVisible();
-    expect(calls.find(c => c.key === 'DELETE account')?.body).toEqual({ confirm: 'delete' });
+    expect(calls.find(c => c.key === 'DELETE account')?.body).toEqual({ confirm: 'delete', currentPassword: 'my password 1' });
   });
 });
 

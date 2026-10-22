@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { clearHashQuery, forgotPassword, readHashToken, resetPassword, verifyEmail } from '../../lib/account';
 import { accountHref } from '../../lib/router';
 import { Field, FormError, FormNote, PasswordField, primaryButton, textLink, useFocusFirstError } from './forms';
-import { emailError, newPasswordError } from './messages';
+import { emailError, newPasswordError, normalizeEmail } from './messages';
 
 const FORGOT_SENT = 'If an account uses that email, we sent a reset link.';
 
@@ -37,7 +37,7 @@ export const ForgotPage: React.FC<{ emailSending: boolean }> = ({ emailSending }
       return;
     }
     setBusy(true);
-    const r = await forgotPassword(email.trim());
+    const r = await forgotPassword(normalizeEmail(email));
     setBusy(false);
     if (!r.ok && r.code === 'network') {
       setError(r.message);

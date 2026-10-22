@@ -45,6 +45,8 @@ const KNOWN: Record<string, Known> = {
   rate_limited: RATE,
   too_many_requests: RATE,
   not_signed_in: { message: 'You are signed out. Sign in again to continue.' },
+  reauth_required: { message: 'For your security, sign in again to continue.' },
+  email_unverified: { message: 'Verify your email first, then try again.' },
   unauthorized: { message: 'You are signed out. Sign in again to continue.' },
   forbidden: { message: 'The request was blocked. Reload the page and try again.' },
   network: { message: 'Could not reach the server. Check your connection and try again.' },
@@ -99,11 +101,39 @@ export function newPasswordError(password: string, email?: string): string | nul
   return null;
 }
 
+/**
+ * What the forms send as an email: Unicode NFC (so "café" typed with a combining accent is the same
+ * address as the precomposed one) and trimmed. The server lowercases and checks again.
+ */
+export function normalizeEmail(email: string): string {
+  return email.normalize('NFC').trim();
+}
+
 export function emailError(email: string): string | null {
-  const v = email.trim();
+  const v = normalizeEmail(email);
   if (!v) return 'Enter your email address.';
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return KNOWN.invalid_email.message;
+  // No spaces, invisible format or control characters, or the characters of "Name <address>" forms
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) || /[\p{Cc}\p{Cf}<>()[\]\\,;:"]/u.test(v)) return KNOWN.invalid_email.message;
   return null;
+}
+
+/**
+ * Messages for `?error=<code>` on #/account and #/account/security, where the server sends the browser
+ * back after a Google or GitHub link or a sign-in to confirm it is you (docs/ACCOUNTS_API.md).
+ */
+const RETURN_ERRORS: Record<string, string> = {
+  identity_in_use:
+    'That Google or GitHub account is already linked to a different account here, so it was not linked. Nothing was changed.',
+  provider_already_linked:
+    'Your account already has an account of that kind linked. Unlink it first, then link the other one.',
+  not_signed_in: 'You were signed out before that finished. Sign in, then try again.',
+  reauth_failed: 'We could not confirm it was you, so nothing was changed. Try again.',
+  email_unverified: 'Verify your email first, then link Google or GitHub. Open the link we sent you, or send a new one.',
+  reauth_required: 'For your security, sign in again to continue.',
+};
+
+export function returnErrorMessage(code: string): string {
+  return RETURN_ERRORS[code] ?? 'That didn’t work, and nothing was changed. Try again.';
 }
 
 export function displayNameError(name: string): string | null {
