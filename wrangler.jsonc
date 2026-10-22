@@ -14,6 +14,8 @@
   },
   // Account API (sign-in, sessions). Only /api/* reaches it; see run_worker_first below.
   "main": "./worker/index.ts",
+  // Daily sweep of expired sessions, one-time tokens and rate-limit rows (worker/maintenance.ts)
+  "triggers": { "crons": ["17 3 * * *"] },
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
