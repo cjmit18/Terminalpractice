@@ -112,6 +112,22 @@
     -webkit-text-size-adjust: 100%;
   }
 
+  /* The app is one screen-high frame whose <main> scrolls. The page itself never scrolls: body is pinned
+     to the screen and clips what it holds, so nothing that pokes out of the frame (a stray element, a
+     focus jump, a phone browser's viewport quirk) can drag the frame, tab bar and all, up past the bottom
+     of the screen. clip, unlike hidden, also stops scrolling from code; hidden is the fallback. */
+  html {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  body {
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+    overflow: clip;
+  }
+
   body {
     font-family: var(--font-sans);
     font-size: 15px;

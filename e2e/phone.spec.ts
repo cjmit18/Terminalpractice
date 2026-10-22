@@ -3,6 +3,26 @@ import { test, expect, commandInput, runCommand } from './fixtures';
 test.describe('phone', () => {
   test.skip(({ isMobile }) => !isMobile, 'phone layout only');
 
+  test('the page never scrolls past the tab bar, even when something sticks out below the frame', async ({ page }) => {
+    await page.goto('#/learn');
+    const nav = page.getByRole('navigation', { name: 'Main' }).last();
+    await expect(nav).toBeVisible();
+    // Something taller than the screen hanging below the app frame, as a stray element might
+    await page.evaluate(() => {
+      const extra = document.createElement('div');
+      extra.style.cssText = 'position:absolute;top:100%;left:0;width:10px;height:1500px';
+      document.body.appendChild(extra);
+      window.scrollTo(0, 99999);
+    });
+    // The learning content still scrolls inside the frame
+    await page.locator('main').evaluate(m => (m.scrollTop = m.scrollHeight));
+    expect(await page.evaluate(() => window.scrollY)).toBe(0);
+    const box = await nav.boundingBox();
+    const height = page.viewportSize()!.height;
+    expect(box && Math.round(box.y + box.height)).toBe(height);
+    expect(await page.locator('main').evaluate(m => m.scrollTop)).toBeGreaterThan(0);
+  });
+
   test('the Lab/Terminal switch shows one pane at a time', async ({ page }) => {
     await page.goto('#/linux/lpi-104-5-permissions');
     const show = page.getByRole('group', { name: 'Show' });
