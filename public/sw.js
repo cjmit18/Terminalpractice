@@ -12,7 +12,7 @@
 const BUILD_ID = 'dev';
 const BUILD_ASSETS = [];
 const CACHE = `certsim-${BUILD_ID}`;
-const SHELL = ['./', './index.html', './manifest.webmanifest', './icons/icon.svg', './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png', './icons/icon-512-maskable.png', ...BUILD_ASSETS];
+const SHELL = ['./', './index.html', './theme.js', './manifest.webmanifest', './icons/icon.svg', './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png', './icons/icon-512-maskable.png', ...BUILD_ASSETS];
 
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)));
