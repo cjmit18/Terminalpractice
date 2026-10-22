@@ -19,7 +19,8 @@ export type AccountState =
   | { status: 'signed-in'; user: AccountUser };
 
 /** Builds that ship without the account API (the GitHub Pages copy) set VITE_ACCOUNTS=off. */
-export const ACCOUNTS_ENABLED = import.meta.env.VITE_ACCOUNTS !== 'off';
+// (`env` is missing when this module is loaded by the unit tests, outside Vite)
+export const ACCOUNTS_ENABLED = import.meta.env?.VITE_ACCOUNTS !== 'off';
 
 const apiUrl = (path: string) =>
   new URL(`api/${path}`, apiBase(import.meta.env.BASE_URL, window.location.origin, document.baseURI)).toString();
@@ -29,8 +30,19 @@ export function githubSignInHref(hash: string = window.location.hash): string {
   return `${apiUrl('auth/github/start')}?return=${encodeURIComponent(hash || '#/learn')}`;
 }
 
+/** Sent on window when the session ended (sign-out here, or the server no longer knows the session) */
+export const SIGNED_OUT_EVENT = 'certsim:signed-out';
+export const announceSignedOut = () => window.dispatchEvent(new Event(SIGNED_OUT_EVENT));
+
 export function useAccount(): { account: AccountState; signOut: () => Promise<boolean> } {
   const [account, setAccount] = useState<AccountState>(ACCOUNTS_ENABLED ? { status: 'loading' } : { status: 'unavailable' });
+
+  // Every useAccount (the header menu, the app's sync) hears about a sign-out
+  useEffect(() => {
+    const onSignedOut = () => setAccount(a => (a.status === 'signed-in' ? { status: 'signed-out' } : a));
+    window.addEventListener(SIGNED_OUT_EVENT, onSignedOut);
+    return () => window.removeEventListener(SIGNED_OUT_EVENT, onSignedOut);
+  }, []);
 
   useEffect(() => {
     if (!ACCOUNTS_ENABLED) return;
@@ -58,6 +70,7 @@ export function useAccount(): { account: AccountState; signOut: () => Promise<bo
       const res = await fetch(apiUrl('logout'), { method: 'POST', credentials: 'same-origin' });
       if (!res.ok) return false;
       setAccount({ status: 'signed-out' });
+      announceSignedOut();
       return true;
     } catch {
       return false;

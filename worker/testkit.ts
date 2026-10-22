@@ -2,12 +2,13 @@
 // GitHub, Google and Resend endpoints behind deps.fetch.
 import { readFileSync, readdirSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
-import { handleApi, type ApiDeps, type ApiEnv, type Db, type DbStatement } from './api.ts';
+import { handleApi, type ApiDeps, type ApiEnv, type DbStatement } from './api.ts';
+import type { SyncDb } from './sync.ts';
 
 export const ORIGIN = 'https://terminalpractice.example.workers.dev';
 
-/** D1's prepare/bind/first/all/run on top of SQLite. `migrations: false` gives an empty database. */
-export function testDb(migrations = true): Db & { raw: DatabaseSync } {
+/** D1's prepare/bind/first/all/run/batch on top of SQLite. `migrations: false` gives an empty database. */
+export function testDb(migrations = true): SyncDb & { raw: DatabaseSync } {
   const raw = new DatabaseSync(':memory:');
   raw.exec('PRAGMA foreign_keys = ON;');
   if (migrations) {
@@ -16,13 +17,33 @@ export function testDb(migrations = true): Db & { raw: DatabaseSync } {
       raw.exec(readFileSync(new URL(file, dir), 'utf8'));
     }
   }
-  const statement = (sql: string, values: unknown[] = []): DbStatement => ({
+  const statement = (sql: string, values: unknown[] = []): DbStatement & { exec(): unknown } => ({
     bind: (...v) => statement(sql, v),
     first: async <T,>() => (raw.prepare(sql).get(...(values as never[])) as T | undefined) ?? null,
     all: async <T,>() => ({ results: raw.prepare(sql).all(...(values as never[])) as T[] }),
-    run: async () => raw.prepare(sql).run(...(values as never[])),
+    // D1 reports the changed rows as meta.changes
+    run: async () => {
+      const res = raw.prepare(sql).run(...(values as never[]));
+      return { ...res, meta: { changes: Number(res.changes) } };
+    },
+    exec: () => raw.prepare(sql).run(...(values as never[])),
   });
-  return { raw, prepare: sql => statement(sql) };
+  return {
+    raw,
+    prepare: sql => statement(sql),
+    // One transaction, as D1's batch is
+    batch: async stmts => {
+      raw.exec('BEGIN');
+      try {
+        const out = stmts.map(s => (s as ReturnType<typeof statement>).exec());
+        raw.exec('COMMIT');
+        return out;
+      } catch (err) {
+        raw.exec('ROLLBACK');
+        throw err;
+      }
+    },
+  };
 }
 
 export interface SentEmail {

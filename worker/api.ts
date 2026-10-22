@@ -4,6 +4,7 @@
 //   auth/github.ts, auth/google.ts  OAuth sign-in and linking (auth/oauth.ts is shared)
 //   auth/email.ts                   email + password accounts, verification, password reset
 //   account.ts                      account settings, export, delete
+//   sync.ts                         progress sync
 //   session.ts, password.ts, tokens.ts, ratelimit.ts, mail.ts, http.ts   building blocks
 // Kept free of Cloudflare-only imports so it runs (and is tested) in Node with a SQLite stand-in for D1.
 import {
@@ -27,6 +28,7 @@ import { githubConfigured, githubRoutes } from './auth/github';
 import { googleConfigured, googleRoutes } from './auth/google';
 import { emailRoutes } from './auth/email';
 import { accountRoutes } from './account';
+import { syncRoutes } from './sync';
 
 export type { ApiDeps, ApiEnv, Db, DbStatement, Route, RouteContext } from './http';
 export type { PublicUser } from './session';
@@ -46,8 +48,8 @@ const routes: Route[] = [
   ...googleRoutes,
   ...emailRoutes,
   ...accountRoutes,
-  // Progress sync goes here: `...syncRoutes` from worker/sync.ts (GET/PUT /api/progress,
-  // POST /api/progress/reset), each with `bodyLimit: SYNC_BODY_LIMIT` from http.ts.
+  // Progress sync: GET/PUT /api/progress, POST /api/progress/reset (bodyLimit: SYNC_BODY_LIMIT)
+  ...syncRoutes,
 ];
 
 function match(route: Route, path: string): Record<string, string> | null {

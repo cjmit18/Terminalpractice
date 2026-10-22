@@ -14,6 +14,7 @@ import {
   type UserRow,
 } from './session';
 import { revokeTokens } from './tokens';
+import { SYNC_TABLES, readState } from './sync';
 import { requireDisplayName, requireEmail, requireStrongPassword, sendVerification } from './auth/email';
 
 const PROVIDERS = ['github', 'google', 'email'] as const;
@@ -192,7 +193,8 @@ async function exportAccount(c: RouteContext): Promise<Response> {
     hasPassword: user.password_hash !== null,
     signInMethods: (await identitiesOf(c.env.DB, user.id)).map(i => ({ provider: i.provider, label: i.login ?? '', linkedAt: iso(i.linked_at) })),
     sessions: sessions.results.map(s => ({ createdAt: iso(s.created_at), expiresAt: iso(s.expires_at) })),
-    // Progress sync (worker/sync.ts) adds the user's progress here
+    // Synced progress (worker/sync.ts): items, reset epochs and app settings, as GET /api/progress gives them
+    progress: await readState(c.env.DB, user.id),
   };
   return new Response(JSON.stringify(data, null, 2), {
     headers: {
@@ -207,9 +209,9 @@ async function deleteAccount(c: RouteContext): Promise<Response> {
   const { user } = await requireUser(c);
   const body = await c.body();
   if (body.confirm !== 'delete') throw new HttpError(400, 'confirm_required', 'Send { "confirm": "delete" } to delete your account.');
-  // ON DELETE CASCADE removes identities, sessions, tokens and (later) progress; the explicit deletes
+  // ON DELETE CASCADE removes identities, sessions, tokens and synced progress; the explicit deletes
   // also cover a database where foreign keys are not enforced
-  for (const table of ['sessions', 'identities', 'auth_tokens']) {
+  for (const table of ['sessions', 'identities', 'auth_tokens', ...SYNC_TABLES]) {
     await c.env.DB.prepare(`DELETE FROM ${table} WHERE user_id = ?`).bind(user.id).run();
   }
   await c.env.DB.prepare('DELETE FROM users WHERE id = ?').bind(user.id).run();

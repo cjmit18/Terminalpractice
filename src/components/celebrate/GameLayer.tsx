@@ -146,10 +146,15 @@ interface ProviderProps {
   journey: Journey;
   /** useSyncedStorage's "latest change came from another tab" flags for the records above */
   fromOtherTab?: React.MutableRefObject<boolean>[];
+  /**
+   * Changes when the records were replaced or filled from elsewhere (an account switch, a sync
+   * download). What changed with it is caught up quietly: no celebration, no practice day today.
+   */
+  quietKey?: string | number;
   children: React.ReactNode;
 }
 
-export const GameLayerProvider: React.FC<ProviderProps> = ({ activity, setActivity, paths, modules, progress, journey, fromOtherTab, children }) => {
+export const GameLayerProvider: React.FC<ProviderProps> = ({ activity, setActivity, paths, modules, progress, journey, fromOtherTab, quietKey, children }) => {
   const prefs = prefsOf(activity);
   const badges = useMemo(() => allBadges(paths), [paths]);
   const modulesById = useMemo(() => new Map(modules.map(m => [m.id, m])), [modules]);
@@ -228,10 +233,12 @@ export const GameLayerProvider: React.FC<ProviderProps> = ({ activity, setActivi
   }, [setActivity]);
 
   // ---- Badges: evaluated on any change; a new one is stored once ----
+  const badgeQuietKey = useRef(quietKey);
   useEffect(() => {
     const ids = newlyEarned(badges, { activity, progress, journey, paths, modules });
-    const quiet = silent.current;
+    const quiet = silent.current || badgeQuietKey.current !== quietKey;
     silent.current = false;
+    badgeQuietKey.current = quietKey;
     // Only this tab's own actions are announced here: what another tab did (earning a badge, or
     // "Clear badges and activity" there) is said in that tab, and caught up with quietly in this one
     const elsewhere = fromOtherTab?.some(r => r.current) ?? false;
@@ -244,15 +251,18 @@ export const GameLayerProvider: React.FC<ProviderProps> = ({ activity, setActivi
       const b = badges.find(x => x.id === id);
       if (b) announce({ kind: 'badge', name: b.name, description: b.description });
     }
-  }, [activity, progress, journey, badges, paths, modules, setActivity, announce]);
+  }, [activity, progress, journey, badges, paths, modules, setActivity, announce, quietKey]);
 
   // ---- Milestones: a lab, checkpoint, stage or path that became complete while the app is open ----
   const prev = useRef<Snapshot | null>(null);
+  const milestoneQuietKey = useRef(quietKey);
   useEffect(() => {
     const now = current;
     const before = prev.current;
     prev.current = now;
-    if (!before) return;
+    const quiet = milestoneQuietKey.current !== quietKey;
+    milestoneQuietKey.current = quietKey;
+    if (!before || quiet) return;
     // New tasks, labs, lessons and checkpoints: facts for "Today: ...", and a day toward the weekly goal
     const practice: string[] = [];
     for (const t of now.tasks) if (!before.tasks.has(t)) practice.push(taskFact(t.slice(0, t.indexOf('/')), t.slice(t.indexOf('/') + 1)));
@@ -280,7 +290,7 @@ export const GameLayerProvider: React.FC<ProviderProps> = ({ activity, setActivi
         announce({ kind: 'milestone', text: `Path done: ${p.title}`, confetti: true });
       }
     }
-  }, [current, paths, modulesById, announce, setActivity]);
+  }, [current, paths, modulesById, announce, setActivity, quietKey]);
 
   // ---- Weekly goal: a week that meets it is counted once, and stays counted ----
   const week = weekGoal(activity, dayKey(), weekStart);

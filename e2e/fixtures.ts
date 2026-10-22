@@ -15,6 +15,9 @@ export const test = base.extend<{ allowConsoleErrors: boolean; consoleErrors: st
     async ({ context, me }, use) => {
       await context.route('**/api/me', route => route.fulfill({ json: me }));
       await context.route('**/api/logout', route => route.fulfill({ json: { ok: true } }));
+      // Signed in, progress syncs: by default an account with nothing saved yet (e2e/sync.spec.ts has a fuller stub)
+      await context.route('**/api/progress', route => route.fulfill({ json: { items: [], epochs: {}, settings: {} } }));
+      await context.route('**/api/progress/reset', route => route.fulfill({ json: { epochs: {} } }));
       await use();
     },
     { auto: true },

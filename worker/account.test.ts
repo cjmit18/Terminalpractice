@@ -306,3 +306,65 @@ test('deleting a user cascades in the database itself', async () => {
   s.db.raw.prepare('DELETE FROM users WHERE id = ?').run(user.id);
   for (const t of ['identities', 'sessions', 'auth_tokens']) assert.equal(s.count(`SELECT count(*) AS n FROM ${t}`), 0, t);
 });
+
+// --- Synced progress in export and delete ---------------------------------------------------
+
+const SYNC_TABLES = ['progress_items', 'progress_epochs', 'user_settings'];
+
+/** Uploads some progress, a reset and a setting for this session */
+async function syncSome(s: ReturnType<typeof setup>, session: string) {
+  const now = s.now();
+  const put = await s.call('PUT', '/api/progress', {
+    session,
+    json: {
+      items: [
+        { kind: 'objective', key: 'lab-a/t1', epoch: 0, earnedAt: now },
+        { kind: 'quiz', key: 'lpic1-101/check-1', epoch: 0, correct: 4, total: 5, earnedAt: now },
+      ],
+      settings: { theme: { value: 'dark', updatedAt: now } },
+    },
+  });
+  assert.equal(put.status, 200);
+  assert.equal((await s.call('POST', '/api/progress/reset', { session, json: { scope: 'lab:lab-b' } })).status, 200);
+}
+
+test('export includes the synced progress items, epochs and settings', async () => {
+  const s = setup();
+  const { session } = await register(s);
+  await syncSome(s, session);
+  const data = await (await s.call('GET', '/api/account/export', { session })).json();
+  assert.deepEqual(
+    data.progress.items.map((i: { kind: string; key: string }) => `${i.kind}|${i.key}`),
+    ['objective|lab-a/t1', 'quiz|lpic1-101/check-1'],
+  );
+  assert.deepEqual(data.progress.epochs, { 'lab:lab-b': 1 });
+  assert.deepEqual(data.progress.settings, { theme: { value: 'dark', updatedAt: s.now() } });
+});
+
+test('deleting the account removes its synced progress and leaves other accounts alone', async () => {
+  for (const foreignKeys of ['ON', 'OFF']) {
+    const s = setup();
+    // OFF: a database that does not enforce foreign keys still loses every row (explicit deletes)
+    s.db.raw.exec(`PRAGMA foreign_keys = ${foreignKeys};`);
+    const { session, user } = await register(s);
+    const other = await register(s, 'other@example.com');
+    await syncSome(s, session);
+    await syncSome(s, other.session);
+    for (const t of SYNC_TABLES) assert.ok(s.count(`SELECT count(*) AS n FROM ${t} WHERE user_id = ?`, user.id) > 0, t);
+
+    assert.equal((await s.call('DELETE', '/api/account', { session, json: { confirm: 'delete' } })).status, 204);
+    for (const t of SYNC_TABLES) {
+      assert.equal(s.count(`SELECT count(*) AS n FROM ${t} WHERE user_id = ?`, user.id), 0, `${t} (foreign_keys ${foreignKeys})`);
+      assert.ok(s.count(`SELECT count(*) AS n FROM ${t} WHERE user_id = ?`, other.user.id) > 0, `${t} of the other account`);
+    }
+    assert.equal((await s.call('GET', '/api/progress', { session })).status, 401);
+  }
+});
+
+test('deleting a user row cascades through the sync tables in the database itself', async () => {
+  const s = setup();
+  const { session, user } = await register(s);
+  await syncSome(s, session);
+  s.db.raw.prepare('DELETE FROM users WHERE id = ?').run(user.id);
+  for (const t of SYNC_TABLES) assert.equal(s.count(`SELECT count(*) AS n FROM ${t}`), 0, t);
+});
