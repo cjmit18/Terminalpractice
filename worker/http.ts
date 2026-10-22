@@ -22,10 +22,18 @@ export interface ApiEnv {
   GOOGLE_CLIENT_ID?: string;
   /** Google OAuth client secret (set with `wrangler secret put GOOGLE_CLIENT_SECRET`) */
   GOOGLE_CLIENT_SECRET?: string;
-  /** Sender address for account emails, e.g. "Terminus <accounts@terminuscli.com>" (a var) */
+  /** SMTP server for account emails (a var; default smtp.purelymail.com) */
+  SMTP_HOST?: string;
+  /** SMTP port (a var): 465 for TLS from the start (default), 587 for STARTTLS */
+  SMTP_PORT?: string;
+  /** SMTP username, the sending mailbox's address, e.g. no-reply@terminuscli.com (a var) */
+  SMTP_USER?: string;
+  /** That mailbox's password (set with `wrangler secret put SMTP_PASSWORD`); emails are skipped without it */
+  SMTP_PASSWORD?: string;
+  /** Sender address shown on account emails (a var; defaults to SMTP_USER) */
   EMAIL_FROM?: string;
-  /** Resend API key (set with `wrangler secret put RESEND_API_KEY`); emails are skipped without it */
-  RESEND_API_KEY?: string;
+  /** Where replies to account emails go, e.g. a support inbox (a var; optional) */
+  REPLY_TO?: string;
   /**
    * Comma-separated origins the app is served from, e.g. "https://terminuscli.com" (a var). Email links
    * and OAuth redirect URIs use the request's origin when it is listed, otherwise the first entry, and
@@ -46,6 +54,15 @@ export interface ApiDeps {
   now: () => number;
   /** Keeps work running after the response is sent (ctx.waitUntil). Without it the work is awaited. */
   waitUntil?: (promise: Promise<unknown>) => void;
+  /** Sends one email (worker/smtp.ts in the Worker, a fake in tests). Without it no email is sent. */
+  sendMail?: (env: ApiEnv, message: MailMessage) => Promise<void>;
+}
+
+export interface MailMessage {
+  to: string;
+  subject: string;
+  text: string;
+  html: string;
 }
 
 export const defaultDeps: ApiDeps = {

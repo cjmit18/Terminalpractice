@@ -53,6 +53,10 @@
     // Client ID of the GitHub App used for "Sign in with GitHub" (public, not a secret).
     // The client secret is set separately: npx wrangler secret put GITHUB_CLIENT_SECRET
     // While either is missing, the app hides "Sign in" and the API answers 503 for sign-in.
-    "GITHUB_CLIENT_ID": "Iv23liq8G8SDh8dctkWx"
+    "GITHUB_CLIENT_ID": "Iv23liq8G8SDh8dctkWx",
+    // Account emails (verification links) go out through this Purelymail mailbox over SMTP (worker/smtp.ts).
+    // Its password is a secret: npx wrangler secret put SMTP_PASSWORD. Without it no email is sent.
+    // Previews (above) have none of these, so a preview build never sends email. See docs/EMAIL_SETUP.md.
+    "SMTP_USER": "no-reply@terminuscli.com"
   }
 }

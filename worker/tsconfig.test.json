@@ -13,5 +13,5 @@
     "allowImportingTsExtensions": true
   },
   "include": ["*.ts"],
-  "exclude": ["index.ts"]
+  "exclude": ["index.ts", "smtp.ts"]
 }
