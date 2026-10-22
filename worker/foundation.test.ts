@@ -149,6 +149,44 @@ test('sessions: use slides the expiry forward with a matching cookie, up to the 
   assert.equal(await currentSession(ctx(db, token, NOW + SESSION_MAX_AGE)), null);
 });
 
+test('sessions: two renewals at once never move the expiry backward, and each cookie matches the row', async () => {
+  const db = testDb();
+  addUser(db);
+  const token = await createSession(db, 'u1', NOW);
+  // Request A reads the near-expiry row first, but its write is held until request B has renewed
+  let release!: () => void;
+  const gate = new Promise<void>(r => (release = r));
+  let held!: () => void;
+  const reachedGate = new Promise<void>(r => (held = r));
+  const slowDb: Db = {
+    prepare: sql => {
+      const inner = db.prepare(sql);
+      if (!sql.startsWith('UPDATE sessions')) return inner;
+      const wrap = (st: DbStatement): DbStatement => ({
+        ...st,
+        bind: (...v) => wrap(st.bind(...v)),
+        first: async <T,>() => { held(); await gate; return st.first<T>(); },
+      });
+      return wrap(inner);
+    },
+  };
+  const maxAgeMs = (cookie?: string) => Number(/Max-Age=(\d+)/.exec(cookie ?? '')?.[1]) * 1000;
+  const tA = NOW + 20 * DAY;
+  const tB = NOW + 21 * DAY;
+  const a = currentSession(ctx(slowDb, token, tA));
+  await reachedGate;
+  const b = await currentSession(ctx(db, token, tB));
+  release();
+  const sa = await a;
+
+  const stored = db.raw.prepare('SELECT expires_at FROM sessions').get()?.expires_at;
+  assert.equal(stored, tB + SESSION_TTL, 'the later expiry wins');
+  assert.equal(b?.expiresAt, tB + SESSION_TTL);
+  assert.equal(sa?.expiresAt, stored, 'the slower request reports what the row holds, not its own value');
+  assert.equal(maxAgeMs(sa?.renewedCookie), (stored as number) - tA);
+  assert.equal(maxAgeMs(b?.renewedCookie), (stored as number) - tB);
+});
+
 test('sessions: sign out everywhere ends every session of that user only', async () => {
   const db = testDb();
   addUser(db, 'u1');

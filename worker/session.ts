@@ -154,9 +154,14 @@ export async function currentSession(c: Pick<RouteContext, 'request' | 'env' | '
   };
   const renewed = renewedExpiry(row.created_at, now);
   if (row.expires_at - now < RENEW_BELOW && renewed > row.expires_at) {
-    await c.env.DB.prepare('UPDATE sessions SET expires_at = ? WHERE token_hash = ?').bind(renewed, tokenHash).run();
-    session.expiresAt = renewed;
-    session.renewedCookie = sessionCookie(token, renewed - now);
+    // One atomic statement that never moves the expiry backward: when two requests renew at once, the later
+    // expiry wins whatever order the writes land in, and each cookie follows what the row actually holds
+    const updated = await c.env.DB.prepare('UPDATE sessions SET expires_at = MAX(expires_at, ?) WHERE token_hash = ? RETURNING expires_at')
+      .bind(renewed, tokenHash)
+      .first<{ expires_at: number }>();
+    if (!updated) return null; // ended (sign out) between the read and the renewal
+    session.expiresAt = updated.expires_at;
+    session.renewedCookie = sessionCookie(token, updated.expires_at - now);
   }
   return session;
 }
