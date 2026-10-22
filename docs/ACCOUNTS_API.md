@@ -66,8 +66,43 @@ All JSON. Errors: `{ "error": "<code>", "message": "<plain sentence>" }` with a 
 | `PUT /api/progress` | `{ items, epochs, settings? }` | merged `{ items, epochs, settings }` |
 | `POST /api/progress/reset` | `{ scope }` | `{ epochs }` |
 
-`PublicUser`: `{ id, name, login: string | null, email: string | null, emailVerified: boolean }`.
+`PublicUser`: `{ id, name, login: string | null, email: string | null, emailVerified: boolean, avatarUrl: string | null }`
+(`avatarUrl` is kept from the built API; the app does not display it).
 Email links point to the app: `#/account/verify?token=…` and `#/account/reset?token=…`.
+
+### Details settled while building the server
+
+- `POST /api/account/email`: when the account has a password, `password` is the **current** password
+  (required). When it has none, an optional `password` becomes the account's password. The new
+  address starts unverified.
+- `POST /api/account/password` needs an email on the account (`email_required` otherwise).
+- `POST /api/account/logout-all` answers 200 `{ ok: true }` and clears the cookie;
+  `POST /api/account/password` answers 200 `{ ok: true }` with a new session cookie.
+- `GET /api/account`: `linkedAt` is Unix milliseconds. The email method appears as
+  `{ provider: "email", label: <email> }`. "Ways to sign in" for `last_method` counts GitHub, Google,
+  and email only when the account has both an email and a password.
+- Sign-up with an address that already has an account answers 409 `email_taken`. This reveals that
+  the address is registered; it is accepted on sign-up only, because sign-up signs in at once and
+  returns the user (a "check your email" flow would need accounts created only after verification).
+  Sign-up is limited to 5 per hour per IP; sign-in and "forgot password" never reveal it.
+- OAuth link failures return to the saved route with `?error=<code>` added to the hash, e.g.
+  `#/account/security?error=identity_in_use`: `identity_in_use` (that Google/GitHub account belongs
+  to another user), `provider_already_linked` (another account of that provider is already linked),
+  `not_signed_in`. `?link=1` without a session answers 401 (plain text).
+- Google sign-in never fills `PublicUser.email`; the Google address is only the identity's label.
+- A later GitHub or Google sign-in no longer overwrites the display name (it is editable now).
+
+### Error codes
+
+`invalid_request` (400, malformed body or field), `unsupported_media_type` (415),
+`payload_too_large` (413), `forbidden_origin` (403), `not_signed_in` (401), `not_found` /
+`method_not_allowed`, `rate_limited` (429 + `Retry-After`), `unavailable` (503, database without the
+account tables), `invalid_credentials` (401), `invalid_email`, `invalid_display_name`, `age_required`,
+`password_too_short`, `password_too_long`, `common_password`, `password_equals_email`,
+`email_taken` (409, sign-up), `email_in_use` (409, adding or changing an email),
+`current_password_required` (400), `wrong_password` (403), `email_required`, `no_email`
+(resend-verification without an email), `invalid_token` / `token_expired` (400), `not_linked` (404),
+`last_method` (409), `confirm_required` (400, delete without `{ confirm: "delete" }`).
 
 ## App routes
 
