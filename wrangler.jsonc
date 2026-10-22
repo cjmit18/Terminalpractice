@@ -6,9 +6,9 @@
   "name": "terminus-wm",
   // Deploying attaches the custom domain; wayne-mitchell.com must be a zone on the same Cloudflare account
   "routes": [{ "pattern": "terminus.wayne-mitchell.com", "custom_domain": true }],
-  // Pull-request builds post a preview link (<branch>-terminus-wm.<subdomain>.workers.dev) on the PR.
-  // Set explicitly so a deploy never flips it off (the default follows workers_dev).
-  "preview_urls": true,
+  // No public preview links for this site: pull-request builds still build and test, but get no
+  // <branch>-terminus-wm.<subdomain>.workers.dev URL. Set explicitly so a deploy never turns them back on.
+  "preview_urls": false,
   "compatibility_date": "2026-10-13",
   // `wrangler deploy` and `wrangler preview` run this first, so a deploy never ships a stale or
   // missing dist/, and Workers Builds (production and pull-request previews) only ships code that
