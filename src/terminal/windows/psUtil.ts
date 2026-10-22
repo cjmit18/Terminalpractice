@@ -6,6 +6,28 @@ export interface PsParams {
 }
 
 /**
+ * The common parameters every cmdlet accepts, and their aliases. The simulator binds them so a
+ * command that uses them runs; -ErrorAction SilentlyContinue / Ignore hides non-terminating errors
+ * (see the engine), and the others have no effect here.
+ */
+export const COMMON_PARAMS: Record<string, 'value' | 'switch'> = {
+  Verbose: 'switch', Debug: 'switch', ErrorAction: 'value', WarningAction: 'value', InformationAction: 'value',
+  ErrorVariable: 'value', WarningVariable: 'value', InformationVariable: 'value', OutVariable: 'value', OutBuffer: 'value', PipelineVariable: 'value',
+};
+const COMMON_ALIASES: Record<string, string> = {
+  vb: 'Verbose', db: 'Debug', ea: 'ErrorAction', wa: 'WarningAction', infa: 'InformationAction',
+  ev: 'ErrorVariable', wv: 'WarningVariable', iv: 'InformationVariable', ov: 'OutVariable', ob: 'OutBuffer', pv: 'PipelineVariable',
+};
+const ACTION_PREFERENCES = ['SilentlyContinue', 'Stop', 'Continue', 'Inquire', 'Ignore', 'Suspend'];
+
+/** The error for an -ErrorAction / -WarningAction / -InformationAction value that is not an ActionPreference, or null. */
+function actionPreferenceError(raw: string, cmdlet: string, param: string, value: string): string | null {
+  if (!/Action$/.test(param) || /^[0-5]$/.test(value) || ACTION_PREFERENCES.some(a => a.toLowerCase() === value.toLowerCase())) return null;
+  return psError(raw, cmdlet, `Cannot bind parameter '${param}'. Cannot convert value "${value}" to type "System.Management.Automation.ActionPreference". Error: "Unable to match the identifier name ${value} to a valid enumerator name. Specify one of the following enumerator names and try again:\n${ACTION_PREFERENCES.join(', ')}"`,
+    'InvalidArgument', '', 'ParameterBindingException', 'CannotConvertArgumentNoMessage');
+}
+
+/**
  * Binds -Name value / -Switch parameters. `spec` maps canonical names to 'value' or 'switch';
  * like PowerShell, a unique prefix (-Rec for -Recurse) and any letter case are accepted.
  * `aliases` maps extra names (e.g. Head -> TotalCount).
@@ -13,6 +35,8 @@ export interface PsParams {
 export function bindParams(args: string[], spec: Record<string, 'value' | 'switch'>, aliases: Record<string, string> = {}): PsParams | string {
   const named = new Map<string, string | true>();
   const positional: string[] = [];
+  spec = { ...COMMON_PARAMS, ...spec };
+  aliases = { ...COMMON_ALIASES, ...aliases };
   const names = [...Object.keys(spec), ...Object.keys(aliases)];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -302,6 +326,9 @@ export function bindCmdlet(
 ): PsBound | string {
   const named = new Map<string, string | string[] | true>();
   const loose: PsToken[] = [];
+  const common = Object.fromEntries(Object.entries(COMMON_PARAMS).map(([k, v]) => [k, { kind: v } as PsParamSpec]));
+  spec = { ...common, ...spec };
+  aliases = { ...COMMON_ALIASES, ...aliases };
   const names = [...Object.keys(spec), ...Object.keys(aliases)];
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
@@ -335,6 +362,8 @@ export function bindCmdlet(
       items = psTokenItems(next);
       i++;
     }
+    const badAction = actionPreferenceError(raw, cmdlet, canonical, value);
+    if (badAction) return badAction;
     named.set(canonical, kind === 'list' ? items! : value);
   }
   const positional = Object.entries(spec).filter(([, s]) => s.position !== undefined).sort((a, b) => a[1].position! - b[1].position!);

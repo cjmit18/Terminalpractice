@@ -36,7 +36,20 @@ export const INPUT_ERRORS: Record<string, InputErrorFormat> = {
  * traversal and read permission exactly like `cat`. Unreadable files produce an error line
  * and are skipped, so the command still processes the others, as the real tools do.
  */
-export function readInputs(ctx: LinuxContext, files: string[], format?: InputErrorFormat): InputResult {
+/**
+ * Bytes read from an endless device: /dev/zero gives NUL bytes, /dev/random and /dev/urandom random
+ * ones. Only a command that stops after a byte count (head -c) can read them; others get nothing.
+ */
+function deviceBytes(path: string, count: number): string | null {
+  if (path === '/dev/zero') return '\0'.repeat(count);
+  if (path === '/dev/urandom' || path === '/dev/random') {
+    // 7-bit values: the simulator's text is UTF-16, where a value above 127 would count as two bytes
+    return Array.from({ length: count }, () => String.fromCharCode(Math.floor(Math.random() * 128))).join('');
+  }
+  return null;
+}
+
+export function readInputs(ctx: LinuxContext, files: string[], format?: InputErrorFormat, byteCount?: number): InputResult {
   const fmt = format ?? INPUT_ERRORS[ctx.name] ?? ((f: string, r: string) => `${ctx.name}: ${f}: ${r}`);
   if (files.length === 0) return { inputs: [{ name: '-', text: ctx.stdin }], errors: [] };
   const inputs: InputSource[] = [];
@@ -56,7 +69,8 @@ export function readInputs(ctx: LinuxContext, files: string[], format?: InputErr
       errors.push(fmt(f, 'Is a directory'));
     } else {
       const check = ctx.canRead(path);
-      if (check.ok) inputs.push({ name: f, text: node.content || '' });
+      const endless = node.device === 'char' && byteCount !== undefined ? deviceBytes(path, Math.min(byteCount, 1 << 20)) : null;
+      if (check.ok) inputs.push({ name: f, text: endless ?? node.content ?? '' });
       else errors.push(fmt(f, check.error || 'Permission denied'));
     }
   }

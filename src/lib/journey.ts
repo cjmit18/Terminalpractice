@@ -1,5 +1,5 @@
 import { ExamModule } from '../types/modules';
-import { LearningPath, PathStage, PathStep } from '../types/paths';
+import { LearningPath, PathStage, PathStep, QuizQuestion } from '../types/paths';
 import type { SyncedCodec } from './syncedStorage';
 
 /**
@@ -30,7 +30,23 @@ export interface Journey {
    * reads, quiz scores and `last` for that path are dropped in the merge.
    */
   resets?: Record<string, number>;
+  /**
+   * "pathId/questionId" -> the last few answers to that checkpoint question (oldest first, at most
+   * ANSWER_HISTORY) and when it was last answered. Feeds the review queue (reviewQueue). Missing in
+   * older data. In a merge the record answered last wins; a path reset clears that path's answers.
+   */
+  answers?: Record<string, AnswerRecord>;
 }
+
+export interface AnswerRecord {
+  /** true = answered right, oldest first */
+  history: boolean[];
+  /** ms since epoch */
+  lastAt: number;
+}
+
+/** How many answers per question are kept */
+export const ANSWER_HISTORY = 5;
 
 export const EMPTY_JOURNEY: Journey = { read: [], quiz: {}, last: null };
 
@@ -79,6 +95,21 @@ export function sanitizeJourney(raw: unknown, paths: LearningPath[]): Journey {
     }
   }
 
+  const answers: Record<string, AnswerRecord> = {};
+  const answersIn = data.answers;
+  if (answersIn && typeof answersIn === 'object' && !Array.isArray(answersIn)) {
+    for (const path of paths) {
+      for (const step of allSteps(path)) {
+        if (step.kind !== 'quiz') continue;
+        for (const q of step.questions) {
+          const key = stepKey(path.id, q.id);
+          const rec = answerRecord((answersIn as Record<string, unknown>)[key]);
+          if (rec) answers[key] = rec;
+        }
+      }
+    }
+  }
+
   const resets: Record<string, number> = {};
   const resetsIn = data.resets;
   if (resetsIn && typeof resetsIn === 'object' && !Array.isArray(resetsIn)) {
@@ -87,15 +118,88 @@ export function sanitizeJourney(raw: unknown, paths: LearningPath[]): Journey {
       if (isTime(t)) resets[path.id] = t;
     }
   }
-  return Object.keys(resets).length ? { read, quiz, last, resets } : { read, quiz, last };
+  const out: Journey = { read, quiz, last };
+  if (Object.keys(resets).length) out.resets = resets;
+  if (Object.keys(answers).length) out.answers = answers;
+  return out;
 }
 
 const isTime = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0;
 
+/** A well-formed answer record (history trimmed to the newest ANSWER_HISTORY), or null. */
+function answerRecord(v: unknown): AnswerRecord | null {
+  const r = v as Record<string, unknown> | null | undefined;
+  if (!r || typeof r !== 'object' || !Array.isArray(r.history) || !isTime(r.lastAt)) return null;
+  const history = r.history.filter((h): h is boolean => typeof h === 'boolean').slice(-ANSWER_HISTORY);
+  return history.length > 0 ? { history, lastAt: r.lastAt } : null;
+}
+
+const isScore = (s: unknown): s is QuizScore => {
+  const r = s as Record<string, unknown> | null;
+  return (
+    !!r && typeof r === 'object' &&
+    Number.isInteger(r.correct) && Number.isInteger(r.total) &&
+    (r.total as number) > 0 && (r.correct as number) >= 0 && (r.correct as number) <= (r.total as number)
+  );
+};
+const isKey = (v: unknown): v is string => typeof v === 'string' && v.length <= 300 && /^[^/]+\/./.test(v);
+
+/**
+ * The saved journey, well-formed: what sanitizeJourney keeps, plus reads, scores, answers, resets and
+ * `last` for paths, steps and questions this build does not know (saved by a newer build, e.g. in another tab after a
+ * deploy), so an older tab never deletes them. Only what is shown and counted goes through
+ * sanitizeJourney. Unknown entries follow the known ones, sorted.
+ */
+export function sanitizeJourneyRecord(raw: unknown, paths: LearningPath[]): Journey {
+  const known = sanitizeJourney(raw, paths);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return known;
+  const data = raw as Record<string, unknown>;
+  const stepKeys = new Set(paths.flatMap(p => allSteps(p).map(s => stepKey(p.id, s.id))));
+  const foreign = (k: unknown): k is string => isKey(k) && !stepKeys.has(k);
+
+  const readIn = Array.isArray(data.read) ? data.read : [];
+  const read = [...known.read, ...[...new Set(readIn.filter(foreign))].sort()];
+  const quizIn = data.quiz && typeof data.quiz === 'object' && !Array.isArray(data.quiz) ? (data.quiz as Record<string, unknown>) : {};
+  const quiz = { ...known.quiz };
+  for (const k of Object.keys(quizIn).filter(foreign).sort()) if (isScore(quizIn[k])) quiz[k] = quizIn[k] as QuizScore;
+
+  let last = known.last;
+  const l = data.last as Record<string, unknown> | null | undefined;
+  if (l && typeof l === 'object' && typeof l.pathId === 'string' && l.pathId && !l.pathId.includes('/')) {
+    // Kept as saved, also when its path or step is unknown here
+    const stepId = typeof l.stepId === 'string' ? l.stepId : null;
+    last = isTime(l.at) ? { pathId: l.pathId, stepId, at: l.at } : { pathId: l.pathId, stepId };
+  }
+
+  const resets = { ...known.resets };
+  const resetsIn = data.resets;
+  if (resetsIn && typeof resetsIn === 'object' && !Array.isArray(resetsIn)) {
+    const r = resetsIn as Record<string, unknown>;
+    for (const k of Object.keys(r).filter(k => !(k in resets)).sort()) if (isTime(r[k])) resets[k] = r[k] as number;
+  }
+  const answers = { ...known.answers };
+  const answersIn = data.answers;
+  if (answersIn && typeof answersIn === 'object' && !Array.isArray(answersIn)) {
+    const questionKeys = new Set(
+      paths.flatMap(p => allSteps(p).flatMap(s => (s.kind === 'quiz' ? s.questions.map(q => stepKey(p.id, q.id)) : []))),
+    );
+    const r = answersIn as Record<string, unknown>;
+    for (const k of Object.keys(r).filter(k => isKey(k) && !questionKeys.has(k)).sort()) {
+      const rec = answerRecord(r[k]);
+      if (rec) answers[k] = rec;
+    }
+  }
+
+  const out: Journey = { read, quiz, last };
+  if (Object.keys(resets).length) out.resets = resets;
+  if (Object.keys(answers).length) out.answers = answers;
+  return out;
+}
+
 export function parseJourney(text: string | null, paths: LearningPath[]): Journey {
   if (!text) return EMPTY_JOURNEY;
   try {
-    return sanitizeJourney(JSON.parse(text), paths);
+    return sanitizeJourneyRecord(JSON.parse(text), paths);
   } catch {
     return EMPTY_JOURNEY;
   }
@@ -107,7 +211,8 @@ export function serializeJourney(journey: Journey): string | null {
     journey.read.length === 0 &&
     Object.keys(journey.quiz).length === 0 &&
     !journey.last &&
-    Object.keys(journey.resets ?? {}).length === 0;
+    Object.keys(journey.resets ?? {}).length === 0 &&
+    Object.keys(journey.answers ?? {}).length === 0;
   return empty ? null : JSON.stringify(journey);
 }
 
@@ -115,7 +220,8 @@ const pathOfKey = (key: string) => key.slice(0, key.indexOf('/'));
 
 /**
  * Merge two copies of the journey (what another tab saved, and this tab's): the union of lessons
- * read, the best score per quiz, and the newest `last`, leaving out what a newer reset of a path
+ * read, the best score per quiz, the newest `last` and, per question, the answer record answered
+ * last, leaving out what a newer reset of a path
  * cleared (see Journey.resets). The result is in canonical order (as sanitizeJourney gives it).
  */
 export function mergeJourney(a: Journey, b: Journey, paths: LearningPath[]): Journey {
@@ -140,7 +246,23 @@ export function mergeJourney(a: Journey, b: Journey, paths: LearningPath[]): Jou
     if (!l || !current(j, l.pathId)) continue;
     if (!last || (l.at ?? 0) >= (last.at ?? 0)) last = l;
   }
-  return sanitizeJourney({ read, quiz, last, resets }, paths);
+  // Per question, the record answered last wins (on a tie the longer history, then the text, so both orders agree)
+  const answers: Record<string, AnswerRecord> = {};
+  for (const j of [a, b]) {
+    for (const [k, r] of Object.entries(j.answers ?? {})) {
+      if (!current(j, pathOfKey(k))) continue;
+      const prev = answers[k];
+      if (
+        !prev ||
+        r.lastAt > prev.lastAt ||
+        (r.lastAt === prev.lastAt &&
+          (r.history.length > prev.history.length ||
+            (r.history.length === prev.history.length && JSON.stringify(r.history) > JSON.stringify(prev.history))))
+      )
+        answers[k] = r;
+    }
+  }
+  return sanitizeJourneyRecord({ read, quiz, last, resets, answers }, paths);
 }
 
 /** How useSyncedStorage reads, merges and writes the journey. */
@@ -180,15 +302,29 @@ export function resetPath(j: Journey, pathId: string, now: number = Date.now()):
   const prefix = `${pathId}/`;
   const quiz: Record<string, QuizScore> = {};
   for (const [k, v] of Object.entries(j.quiz)) if (!k.startsWith(prefix)) quiz[k] = v;
+  const answers: Record<string, AnswerRecord> = {};
+  for (const [k, v] of Object.entries(j.answers ?? {})) if (!k.startsWith(prefix)) answers[k] = v;
   const resets = { ...j.resets };
   // Strictly newer than any earlier reset (and than `last`), even if the clock went back
   resets[pathId] = Math.max(now, (resets[pathId] ?? 0) + 1, (j.last?.pathId === pathId ? (j.last.at ?? 0) : 0) + 1);
-  return {
+  const out: Journey = {
     read: j.read.filter(k => !k.startsWith(prefix)),
     quiz,
     last: j.last?.pathId === pathId ? null : j.last,
     resets,
   };
+  if (Object.keys(answers).length) out.answers = answers;
+  return out;
+}
+
+/** Adds one answer to a checkpoint question's record (the newest ANSWER_HISTORY are kept). */
+export function recordAnswer(j: Journey, pathId: string, questionId: string, right: boolean, now: number = Date.now()): Journey {
+  const key = stepKey(pathId, questionId);
+  const prev = j.answers?.[key];
+  const history = [...(prev?.history ?? []), right].slice(-ANSWER_HISTORY);
+  // Strictly newer than the answer before, even if the clock went back, so this one wins a merge
+  const lastAt = Math.max(now, (prev?.lastAt ?? 0) + 1);
+  return { ...j, answers: { ...j.answers, [key]: { history, lastAt } } };
 }
 
 // ---------- Lookups ----------
@@ -262,25 +398,88 @@ export function stepComplete(pathId: string, step: PathStep, src: CompletionSour
   }
 }
 
-export function stageComplete(pathId: string, stage: PathStage, src: CompletionSource): boolean {
-  return stage.steps.every(step => stepComplete(pathId, step, src));
+/** A stage's steps as the things to do: one step, or the alternatives sharing a choiceGroup (in first-seen order). */
+export function stageUnits(stage: PathStage): PathStep[][] {
+  const units: PathStep[][] = [];
+  const groups = new Map<string, PathStep[]>();
+  for (const step of stage.steps) {
+    if (!step.choiceGroup) {
+      units.push([step]);
+      continue;
+    }
+    const unit = groups.get(step.choiceGroup);
+    if (unit) unit.push(step);
+    else {
+      const fresh = [step];
+      groups.set(step.choiceGroup, fresh);
+      units.push(fresh);
+    }
+  }
+  return units;
 }
 
-/** The first stage is always open; each later one opens when the stage before it is complete. */
-export function stageUnlocked(path: LearningPath, stageIndex: number, src: CompletionSource): boolean {
+/** Done, or one of its alternatives (same choiceGroup in the same stage) is done. */
+export function stepSatisfied(pathId: string, stage: PathStage, step: PathStep, src: CompletionSource): boolean {
+  if (stepComplete(pathId, step, src)) return true;
+  return !!step.choiceGroup && stage.steps.some(s => s.choiceGroup === step.choiceGroup && stepComplete(pathId, s, src));
+}
+
+export function stageComplete(pathId: string, stage: PathStage, src: CompletionSource): boolean {
+  return stageUnits(stage).every(unit => unit.some(step => stepComplete(pathId, step, src)));
+}
+
+/**
+ * The suggested order: the first stage, then each later one once the stage before it is complete.
+ * Nothing is locked. A stage that is not suggested yet can still be opened ("Suggested after ...
+ * Go ahead if you know it already"); "Continue" (nextStep, stepAfter, resumeTarget) keeps to this order.
+ */
+export function stageSuggested(path: LearningPath, stageIndex: number, src: CompletionSource): boolean {
   if (stageIndex <= 0) return true;
   const prev = path.stages[stageIndex - 1];
   return !!prev && stageComplete(path.id, prev, src);
 }
 
-export function stepUnlocked(path: LearningPath, stepId: string, src: CompletionSource): boolean {
+export function stepSuggested(path: LearningPath, stepId: string, src: CompletionSource): boolean {
   const loc = findStep(path, stepId);
-  return !!loc && stageUnlocked(path, loc.stageIndex, src);
+  return !!loc && stageSuggested(path, loc.stageIndex, src);
 }
 
+/** The stage a not-yet-suggested stage is suggested after (the one before it), or null when it is suggested now. */
+export function suggestedAfter(path: LearningPath, stageIndex: number, src: CompletionSource): PathStage | null {
+  return stageSuggested(path, stageIndex, src) ? null : path.stages[stageIndex - 1] ?? null;
+}
+
+/**
+ * @deprecated Stages are no longer locked; this is the suggested order (stageSuggested).
+ * Every stage can be opened.
+ */
+export const stageUnlocked = stageSuggested;
+/** @deprecated See stageUnlocked; use stepSuggested. */
+export const stepUnlocked = stepSuggested;
+
+/**
+ * "Test out": the lessons of a stage marked as known, because the learner passed that stage's
+ * checkpoint. Labs are not touched: a lab is done when its tasks are. Lessons that are alternatives
+ * of one another (a choiceGroup) count once: the first is marked, and none when one is read already.
+ */
+export function lessonsToTestOut(path: LearningPath, stageIndex: number, journey: Journey): string[] {
+  const stage = path.stages[stageIndex];
+  if (!stage) return [];
+  const read = (s: PathStep) => journey.read.includes(stepKey(path.id, s.id));
+  // Alternatives (a choiceGroup) count once: none when one of them is read already, else the first lesson
+  const out: string[] = [];
+  for (const unit of stageUnits(stage)) {
+    const lessons = unit.filter(s => s.kind === 'lesson');
+    if (lessons.length === 0 || lessons.some(read)) continue;
+    out.push(lessons[0].id);
+  }
+  return out;
+}
+
+/** Things done and to do; alternatives (see stageUnits) count once. */
 export function stepsDone(path: LearningPath, src: CompletionSource): { done: number; total: number } {
-  const steps = allSteps(path);
-  return { done: steps.filter(s => stepComplete(path.id, s, src)).length, total: steps.length };
+  const units = path.stages.flatMap(stageUnits);
+  return { done: units.filter(u => u.some(s => stepComplete(path.id, s, src))).length, total: units.length };
 }
 
 /** Whole-number percent of steps complete. */
@@ -296,17 +495,18 @@ export function currentStageIndex(path: LearningPath, src: CompletionSource): nu
 
 /**
  * The step "Continue" goes to: the first incomplete step of the earliest incomplete stage.
- * That stage is always unlocked, because every stage before it is complete. Null when the path is finished.
+ * That stage is always in the suggested order, because every stage before it is complete. Null when the path is finished.
  */
 export function nextStep(path: LearningPath, src: CompletionSource): StepLocation | null {
   const stageIndex = currentStageIndex(path, src);
   if (stageIndex < 0) return null;
-  const step = path.stages[stageIndex].steps.find(s => !stepComplete(path.id, s, src));
+  const stage = path.stages[stageIndex];
+  const step = stage.steps.find(s => !stepSatisfied(path.id, stage, s, src));
   return step ? findStep(path, step.id) : null;
 }
 
 /**
- * Where to go after finishing the step `fromStepId`: the next incomplete, unlocked step after it
+ * Where to go after finishing the step `fromStepId`: the next incomplete step after it, in a suggested stage,
  * in path order, otherwise the first incomplete step anywhere (via nextStep). Null when the path is finished.
  */
 export function stepAfter(path: LearningPath, fromStepId: string, src: CompletionSource): StepLocation | null {
@@ -315,8 +515,10 @@ export function stepAfter(path: LearningPath, fromStepId: string, src: Completio
   if (from) {
     for (let i = from.index + 1; i < steps.length; i++) {
       const loc = findStep(path, steps[i].id)!;
-      if (!stageUnlocked(path, loc.stageIndex, src)) break;
-      if (!stepComplete(path.id, loc.step, src)) return loc;
+      // Within the stage of `from` any open step will do (a learner who went ahead stays there);
+      // a later stage only once it is in the suggested order
+      if (loc.stageIndex !== from.stageIndex && !stageSuggested(path, loc.stageIndex, src)) break;
+      if (!stepSatisfied(path.id, loc.stage, loc.step, src)) return loc;
     }
   }
   const next = nextStep(path, src);
@@ -329,11 +531,12 @@ export function pathStarted(path: LearningPath, src: CompletionSource): boolean 
   const prefix = `${path.id}/`;
   if (src.journey.read.some(k => k.startsWith(prefix))) return true;
   if (Object.keys(src.journey.quiz).some(k => k.startsWith(prefix))) return true;
+  if (Object.keys(src.journey.answers ?? {}).some(k => k.startsWith(prefix))) return true;
   return stepsDone(path, src).done > 0;
 }
 
 /**
- * "Continue where you left off": the last step opened, if it is still unfinished and open,
+ * "Continue where you left off": the last step opened, if it is still unfinished and in the suggested order,
  * otherwise the next step of that path. Null when there is nothing to resume.
  */
 export function resumeTarget(
@@ -346,7 +549,7 @@ export function resumeTarget(
   if (!path) return null;
   if (last.stepId) {
     const loc = findStep(path, last.stepId);
-    if (loc && !stepComplete(path.id, loc.step, src) && stageUnlocked(path, loc.stageIndex, src)) return { path, loc };
+    if (loc && !stepSatisfied(path.id, loc.stage, loc.step, src) && stageSuggested(path, loc.stageIndex, src)) return { path, loc };
   }
   const next = nextStep(path, src);
   return next ? { path, loc: next } : null;
@@ -366,8 +569,9 @@ export function stepMinutes(step: PathStep, modulesById: Map<string, ExamModule>
   }
 }
 
+/** Alternatives count once, by the first of them. */
 export function pathMinutes(path: LearningPath, modulesById: Map<string, ExamModule>): number {
-  return allSteps(path).reduce((sum, s) => sum + stepMinutes(s, modulesById), 0);
+  return path.stages.flatMap(stageUnits).reduce((sum, unit) => sum + stepMinutes(unit[0], modulesById), 0);
 }
 
 /** "about 45 min", "about 2 hr 10 min", "about 3 hr" */
@@ -406,4 +610,130 @@ export function labPlacements(paths: LearningPath[]): Map<string, LabPlacement[]
     });
   }
   return out;
+}
+
+// ---------- Review queue ----------
+
+const DAY_MS = 86_400_000;
+/** After 1, 2, 3 and 4 or more right answers in a row, a question comes back this many days later */
+export const REVIEW_DAYS = [1, 3, 7, 21];
+/** A wrong answer brings the question back soon: in the next review that starts this long after */
+export const REVIEW_SOON_MS = 10 * 60_000;
+/** Questions in one review */
+export const REVIEW_SIZE = 5;
+
+/** Right answers in a row at the end of the history. */
+export function rightStreak(history: boolean[]): number {
+  let n = 0;
+  for (let i = history.length - 1; i >= 0 && history[i]; i--) n++;
+  return n;
+}
+
+/** How long after its last answer a question comes back (ms). */
+export function reviewInterval(history: boolean[]): number {
+  const streak = rightStreak(history);
+  if (streak === 0) return REVIEW_SOON_MS;
+  return REVIEW_DAYS[Math.min(streak, REVIEW_DAYS.length) - 1] * DAY_MS;
+}
+
+export const reviewDueAt = (r: AnswerRecord): number => r.lastAt + reviewInterval(r.history);
+
+export interface ReviewItem {
+  path: LearningPath;
+  /** The checkpoint the question belongs to */
+  quiz: Extract<PathStep, { kind: 'quiz' }>;
+  question: QuizQuestion;
+  /** "pathId/questionId", the key in Journey.answers */
+  key: string;
+}
+
+/** Interleave lists so neighbours come from different paths where possible. */
+function mixByPath(items: ReviewItem[], paths: LearningPath[]): ReviewItem[] {
+  const lists = paths.map(p => items.filter(i => i.path.id === p.id)).filter(l => l.length > 0);
+  const out: ReviewItem[] = [];
+  for (let round = 0; out.length < items.length; round++) for (const l of lists) if (l[round]) out.push(l[round]);
+  return out;
+}
+
+/**
+ * Up to REVIEW_SIZE questions that are due, mixed across the paths the learner has started:
+ * first the ones last answered wrong, then the ones answered right a while ago (most overdue
+ * first), then questions from checkpoints taken before answers were recorded (older saved data).
+ */
+export function reviewQueue(paths: LearningPath[], src: CompletionSource, now: number = Date.now(), size = REVIEW_SIZE): ReviewItem[] {
+  const answers = src.journey.answers ?? {};
+  const missed: [ReviewItem, number][] = [];
+  const spaced: [ReviewItem, number][] = [];
+  const legacy: ReviewItem[] = [];
+  for (const path of paths) {
+    if (!pathStarted(path, src)) continue;
+    for (const step of allSteps(path)) {
+      if (step.kind !== 'quiz') continue;
+      const taken = !!src.journey.quiz[stepKey(path.id, step.id)];
+      for (const question of step.questions) {
+        const key = stepKey(path.id, question.id);
+        const item: ReviewItem = { path, quiz: step, question, key };
+        const r = answers[key];
+        if (!r) {
+          if (taken) legacy.push(item);
+          continue;
+        }
+        const due = reviewDueAt(r);
+        if (due > now) continue;
+        if (r.history[r.history.length - 1]) spaced.push([item, due]);
+        else missed.push([item, r.lastAt]);
+      }
+    }
+  }
+  const byTime = (list: [ReviewItem, number][]) => list.sort((x, y) => x[1] - y[1]).map(([i]) => i);
+  return [...mixByPath(byTime(missed), paths), ...mixByPath(byTime(spaced), paths), ...mixByPath(legacy, paths)].slice(0, size);
+}
+
+/** For the Learn page: how many questions are due now, and when the next one comes back if none is. */
+export function reviewStatus(paths: LearningPath[], src: CompletionSource, now: number = Date.now()): { due: number; nextAt: number | null } {
+  const due = reviewQueue(paths, src, now, Infinity).length;
+  let nextAt: number | null = null;
+  if (due === 0) {
+    for (const path of paths) {
+      if (!pathStarted(path, src)) continue;
+      for (const [k, r] of Object.entries(src.journey.answers ?? {})) {
+        if (pathOfKey(k) !== path.id) continue;
+        const t = reviewDueAt(r);
+        if (nextAt === null || t < nextAt) nextAt = t;
+      }
+    }
+  }
+  return { due, nextAt };
+}
+
+/** "tomorrow", "in a few days", "in a week", "in three weeks", "soon": when a question comes back after this history. */
+export function comeBackPhrase(history: boolean[]): string {
+  const streak = rightStreak(history);
+  if (streak === 0) return 'soon';
+  return ['tomorrow', 'in a few days', 'in a week', 'in three weeks'][Math.min(streak, REVIEW_DAYS.length) - 1];
+}
+
+/** "later today", "tomorrow", "in 3 days": how far off a time is, for the Learn page. */
+export function whenText(at: number, now: number = Date.now()): string {
+  const days = Math.ceil((at - now) / DAY_MS);
+  if (days <= 0 || at - now < 12 * 3_600_000) return 'later today';
+  if (days === 1) return 'tomorrow';
+  return `in ${days} days`;
+}
+
+/** "1 comes back soon and 4 in a few days.": when each question (given its answer history) comes back, grouped. */
+export function comeBackText(histories: boolean[][]): string {
+  const groups = new Map<string, { count: number; interval: number }>();
+  for (const h of histories) {
+    const phrase = comeBackPhrase(h);
+    const g = groups.get(phrase) ?? { count: 0, interval: reviewInterval(h) };
+    g.count++;
+    groups.set(phrase, g);
+  }
+  const parts = [...groups.entries()]
+    .sort((a, b) => a[1].interval - b[1].interval)
+    .map(([phrase, g], i) => (i === 0 ? `${g.count} ${g.count === 1 ? 'comes' : 'come'} back ${phrase}` : `${g.count} ${phrase}`));
+  if (parts.length === 0) return '';
+  const last = parts.pop()!;
+  return `${parts.length ? `${parts.join(', ')} and ${last}` : last}.`;
 }

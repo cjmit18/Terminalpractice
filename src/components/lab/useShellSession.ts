@@ -38,22 +38,23 @@ export function runLine(session: ShellSession, line: string, shell: TerminalShel
   let stderr: string;
   let exitCode: number;
   let explanation: string | undefined;
+  let stageExits: (number | null)[] | undefined;
   let next: Omit<ShellSession, 'history' | 'lastResult'>;
 
   if (shell === 'bash') {
     const res = executeLinuxLine(line, session.cwd, session.fs, session.state);
-    ({ stdout, stderr, exitCode, explanation } = res);
+    ({ stdout, stderr, exitCode, explanation, stageExits } = res);
     next = { fs: res.newFs, state: res.newState, cwd: res.newCwd, diskpartActive: false };
   } else {
     const res = executeWindowsLine(line, session.cwd, session.fs, session.state, shell, session.diskpartActive);
-    ({ stdout, stderr, exitCode, explanation } = res);
+    ({ stdout, stderr, exitCode, explanation, stageExits } = res);
     next = { fs: res.newFs, state: res.newState, cwd: res.newCwd, diskpartActive: !!res.diskpartActive };
     // The engine ends the DiskPart banner with its own prompt; the terminal draws the live one
     if (next.diskpartActive) stdout = stdout.replace(/\s*DISKPART>\s*$/, '');
   }
 
   const lastResult: CommandContext = { command: line, exitCode, stdout };
-  const lastOutcome: CommandOutcome = { line, exitCode, stdout, stderr, explanation };
+  const lastOutcome: CommandOutcome = { line, exitCode, stdout, stderr, explanation, stageExits };
 
   // `clear` wipes the screen, but output after it in the same line (`clear; echo hi`) and errors still show
   let previous = session.history;

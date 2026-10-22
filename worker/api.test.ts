@@ -73,6 +73,28 @@ test('/api/me says signed out, and whether GitHub sign-in is available', async (
   assert.equal((await unconfigured.call('GET', '/api/auth/github/start')).status, 503);
 });
 
+test('/api/me treats a database without the account tables as signed out', async () => {
+  // A preview build's D1 is empty (no migrations), and sign-in is off there; a stray session
+  // cookie must still get the normal signed-out answer, not a 500
+  const raw = new DatabaseSync(':memory:');
+  const statement = (sql: string, values: unknown[] = []): DbStatement => ({
+    bind: (...v) => statement(sql, v),
+    first: async <T,>() => (raw.prepare(sql).get(...(values as never[])) as T | undefined) ?? null,
+    run: async () => raw.prepare(sql).run(...(values as never[])),
+  });
+  const env: ApiEnv = { DB: { prepare: sql => statement(sql) }, GITHUB_CLIENT_ID: '' };
+  const res = (await handleApi(new Request(`${ORIGIN}/api/me`, { headers: { Cookie: '__Host-session=stray' } }), env))!;
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { user: null, providers: { github: false } });
+  assert.equal(cookieValue(res, '__Host-session'), '');
+
+  // Any other database error is still an error
+  const broken: ApiEnv = {
+    DB: { prepare: () => ({ bind() { return this; }, first: async () => { throw new Error('D1_ERROR: network'); }, run: async () => ({}) }) },
+  };
+  await assert.rejects(handleApi(new Request(`${ORIGIN}/api/me`, { headers: { Cookie: '__Host-session=x' } }), broken), /network/);
+});
+
 test('start redirects to GitHub with a callback on the current host and a state cookie', async () => {
   const s = setup();
   const res = await s.call('GET', '/api/auth/github/start?return=%23%2Fwindows');
@@ -127,6 +149,13 @@ test('the callback rejects a missing or mismatched state, and a refused code', a
   // Cancelling on GitHub just goes back to the app
   const cancelled = await s.call('GET', '/api/auth/github/callback?error=access_denied', { Cookie: `__Host-oauth=${stateCookie}` });
   assert.equal(cancelled.status, 302);
+});
+
+test('a malformed state cookie is a missing state (400), not a server error', async () => {
+  const s = setup();
+  const res = await s.call('GET', '/api/auth/github/callback?code=good-code&state=abc', { Cookie: '__Host-oauth=%E0%A4%A' });
+  assert.equal(res.status, 400);
+  assert.match(res.headers.getSetCookie().join('\n'), /__Host-oauth=;/);
 });
 
 test('sessions slide forward when used and end when they expire', async () => {
