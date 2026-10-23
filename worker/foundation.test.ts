@@ -13,7 +13,7 @@ import { consumeToken, issueToken, peekToken, tokenFailure, TOKEN_TTL } from './
 import { LIMITS, enforceLimit, forgetLimits, limitKey, sweepRateLimits } from './ratelimit.ts';
 import { sweepExpired } from './maintenance.ts';
 
-const MIGRATIONS = ['0001_accounts.sql', '0002_accounts_email.sql', '0003_security.sql'];
+const MIGRATIONS = ['0001_accounts.sql', '0002_accounts_email.sql', '0003_security.sql', '0004_token_email.sql'];
 const migration = (name: string) => readFileSync(new URL(`../migrations/${name}`, import.meta.url), 'utf8');
 
 /** D1's prepare/bind/first/all/run on top of Node's built-in SQLite */

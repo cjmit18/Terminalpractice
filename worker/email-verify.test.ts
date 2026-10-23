@@ -108,3 +108,28 @@ test('a lapsed claim gets no new links, so nobody can keep mailing confirm links
   assert.equal((await res.json()).error, 'email_claim_lapsed');
   assert.equal(s.sent.length, 1, 'only the sign-up email');
 });
+
+test('a link sent to one address never confirms a different one, even if the address changes mid-send', async () => {
+  const s = setup();
+  const session = sessionOf(await s.register());
+  // While the resend is running (at its rate-limit write), the account's address changes and time moves on
+  const real = s.db;
+  let changed = false;
+  s.env.DB = {
+    prepare(sql) {
+      if (!changed && sql.includes('INSERT INTO rate_limits')) {
+        changed = true;
+        s.db.raw.prepare('UPDATE users SET email = ?, email_set_at = ?').run('new-inbox@example.com', s.advance(0));
+        s.advance(1000);
+      }
+      return real.prepare(sql);
+    },
+  };
+  const resend = await s.call('POST', '/api/auth/email/resend-verification', {}, { Cookie: `__Host-session=${session}` });
+  assert.equal(resend.status, 202);
+  const mail = s.sent.at(-1)!;
+  assert.equal(mail.to, 'learner@example.com', 'the link went to the old inbox');
+  const res = await s.call('POST', '/api/auth/email/verify', { token: tokenIn(mail) });
+  assert.equal(res.status, 400);
+  assert.equal(s.db.raw.prepare('SELECT email_verified_at FROM users').get()?.email_verified_at, null, 'new-inbox was not verified');
+});

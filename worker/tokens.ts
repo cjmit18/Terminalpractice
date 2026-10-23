@@ -9,14 +9,17 @@ export const TOKEN_TTL: Record<TokenPurpose, number> = {
   reset: 60 * 60 * 1000,
 };
 
-/** Issues a new token and retires the user's earlier unused ones for the same purpose, so only the newest link works. */
-export async function issueToken(db: Db, userId: string, purpose: TokenPurpose, now: number): Promise<string> {
+/**
+ * Issues a new token and retires the user's earlier unused ones for the same purpose, so only the newest link works.
+ * `email` records the address the link is sent to (a confirm link then verifies only that address).
+ */
+export async function issueToken(db: Db, userId: string, purpose: TokenPurpose, now: number, email: string | null = null): Promise<string> {
   await revokeTokens(db, userId, [purpose], now);
   await db.prepare('DELETE FROM auth_tokens WHERE user_id = ? AND expires_at <= ?').bind(userId, now).run();
   const token = randomToken();
   await db
-    .prepare('INSERT INTO auth_tokens (token_hash, user_id, purpose, expires_at, created_at) VALUES (?, ?, ?, ?, ?)')
-    .bind(await sha256(token), userId, purpose, now + TOKEN_TTL[purpose], now)
+    .prepare('INSERT INTO auth_tokens (token_hash, user_id, purpose, expires_at, created_at, email) VALUES (?, ?, ?, ?, ?, ?)')
+    .bind(await sha256(token), userId, purpose, now + TOKEN_TTL[purpose], now, email)
     .run();
   return token;
 }
