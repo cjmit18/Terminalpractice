@@ -222,6 +222,43 @@ test('one-time tokens: stored hashed, work once, expire, and only the newest lin
   assert.equal(await tokenFailure(db, 'made-up', 'reset', later), 'invalid_token');
 });
 
+test('one-time tokens: two resends at once leave exactly one working link, whatever the interleaving', async () => {
+  // Request A is held just before one of its statements while request B issues a link from start to end
+  for (const holdAt of ['INSERT INTO auth_tokens', 'UPDATE auth_tokens SET used_at']) {
+    const db = testDb();
+    addUser(db);
+    let release!: () => void;
+    const gate = new Promise<void>(r => (release = r));
+    let held!: () => void;
+    const reachedGate = new Promise<void>(r => (held = r));
+    let holding = true;
+    const slowDb: Db = {
+      prepare: sql => {
+        const inner = db.prepare(sql);
+        if (!sql.startsWith(holdAt) || !holding) return inner;
+        holding = false;
+        const wrap = (st: DbStatement): DbStatement => ({
+          ...st,
+          bind: (...v) => wrap(st.bind(...v)),
+          run: async () => { held(); await gate; return st.run(); },
+          first: async <T,>() => { held(); await gate; return st.first<T>(); },
+        });
+        return wrap(inner);
+      },
+    };
+    const a = issueToken(slowDb, 'u1', 'verify', NOW);
+    await reachedGate;
+    const tokenB = await issueToken(db, 'u1', 'verify', NOW);
+    release();
+    const tokenA = await a;
+    const working = [tokenA, tokenB].filter(t => t);
+    const results = await Promise.all(working.map(t => peekToken(db, t, 'verify', NOW)));
+    assert.equal(results.filter(Boolean).length, 1, `held at ${holdAt}: exactly one link works`);
+    const used = await Promise.all([tokenA, tokenB].map(t => consumeToken(db, t, 'verify', NOW)));
+    assert.equal(used.filter(Boolean).length, 1, `held at ${holdAt}: exactly one link can be used`);
+  }
+});
+
 // --- Rate limits -----------------------------------------------------------------------------
 
 test('rate limits: 429 with Retry-After once over the maximum, and a new window starts fresh', async () => {
