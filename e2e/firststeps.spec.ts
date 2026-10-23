@@ -79,17 +79,23 @@ test.describe('first steps on a phone', () => {
 
     // 1. pw + Tab completes to pwd
     await input.pressSequentially('pw');
-    await keys.getByRole('button', { name: 'Tab, complete command' }).tap();
+    await keys.getByRole('button', { name: 'Tab, complete the command or file name' }).tap();
     await enter('pwd ');
     await expect(terminalLog(page)).toContainText('/home/student');
 
     // 2. l + Tab extends to ls (ls, lsmod and lspci all start that way)
     await input.pressSequentially('l');
-    await keys.getByRole('button', { name: 'Tab, complete command' }).tap();
+    await keys.getByRole('button', { name: 'Tab, complete the command or file name' }).tap();
     await enter('ls');
     await expect(terminalLog(page)).toContainText('welcome.txt');
 
-    // 3. The dot comes from the toolbar
+    // 3. Tab finishes the file name too
+    await input.pressSequentially('cat wel');
+    await keys.getByRole('button', { name: 'Tab, complete the command or file name' }).tap();
+    await enter('cat welcome.txt ');
+    await expect(terminalLog(page)).toContainText('cd notes');
+
+    // The dot comes from the toolbar
     await input.pressSequentially('cat welcome');
     await keys.getByRole('button', { name: 'Insert .' }).tap();
     await input.pressSequentially('txt');
