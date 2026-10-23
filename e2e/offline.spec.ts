@@ -108,3 +108,26 @@ test('activating the service worker deletes only this app scope\'s old caches, n
   // This build's own cache is named after the scope
   expect(keys.some(k => k.startsWith('certsim:') && k.includes(new URL(page.url()).origin))).toBe(true);
 });
+
+test('an old-style cache shared with a sibling app keeps the sibling\'s entries and loses only this app\'s', async ({ page }) => {
+  // Same build, two apps on one origin: before cache names carried the scope, both used certsim-<build>
+  await page.addInitScript(() => {
+    void (async () => {
+      const at = (path: string) => new URL(path, location.href).href;
+      const shared = await caches.open('certsim-sharedbuild');
+      await shared.put(at('./index.html'), new Response('<!doctype html>', { headers: { 'Content-Type': 'text/html' } }));
+      await shared.put(at('./assets/app.js'), new Response('', { headers: { 'Content-Type': 'text/javascript' } }));
+      await shared.put(at('./sibling/index.html'), new Response('<!doctype html>', { headers: { 'Content-Type': 'text/html' } }));
+      await shared.put(at('./sibling/assets/app.js'), new Response('', { headers: { 'Content-Type': 'text/javascript' } }));
+    })();
+  });
+  await page.goto('#/linux');
+  await waitForServiceWorkerControl(page);
+  const left = await page.evaluate(async () => {
+    await new Promise(r => setTimeout(r, 300));
+    if (!(await caches.keys()).includes('certsim-sharedbuild')) return null;
+    const cache = await caches.open('certsim-sharedbuild');
+    return (await cache.keys()).map(r => new URL(r.url).pathname).sort();
+  });
+  expect(left).toEqual(['/sibling/assets/app.js', '/sibling/index.html']);
+});

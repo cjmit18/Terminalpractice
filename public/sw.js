@@ -52,18 +52,31 @@ function fits(request, response) {
   }
 }
 
-// Caches from builds before names carried the scope were called certsim-<build>. One of them is
-// this scope's only when it holds this scope's index.html; a sibling app's cache is left alone.
-async function ownLegacyCache(key) {
-  if (!/^certsim-[^:]+$/.test(key)) return false;
+// Caches from builds before names carried the scope were called certsim-<build>, and two apps on the
+// same origin with the same build shared one. Only entries that are this app's are removed: URLs under
+// this scope that are not under another app's root (a deeper folder with its own index.html in the
+// same cache). The cache itself goes only once nothing is left in it, so a sibling's copy survives.
+async function cleanLegacyCache(key) {
   const cache = await caches.open(key);
-  return !!(await cache.match(new URL('./index.html', self.registration.scope).href, { ignoreVary: true }));
+  const requests = await cache.keys();
+  const scope = self.registration.scope;
+  const roots = requests
+    .map(r => r.url)
+    .filter(u => u.endsWith('/index.html'))
+    .map(u => u.slice(0, -'index.html'.length))
+    .filter(root => root !== scope && root.startsWith(scope));
+  const mine = requests.filter(r => r.url.startsWith(scope) && !roots.some(root => r.url.startsWith(root)));
+  // Not this scope's cache at all (no index.html of ours): leave it as it is
+  if (!mine.some(r => r.url === `${scope}index.html` || r.url === scope)) return;
+  await Promise.all(mine.map(r => cache.delete(r)));
+  if ((await cache.keys()).length === 0) await caches.delete(key);
 }
 
 async function deleteOldCaches() {
   for (const key of await caches.keys()) {
     if (key === CACHE) continue;
-    if (key.startsWith(PREFIX) || (await ownLegacyCache(key))) await caches.delete(key);
+    if (key.startsWith(PREFIX)) await caches.delete(key);
+    else if (/^certsim-[^:]+$/.test(key)) await cleanLegacyCache(key);
   }
 }
 
