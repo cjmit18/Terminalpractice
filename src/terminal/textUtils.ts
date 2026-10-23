@@ -133,22 +133,44 @@ export function escapeRegex(text: string): string {
 }
 
 /** Shell glob (*, ?, [abc]) to an anchored RegExp. */
+/**
+ * Joins glob pieces (regex text for literals, ? and [...], and null for each *) into regex source that
+ * matches in linear time. A plain ".*" per star backtracks: *a*a*a*...*b against a long name takes
+ * exponentially long and would freeze the page. Instead each star between two pieces jumps to the earliest
+ * place the next piece matches, inside an atomic lookahead ((?=(.*?x))\1 never retries), and only the last
+ * star is an ordinary greedy run. For full-string glob matching the earliest place is always a correct
+ * choice, so the result is the same as before, minus the blow-up.
+ */
+export function linearGlobSource(pieces: (string | null)[], any: string): string {
+  const segments: string[] = [''];
+  for (const p of pieces) {
+    if (p === null) {
+      if (segments[segments.length - 1] !== '' || segments.length === 1) segments.push('');
+    } else segments[segments.length - 1] += p;
+  }
+  let src = segments[0];
+  for (let i = 1; i < segments.length; i++) {
+    src += i < segments.length - 1 ? `(?=(${any}*?${segments[i]}))\\${i}` : `${any}*${segments[i]}`;
+  }
+  return src;
+}
+
 export function globToRegex(glob: string, ignoreCase = false): RegExp {
-  let src = '';
+  const pieces: (string | null)[] = [];
   for (let i = 0; i < glob.length; i++) {
     const c = glob[i];
-    if (c === '*') src += '.*';
-    else if (c === '?') src += '.';
+    if (c === '*') pieces.push(null);
+    else if (c === '?') pieces.push('.');
     else if (c === '[') {
       const end = glob.indexOf(']', i + 1);
-      if (end === -1) src += '\\[';
+      if (end === -1) pieces.push('\\[');
       else {
-        src += '[' + glob.slice(i + 1, end).replace(/^!/, '^').replace(/\\/g, '\\\\') + ']';
+        pieces.push('[' + glob.slice(i + 1, end).replace(/^!/, '^').replace(/\\/g, '\\\\') + ']');
         i = end;
       }
-    } else src += escapeRegex(c);
+    } else pieces.push(escapeRegex(c));
   }
-  return new RegExp(`^${src}$`, ignoreCase ? 'i' : '');
+  return new RegExp(`^${linearGlobSource(pieces, '.')}$`, ignoreCase ? 'i' : '');
 }
 
 /** Right-aligns a number in a field, like printf("%*d"). */

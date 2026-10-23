@@ -20,6 +20,7 @@ import './windows/cmd/text';
 import './windows/cmd/system';
 import './windows/cmd/network';
 import { NATIVE_TOOLS, cmdSlashHelp, diskpartUsage, psDashQuestion, registerDocAliases } from './windows/help';
+import { BudgetExceeded } from './limits';
 
 export interface WindowsExecutionResult extends WindowsResult {}
 
@@ -36,6 +37,10 @@ export function executeWindowsLine(
   try {
     return runWindowsLine(rawInput, cwd, fs, state, shell, isDiskpartSession);
   } catch (err) {
+    // Over the simulator's work limit (a pattern that would freeze the page): say so, change nothing
+    if (err instanceof BudgetExceeded) {
+      return { stdout: '', stderr: err.message, exitCode: 1, newCwd: cwd, newFs: fs, newState: state, diskpartActive: isDiskpartSession };
+    }
     // A simulator bug must not take the session with it: report it and leave everything as it was
     const why = err instanceof Error ? err.message : String(err);
     return {

@@ -3,7 +3,8 @@
 // parser.ts keeps the simpler tokenizer that CMD and PowerShell use; bash goes through this file.
 
 import { ChainedStage } from '../parser';
-import { MAX_ARITH_DEPTH } from '../limits';
+import { BudgetExceeded, MAX_ARITH_DEPTH, MAX_BRACE_WORDS } from '../limits';
+import { linearGlobSource } from '../textUtils';
 
 /** One piece of a word, remembering whether it was quoted (quoted pieces are never split or globbed). */
 export type WordPart =
@@ -555,7 +556,7 @@ function braceAlternatives(inner: string): string[] | null {
   const width = numeric && (/^-?0\d/.test(a) || /^-?0\d/.test(b)) ? Math.max(a.length, b.length) : 0;
   const out: string[] = [];
   for (let v = from; from <= to ? v <= to : v >= to; v += from <= to ? step : -step) {
-    if (out.length >= 10000) break;
+    if (out.length >= MAX_BRACE_WORDS) throw new BudgetExceeded(`bash: simulator limit: brace expansion makes more than ${MAX_BRACE_WORDS} words, more than this simulator allows.`);
     out.push(numeric ? (v < 0 ? '-' + String(-v).padStart(width - 1, '0') : String(v).padStart(width, '0')) : String.fromCharCode(v));
   }
   return out;
@@ -585,7 +586,7 @@ export function braceExpand(word: Word): Word[] {
         const parts = [...word.parts];
         parts[pi] = { k: 'lit', text: text.slice(0, open) + alt + text.slice(close + 1), quoted: false };
         out.push(...braceExpand({ parts }));
-        if (out.length > 10000) break;
+        if (out.length > MAX_BRACE_WORDS) throw new BudgetExceeded(`bash: simulator limit: brace expansion makes more than ${MAX_BRACE_WORDS} words, more than this simulator allows.`);
       }
       return out;
     }
@@ -742,18 +743,19 @@ const argText = (text: string | undefined, ex: Expander) => expandToString(argWo
 function argPattern(text: string | undefined, ex: Expander): RegExp {
   const fields = expandWord(argWord(text ?? ''), ex, false);
   const glob = fields.map(f => f.glob ?? literalGlob(f.text)).join(' ');
-  let src = '';
+  const pieces: (string | null)[] = [];
   for (let i = 0; i < glob.length; i++) {
     const c = glob[i];
-    if (c === '*') src += '[\\s\\S]*';
-    else if (c === '?') src += '[\\s\\S]';
+    if (c === '*') pieces.push(null);
+    else if (c === '?') pieces.push('[\\s\\S]');
     else if (c === '[') {
       const end = glob.indexOf(']', i + 2);
-      if (end === -1) src += '\\[';
-      else { src += '[' + glob.slice(i + 1, end).replace(/^!/, '^').replace(/\\/g, '\\\\') + ']'; i = end; }
-    } else src += c.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+      if (end === -1) pieces.push('\\[');
+      else { pieces.push('[' + glob.slice(i + 1, end).replace(/^!/, '^').replace(/\\/g, '\\\\') + ']'); i = end; }
+    } else pieces.push(c.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&'));
   }
-  return new RegExp(`^(?:${src})$`);
+  // Linear-time matching, so a pattern like *a*a*a*...*b cannot freeze the page (see linearGlobSource)
+  return new RegExp(`^(?:${linearGlobSource(pieces, '[\\s\\S]')})$`);
 }
 
 /** Longest match of `re` starting at `start` (end index), or -1. */

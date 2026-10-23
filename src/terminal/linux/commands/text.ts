@@ -4,6 +4,7 @@ import { parseOptions, optionValue, toLines, posixToJsRegex, escapeRegex, padNum
 import { LinuxContext, LinuxResult, linuxCommands, createInDir } from '../context';
 import { readInputs, InputSource } from '../input';
 import { runAwk, AwkError } from '../awk';
+import { PatternTooComplex, checkRegexWork, userRegex } from '../../safeRegex';
 
 // Text processing: echo, cat, head, tail, grep, awk, sed, sort, uniq, wc, cut, tr
 
@@ -121,6 +122,7 @@ interface GrepOptions {
 }
 
 function grepLines(text: string, name: string | null, o: GrepOptions, out: string[]): { matched: boolean } {
+  checkRegexWork('grep', o.regex, text);
   // Matching lines use ':' after the file name and line number, context lines use '-'
   const prefix = (n: number, sep = ':') => `${name !== null ? name + sep : ''}${o.lineNumbers ? n + sep : ''}`;
   const lines = toLines(text);
@@ -198,8 +200,9 @@ function grep(ctx: LinuxContext): LinuxResult {
   if (f.has('x')) source = `^(?:${source})$`;
   let regex: RegExp;
   try {
-    regex = new RegExp(source, f.has('i') ? 'i' : '');
-  } catch {
+    regex = userRegex('grep', source, f.has('i') ? 'i' : '');
+  } catch (e) {
+    if (e instanceof PatternTooComplex) throw e;
     return ctx.fail(`grep: Unmatched ( or \\(`, 2);
   }
 
@@ -312,8 +315,9 @@ class SedError extends Error {}
 
 function sedRegex(src: string, extended: boolean, flags = ''): RegExp {
   try {
-    return new RegExp(posixToJsRegex(src, extended), flags);
-  } catch {
+    return userRegex('sed', posixToJsRegex(src, extended), flags);
+  } catch (e) {
+    if (e instanceof PatternTooComplex) throw e;
     throw new SedError(`-e expression #1, char ${src.length}: Invalid preceding regular expression`);
   }
 }
@@ -402,6 +406,14 @@ function parseSed(script: string, extended: boolean): SedCmd[] {
 }
 
 function runSed(cmds: SedCmd[], lines: string[], quiet: boolean): string[] {
+  // Every pattern (in addresses and s///) against the whole input, before any work is done
+  const text = lines.join('\n');
+  for (const c of cmds) {
+    for (const v of Object.values(c)) {
+      const re = v instanceof RegExp ? v : (v as { re?: unknown } | null)?.re;
+      if (re instanceof RegExp) checkRegexWork('sed', re, text);
+    }
+  }
   const out: string[] = [];
   const active = new Map<SedCmd, boolean>();
   const hit = (a: SedAddr, line: string, n: number, last: boolean) =>
