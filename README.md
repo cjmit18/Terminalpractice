@@ -116,7 +116,7 @@ The app is static and works without any server. On Cloudflare, a small Worker ad
 
 ### Cloudflare Workers
 
-On this branch (`site/wayne-mitchell`), `wrangler.jsonc` describes the Worker `terminus-wm`, which serves https://terminus.wayne-mitchell.com (main deploys `terminuscli` for https://terminuscli.com). Both Workers use the same accounts database (`terminalpractice`). It serves `dist/` as static assets and runs `worker/index.ts` only for `/api/*` (`run_worker_first`), with a D1 database (`DB`) for accounts. Cloudflare Workers Builds is connected to this repository: pushes to the production branch deploy, and pull-request builds run `wrangler preview`.
+`wrangler.jsonc` describes the Worker `terminuscli`, which serves https://terminuscli.com: it serves `dist/` as static assets and runs `worker/index.ts` only for `/api/*` (`run_worker_first`), with a D1 database (`DB`) for accounts. Cloudflare Workers Builds is connected to this repository: pushes to the production branch deploy, and pull-request builds run `wrangler preview`.
 
 - Before every deploy or preview, wrangler runs the `build.command` from `wrangler.jsonc`: `npm test && npm run lint && VITE_BASE=/ npm run build`. A failing test or typecheck stops the deploy. The build image installs devDependencies, which is where `tsx`, `typescript` and `wrangler` come from.
 - `npm run deploy`: applies new database migrations (`migrations/`) to the remote D1 database, then `wrangler deploy`. Run `npx wrangler login` once before deploying from your machine. Set the same command as the **Deploy command** in the Workers Builds settings.
