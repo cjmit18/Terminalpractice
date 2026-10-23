@@ -83,3 +83,28 @@ test('the service worker does not cache an HTML answer for a script (SPA fallbac
   });
   expect(cached).toBe(false);
 });
+
+test('activating the service worker deletes only this app scope\'s old caches, not other apps\' caches', async ({ page }) => {
+  // Before the worker exists: another app's cache, this scope's cache from an older-style build
+  // (it holds this scope's index.html), and an older-style cache from a sibling app at another path
+  await page.addInitScript(() => {
+    void (async () => {
+      const index = new URL('./index.html', location.href).href;
+      await (await caches.open('other-app-cache')).put(new URL('./other.txt', location.href).href, new Response('other'));
+      await (await caches.open('certsim-oldbuild')).put(index, new Response('<!doctype html>', { headers: { 'Content-Type': 'text/html' } }));
+      await (await caches.open('certsim-sibling')).put(new URL('/another-repo/index.html', location.href).href, new Response('sibling'));
+    })();
+  });
+  await page.goto('#/linux');
+  await waitForServiceWorkerControl(page);
+  const keys = await page.evaluate(async () => {
+    // Activation finishes its cleanup before it claims the page; give a just-claimed worker a moment
+    await new Promise(r => setTimeout(r, 300));
+    return caches.keys();
+  });
+  expect(keys).toContain('other-app-cache');
+  expect(keys).toContain('certsim-sibling');
+  expect(keys).not.toContain('certsim-oldbuild');
+  // This build's own cache is named after the scope
+  expect(keys.some(k => k.startsWith('certsim:') && k.includes(new URL(page.url()).origin))).toBe(true);
+});

@@ -7,11 +7,15 @@
 // files meanwhile (caches.match looks in every cache), and its background refresh fetches the new
 // index.html, so a reload still picks up a deploy. Old caches are deleted only on activate, when
 // no tab is left on the old build. A first install has nothing to wait for and claims the page.
+//
+// CacheStorage is shared by every app on the origin (on GitHub Pages, every repository of the user),
+// so cache names carry this worker's scope, and activate deletes only this scope's older caches.
 // The build replaces these two placeholders (see precacheBuildAssets in vite.config.ts) with a
 // per-build cache name and the hashed JS, CSS and font files, so one visit is enough to work offline.
 const BUILD_ID = 'dev';
 const BUILD_ASSETS = [];
-const CACHE = `certsim-${BUILD_ID}`;
+const PREFIX = `certsim:${self.registration.scope}:`;
+const CACHE = PREFIX + BUILD_ID;
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icons/icon.svg', './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png', './icons/icon-512-maskable.png', ...BUILD_ASSETS];
 
 self.addEventListener('install', event => {
@@ -48,12 +52,23 @@ function fits(request, response) {
   }
 }
 
+// Caches from builds before names carried the scope were called certsim-<build>. One of them is
+// this scope's only when it holds this scope's index.html; a sibling app's cache is left alone.
+async function ownLegacyCache(key) {
+  if (!/^certsim-[^:]+$/.test(key)) return false;
+  const cache = await caches.open(key);
+  return !!(await cache.match(new URL('./index.html', self.registration.scope).href, { ignoreVary: true }));
+}
+
+async function deleteOldCaches() {
+  for (const key of await caches.keys()) {
+    if (key === CACHE) continue;
+    if (key.startsWith(PREFIX) || (await ownLegacyCache(key))) await caches.delete(key);
+  }
+}
+
 self.addEventListener('activate', event => {
-  event.waitUntil(
-    caches.keys()
-      .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
-      .then(() => self.clients.claim())
-  );
+  event.waitUntil(deleteOldCaches().then(() => self.clients.claim()));
 });
 
 self.addEventListener('fetch', event => {
