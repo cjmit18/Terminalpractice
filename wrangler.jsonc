@@ -5,9 +5,12 @@
   // main deploys terminuscli (https://terminuscli.com); keep the rest of this file in step with main.
   "name": "terminus-wm",
   // Deploying attaches the custom domain; wayne-mitchell.com must be a zone on the same Cloudflare account
-  "routes": [{ "pattern": "terminus.wayne-mitchell.com", "custom_domain": true }],
-  // No public preview links for this site: pull-request builds still build and test, but get no
-  // <branch>-terminus-wm.<subdomain>.workers.dev URL. Set explicitly so a deploy never turns them back on.
+  // previews_enabled: pull-request builds also get a preview link on the test domain itself,
+  // https://<branch>.terminus.wayne-mitchell.com (Cloudflare adds the wildcard DNS record and certificate).
+  // Protect it with Cloudflare Access so only people the owner adds can open previews.
+  "routes": [{ "pattern": "terminus.wayne-mitchell.com", "custom_domain": true, "previews_enabled": true }],
+  // No workers.dev preview links: previews of this site live only on the test domain above.
+  // Set explicitly so a deploy never turns them back on.
   "preview_urls": false,
   "compatibility_date": "2026-10-13",
   // `wrangler deploy` and `wrangler preview` run this first, so a deploy never ships a stale or
