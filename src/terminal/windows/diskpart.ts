@@ -319,6 +319,7 @@ const DISKPART_COMMANDS: [RegExp, DiskpartHandler][] = [
     part.fsType = fs as 'NTFS' | 'FAT32';
     // Without LABEL= the volume has no label
     part.label = opts.label ?? '';
+    part.quickFormatted = opts.quick === 'true';
     return { stdout: ['  100 percent completed', '', 'DiskPart successfully formatted the volume.'].join('\n') };
   }],
 

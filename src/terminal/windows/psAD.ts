@@ -15,6 +15,16 @@ const rid = (sam: string) => 1100 + [...sam.toLowerCase()].reduce((n, c) => n + 
 const guid = (sam: string) => `${rid(sam).toString(16).padStart(8, '0')}-3c1e-4b7a-9f02-5d6e7a8b9c0d`;
 const sid = (sam: string) => `S-1-5-21-3623811015-3361044348-30300820-${rid(sam)}`;
 
+/** A sign-in name like the ones a domain controller generates ($K3Q000-8F2NJ4TQB1LV), the same for the same DN. */
+function generatedSam(dn: string): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let h = 2166136261;
+  const pick = () => chars[((h = Math.imul(h ^ 0x9e37, 16777619) >>> 0) >>> 7) % chars.length];
+  for (const c of dn.toLowerCase()) h = Math.imul(h ^ c.charCodeAt(0), 16777619) >>> 0;
+  const head = Array.from({ length: 3 }, pick).join('');
+  return `$${head}000-${Array.from({ length: 12 }, pick).join('')}`;
+}
+
 export const userDN = (u: ADUser) => `CN=${u.displayName},${u.ou}`;
 export const groupDN = (g: ADGroup) => `CN=${g.name},${g.ou || USERS_CONTAINER}`;
 
@@ -36,7 +46,7 @@ export function adUserProps(state: SystemState, u: ADUser): Record<string, strin
     SamAccountName: u.sAMAccountName,
     SID: sid(u.sAMAccountName),
     Surname: u.surname,
-    UserPrincipalName: `${u.sAMAccountName}@corp.local`,
+    UserPrincipalName: u.userPrincipalName ?? `${u.sAMAccountName}@corp.local`,
     // extended properties, only shown when asked for with -Properties
     Department: u.department,
     DisplayName: u.displayName,
@@ -192,8 +202,9 @@ function newADUser(ctx: WindowsContext): WindowsResult {
       'InvalidArgument', '', 'ParameterBindingException', 'CannotConvertArgumentNoMessage'));
   }
   const path = b.str('Path') ?? USERS_CONTAINER;
-  const sam = b.str('SamAccountName') ?? name;
   const dn = `CN=${name},${path}`;
+  // Without -SamAccountName the domain controller makes one up ($ABC000-...); -Name is not copied into it
+  const sam = b.str('SamAccountName') ?? generatedSam(dn);
   if (b.has('WhatIf')) return ctx.ok(whatIf('New', dn));
   if (!knownContainers(state).includes(path.toLowerCase())) {
     return ctx.fail(psError(ctx.raw, cmdlet, 'Directory object not found', 'ObjectNotFound', dn, 'ADIdentityNotFoundException',
@@ -209,6 +220,8 @@ function newADUser(ctx: WindowsContext): WindowsResult {
   const enabled = wantsEnabled && password !== undefined;
   state.adUsers.push({
     sAMAccountName: sam,
+    // New-ADUser sets no UPN unless asked
+    userPrincipalName: b.str('UserPrincipalName') ?? '',
     givenName: b.str('GivenName') ?? '',
     surname: b.str('Surname') ?? '',
     displayName: name,

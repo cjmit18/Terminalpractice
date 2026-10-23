@@ -489,8 +489,9 @@ export const WINDOWS_PBQS: ExamModule[] = [
         shape: 'create _________ primary',
         hint: 'Run create partition primary.',
         verifier: (_, state) => {
+          // No size given: one partition takes the whole disk (create partition primary size=500 does not count)
           const d1 = state.disks.find(d => d.diskNumber === 1);
-          return !!d1 && d1.partitions.some(p => p.isPrimary);
+          return !!d1 && d1.partitions.some(p => p.isPrimary && p.sizeMB === d1.totalSizeMB);
         },
       },
       {
@@ -502,7 +503,7 @@ export const WINDOWS_PBQS: ExamModule[] = [
         hint: 'Run format fs=ntfs quick, then assign letter=E.',
         verifier: (_, state) => {
           const d1 = state.disks.find(d => d.diskNumber === 1);
-          return !!d1 && d1.partitions.some(p => p.fsType === 'NTFS' && p.driveLetter === 'E:');
+          return !!d1 && d1.partitions.some(p => p.fsType === 'NTFS' && p.quickFormatted && p.driveLetter === 'E:' && p.sizeMB === d1.totalSizeMB);
         },
       },
     ],

@@ -526,6 +526,9 @@ test('ad-create: a New-ADUser line without -SamAccountName does not count', () =
   const run = labRun(AD);
   run('New-ADUser -Name alex -Path "OU=IT_Admins,DC=corp,DC=local"');
   assert.ok(!run.done.has('ad-create-alex'));
+  // The account it made is not alex, so a later command does not pass the step either
+  run('Get-ADUser -Filter *');
+  assert.ok(!run.done.has('ad-create-alex'));
 });
 
 test('AD lab in the engine: the walkthrough forms pass, the wrong OU does not', () => {
@@ -699,6 +702,29 @@ test('labs that run diskpart start in an elevated prompt, and the diskpart walkt
     for (const o of m.objectives) if (o.verifier(fs, state, { command: line, exitCode: res.exitCode, stdout: res.stdout })) done.add(o.id);
   }
   assert.deepEqual([...done].sort(), m.objectives.map(o => o.id).sort());
+});
+
+test('diskpart lab: a 500 MB partition or a full format does not pass', () => {
+  const m = lab('win-pbq-diskpart-partitioning');
+  const play = (lines: string[]) => {
+    let fs = structuredClone(m.initialFs);
+    let state = structuredClone(m.initialState);
+    let diskpartActive = false;
+    const done = new Set<string>();
+    for (const line of lines) {
+      const res = executeWindowsLine(line, 'C:\\Users\\Student', fs, state, 'cmd', diskpartActive);
+      ({ newFs: fs, newState: state } = res);
+      diskpartActive = !!res.diskpartActive;
+      for (const o of m.objectives) if (o.verifier(fs, state, { command: line, exitCode: res.exitCode, stdout: res.stdout })) done.add(o.id);
+    }
+    return done;
+  };
+  const small = play(['diskpart', 'select disk 1', 'create partition primary size=500', 'format fs=ntfs quick', 'assign letter=E']);
+  assert.ok(!small.has('dp-create-part') && !small.has('dp-format-assign'));
+  const full = play(['diskpart', 'select disk 1', 'create partition primary', 'format fs=ntfs', 'assign letter=E']);
+  assert.ok(full.has('dp-create-part') && !full.has('dp-format-assign'), 'the step asks for a quick format');
+  const ok = play(['diskpart', 'sel dis 1', 'cre par pri', 'format fs=ntfs quick', 'assign letter=E']);
+  assert.ok(ok.has('dp-create-part') && ok.has('dp-format-assign'));
 });
 
 test('SFC walkthrough runs sfc, dism, sfc', () => {
