@@ -4,7 +4,7 @@ The app sends one kind of email today: the link that confirms a new account's ad
 
 ## One-time setup
 
-1. **Create the sending mailbox in Purelymail.** Use `no-reply@terminuscli.com` with its own long, random password, used nowhere else. Don't send from your personal mailbox: the Worker holds this password, so keep it separate.
+1. **Create the sending mailbox in Purelymail.** Use `noreply@terminuscli.com` (Purelymail mailbox names have no symbols, so no hyphen) with its own long, random password, used nowhere else. Don't send from your personal mailbox: the Worker holds this password, so keep it separate.
    - To use a different address, change `SMTP_USER` in `wrangler.jsonc`.
 2. **Give the Worker the password.** In the Cloudflare dashboard, go to **Workers & Pages → terminuscli → Settings → Variables and Secrets → Add**.
    - Choose type **Secret** (not Text), name it `SMTP_PASSWORD`, paste the password and click **Deploy**.
@@ -16,7 +16,7 @@ The app sends one kind of email today: the link that confirms a new account's ad
 
 | Name | Where | Default | Meaning |
 |---|---|---|---|
-| `SMTP_USER` | `wrangler.jsonc` vars | `no-reply@terminuscli.com` | The mailbox that signs in to send |
+| `SMTP_USER` | `wrangler.jsonc` vars | `noreply@terminuscli.com` | The mailbox that signs in to send |
 | `SMTP_PASSWORD` | Secret | none | That mailbox's password; without it nothing is sent |
 | `SMTP_HOST` | vars (optional) | `smtp.purelymail.com` | Mail server |
 | `SMTP_PORT` | vars (optional) | `465` | Must be 465 (TLS from the start). 587/STARTTLS is refused, because the library can fall back to plain text |

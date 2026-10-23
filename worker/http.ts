@@ -26,7 +26,7 @@ export interface ApiEnv {
   SMTP_HOST?: string;
   /** SMTP port (a var): only 465 (TLS from the start) is accepted */
   SMTP_PORT?: string;
-  /** SMTP username, the sending mailbox's address, e.g. no-reply@terminuscli.com (a var) */
+  /** SMTP username, the sending mailbox's address, e.g. noreply@terminuscli.com (a var) */
   SMTP_USER?: string;
   /** That mailbox's password (set with `wrangler secret put SMTP_PASSWORD`); emails are skipped without it */
   SMTP_PASSWORD?: string;
