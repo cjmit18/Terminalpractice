@@ -39,4 +39,10 @@ jobs:
       - name: Rebuild site/wayne-mitchell from main and the open pull requests
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/build-test-site.mjs
+        # main's copy of the script runs (never a pull request's). Until this workflow's own PR is merged, main has none.
+        run: |
+          if [ ! -f scripts/build-test-site.mjs ]; then
+            echo "main has no scripts/build-test-site.mjs yet; nothing to rebuild"
+            exit 0
+          fi
+          node scripts/build-test-site.mjs
