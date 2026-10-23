@@ -62,6 +62,6 @@
     // Account emails (verification links) go out through this Purelymail mailbox over SMTP (worker/smtp.ts).
     // Its password is a secret: npx wrangler secret put SMTP_PASSWORD. Without it no email is sent.
     // Previews (above) have none of these, so a preview build never sends email. See docs/EMAIL_SETUP.md.
-    "SMTP_USER": "no-reply@terminuscli.com"
+    "SMTP_USER": "noreply@terminuscli.com"
   }
 }

@@ -23,7 +23,7 @@ export function testDb(): Db & { raw: DatabaseSync } {
   return { raw, prepare: sql => statement(sql) };
 }
 
-export const MAIL_ENV: Partial<ApiEnv> = { SMTP_USER: 'no-reply@terminuscli.com', SMTP_PASSWORD: 'test-only' };
+export const MAIL_ENV: Partial<ApiEnv> = { SMTP_USER: 'noreply@terminuscli.com', SMTP_PASSWORD: 'test-only' };
 
 export function setup(overrides: Partial<ApiEnv> = {}, opts: { failMail?: boolean } = {}) {
   let now = Date.UTC(2026, 9, 23);
