@@ -9,6 +9,8 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    # A stalled step fails the run instead of holding a runner for hours
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
@@ -32,8 +34,28 @@ jobs:
       - name: Build production bundle
         run: npm run build
 
+      # The browser comes from Playwright's own CDN (fast, cached between runs). The system packages come from
+      # the runner's Ubuntu mirror, which sometimes stalls for many minutes: time-limit that step and retry it
+      # once. The runner image already has nearly all of them, so if it still fails the job carries on, and
+      # any library that is really missing shows up as a clear browser-launch error in the e2e step.
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
       - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
+        timeout-minutes: 5
+        run: npx playwright install chromium
+
+      - name: Install Chromium system packages
+        timeout-minutes: 8
+        run: |
+          for attempt in 1 2; do
+            if timeout 180 npx playwright install-deps chromium; then exit 0; fi
+            echo "Attempt $attempt to install system packages did not finish in time"
+          done
+          echo "::warning::Chromium system packages could not be installed from the Ubuntu mirror; continuing with the runner's preinstalled libraries"
 
       - name: Run end-to-end tests
         run: npm run e2e
