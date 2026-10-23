@@ -86,6 +86,10 @@ export function stagesRunning(command: string, tools: RegExp): string[] {
 /** True when some command on the line runs one of the given programs. */
 export const runsTool = (command: string, tools: RegExp) => stagesRunning(command, tools).length > 0;
 
+/** True when any command on the line prints typed text (echo, printf, Write-Output, Write-Host), even after a real one */
+export const printsTypedText = (command: string) =>
+  commandStages(command).some(s => /^(echo|printf|write-output|write-host)$/.test(toolOf(s)));
+
 /** True when a command on the line that is not echo or printf names the path. */
 const namesPath = (command: string, path: RegExp) =>
   stagesRunning(command, /^(?!(echo|printf|write-output|write-host)$)/).some(s => path.test(s));

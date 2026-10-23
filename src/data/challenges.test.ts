@@ -29,7 +29,7 @@ function machine(c: Challenge) {
 
 // Plausible near misses: the whole file, an echoed guess, the wrong count or filter
 const WRONG: Record<string, string[]> = {
-  'bash-login-shells': ['cat /etc/passwd', 'echo 2', 'grep -c nologin /etc/passwd', 'wc -l /etc/passwd'],
+  'bash-login-shells': ['cat /etc/passwd', 'echo 2', 'grep -c nologin /etc/passwd', 'wc -l /etc/passwd', 'cat /etc/passwd >/dev/null; echo 2', 'grep -c bash /etc/passwd && echo 2'],
   'bash-sshd-line': ['cat /var/log/syslog', 'grep sshd /var/log/auth.log', 'grep nginx /var/log/syslog', 'echo "sshd[2410]: listening /var/log/syslog"', "grep -o 'sshd\\[2410\\]' /var/log/syslog"],
   'bash-failed-count': ['wc -l /var/log/auth.log', 'grep -c sshd /var/log/syslog', 'echo 3', 'grep "Failed password" /var/log/auth.log'],
   'bash-suid-programs': ['ls -l /usr/bin', 'ls /usr/bin', 'find /usr/bin -perm -2000'],
@@ -83,6 +83,8 @@ test('replay: every challenge is solved by its solution on a fresh machine', () 
 // Other correct ways: the checks look at the answer, not one exact command
 const ALSO_RIGHT: Record<string, string[]> = {
   'bash-login-shells': ['grep /bin/bash /etc/passwd | wc -l', "grep -c ':/bin/bash$' /etc/passwd"],
+  // The commands the lessons teach: find exits 1 because /root cannot be read, with the right matches printed
+  'bash-suid-programs': ['find / -perm -4000', 'find / -perm -4000 2>/dev/null', 'find / -perm -4000 -type f 2> /dev/null', 'find /usr/bin -perm -u=s'],
   'bash-sshd-line': ['grep -i sshd /var/log/syslog'],
   'bash-failed-count': ["grep 'Failed password' /var/log/auth.log | wc -l"],
   'bash-listening-ports': ['netstat -tln', 'ss -ltn'],
@@ -92,8 +94,9 @@ const ALSO_RIGHT: Record<string, string[]> = {
   'cmd-port-4444-program': ['tasklist | findstr 3892', 'tasklist /FI "PID eq 3892"'],
   'cmd-ipv4-address': ['ipconfig /all | findstr IPv4'],
   'cmd-hosts-dc01': ['type C:\\Windows\\System32\\drivers\\etc\\hosts | findstr dc01'],
-  'ps-stopped-services': ['Get-Service | Where-Object {$_.Status -eq "Stopped"}'],
-  'ps-servicing-stack': ['Get-Content C:\\Logs\\CBS.log | Select-String Servicing'],
+  'ps-stopped-services': ['Get-Service | Where-Object {$_.Status -eq "Stopped"}', 'gsv | ? Status -eq Stopped'],
+  'ps-top-cpu': ['gps | sort cpu -desc | select -first 1'],
+  'ps-servicing-stack': ['Select-String -Path C:\\Logs\\CBS.log -Pattern Servicing'],
 };
 
 test('other correct commands pass too', () => {
@@ -126,7 +129,9 @@ test('a failed command never passes, even when its output looks right', () => {
     let last: ReturnType<typeof run> | undefined;
     for (const line of c.solution) last = run(line);
     const m = MODULES.get(c.machineFrom)!;
-    assert.equal(c.verifier(m.initialFs, m.initialState, { ...last!.ctx, exitCode: 1 }), false, `${c.id}: passes with exit code 1`);
+    // find's exit code 1 (some folder unreadable) still counts for the SUID challenge; 2 is a real failure
+    const failed = c.id === 'bash-suid-programs' ? 2 : 1;
+    assert.equal(c.verifier(m.initialFs, m.initialState, { ...last!.ctx, exitCode: failed }), false, `${c.id}: passes with exit code ${failed}`);
   }
 });
 
