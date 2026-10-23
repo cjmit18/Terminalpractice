@@ -4,7 +4,7 @@ Unresolved, actionable bugs for an agent to pick up. Fix one item at a time, add
 
 ## Open
 
-Nothing open here. Planned fixes from the scans, in order, are in [docs/PLAN.md](docs/PLAN.md).
+Nothing open here. Planned fixes from the scans, in order, are in [docs/PLAN.md](docs/PLAN.md); the audit findings are tracked in [issue #28](https://github.com/cjmit18/Terminalpractice/issues/28).
 
 ## Done
 
