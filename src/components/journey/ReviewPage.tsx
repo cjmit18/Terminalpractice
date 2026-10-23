@@ -147,7 +147,7 @@ export const ReviewPage: React.FC<ReviewPageProps> = ({ paths, src, onAnswer }) 
         {header}
         <section aria-labelledby="review-done" className="mt-8 space-y-4 max-w-prose">
           <h2 id="review-done" ref={resultRef} tabIndex={-1} className="text-xl font-semibold focus:outline-none">
-            Review complete.
+            Review complete!
           </h2>
           <p className="text-[15px]">
             Nice work practising. Questions you answered correctly return later, and the ones you missed come back sooner.
