@@ -13,7 +13,13 @@ export type Announcement =
   | { kind: 'milestone'; text: string; confetti?: boolean };
 
 export interface Batch {
+  /** Everything in one sentence group, for the screen reader's live region */
   text: string;
+  /**
+   * The same news for the eye, one item per line: the biggest milestone first as a short headline
+   * (path, then stage, then lab), then the other milestones, the tasks and one line for the badges.
+   */
+  lines: string[];
   /** Contains a badge or milestone: the note stays longer (15 s instead of 6 s, paused while hovered or focused) */
   lasting: boolean;
   confetti: boolean;
@@ -45,8 +51,20 @@ export function batchMessage(items: Announcement[]): Batch | null {
     parts.push(sentence(`${badges.length} badges earned: ${badges.map(b => b.name).join('; ')}`));
   }
 
+  // Milestones come in the order they happened (lab, stage, path): the last one is the biggest news.
+  // It leads, with an exclamation mark: finishing something is earned encouragement (docs/DESIGN.md).
+  const cheer = (s: string) => `${s.trim().replace(/[.!]$/, '')}!`;
+  const lines: string[] = [];
+  const shownMilestones = milestones.map(m => m.text).filter((t, i, all) => all.indexOf(t) === i).reverse();
+  if (shownMilestones.length > 0) lines.push(cheer(shownMilestones[0]), ...shownMilestones.slice(1).map(sentence));
+  if (uniqueTasks.length === 1) lines.push(sentence(`Task ${uniqueTasks[0].index} of ${uniqueTasks[0].total} done: ${uniqueTasks[0].title}`));
+  else if (uniqueTasks.length > 1) lines.push(sentence(`${uniqueTasks.length} tasks done`));
+  if (badges.length === 1) lines.push(`Badge earned: ${sentence(badges[0].name)}`);
+  else if (badges.length > 1) lines.push(sentence(`${badges.length} badges earned: ${badges.map(b => b.name).join(', ')}`));
+
   return {
     text: parts.join(' '),
+    lines,
     lasting: milestones.length > 0 || badges.length > 0,
     confetti: milestones.some(m => m.confetti),
   };
