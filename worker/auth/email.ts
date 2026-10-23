@@ -62,7 +62,7 @@ export function requireStrongPassword(password: string, email: string | null, di
 
 /** Issues a verification token and emails the link (after the answer is sent, when the platform allows it) */
 export async function sendVerification(c: RouteContext, userId: string, email: string): Promise<void> {
-  const token = await issueToken(c.env.DB, userId, 'verify', c.deps.now());
+  const token = await issueToken(c.env.DB, userId, 'verify', c.deps.now(), email);
   await inBackground(c.deps, () => sendEmail(c.env, c.deps, verificationEmail(appOrigin(c), email, token)));
 }
 
@@ -139,12 +139,14 @@ async function login(c: RouteContext): Promise<Response> {
 /**
  * POST /api/auth/email/verify { token }: the link from the email confirms the address. It does not sign the
  * browser in: whoever opens the link proves the inbox, not that they may use the account here.
- * A link only confirms the claim it was sent for: the account's current address must have been set before
- * the link was made (an older link never confirms a newer address), and the claim must not have lapsed.
+ * A link only confirms the claim it was sent for: the account's current address must be the exact address the
+ * link was sent to, set before the link was made, and the claim must not have lapsed. Comparing the address
+ * itself covers an address that changes while a link is being sent (the link still goes to the old inbox).
  */
 async function verify(c: RouteContext): Promise<Response> {
   const now = c.deps.now();
   const token = str(await c.body(), 'token', 200);
+  const tokenHash = await sha256(token);
   const userId = await consumeToken(c.env.DB, token, 'verify', now);
   if (!userId) {
     throw (await tokenFailure(c.env.DB, token, 'verify', now)) === 'token_expired'
@@ -155,10 +157,12 @@ async function verify(c: RouteContext): Promise<Response> {
     `UPDATE users SET email_verified_at = COALESCE(email_verified_at, ?)
       WHERE id = ? AND email IS NOT NULL
         AND (email_verified_at IS NOT NULL
-          OR (email_set_at <= (SELECT created_at FROM auth_tokens WHERE token_hash = ?) AND email_set_at > ?))
+          OR (email = (SELECT email FROM auth_tokens WHERE token_hash = ?)
+            AND email_set_at <= (SELECT created_at FROM auth_tokens WHERE token_hash = ?)
+            AND email_set_at > ?))
       RETURNING id`,
   )
-    .bind(now, userId, await sha256(token), now - EMAIL_CLAIM_TTL)
+    .bind(now, userId, tokenHash, tokenHash, now - EMAIL_CLAIM_TTL)
     .first<{ id: string }>();
   if (!confirmed) {
     throw new HttpError(400, 'invalid_token', 'This link is for an earlier sign-up or address on the account. Sign in and ask for a new link, or sign up again.');
