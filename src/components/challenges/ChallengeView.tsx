@@ -154,6 +154,7 @@ export const ChallengeView: React.FC<ChallengeViewProps> = ({ challenge, machine
             isDiskpartActive={session.diskpartActive}
             currentUser={session.state.currentUser}
             hostname={session.state.hostname}
+            fs={session.fs}
           />
         </section>
       </div>

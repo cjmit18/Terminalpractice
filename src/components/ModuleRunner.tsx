@@ -355,6 +355,7 @@ export const ModuleRunner: React.FC<ModuleRunnerProps> = ({
             isDiskpartActive={session.diskpartActive}
             currentUser={state.currentUser}
             hostname={state.hostname}
+            fs={session.fs}
           />
         </section>
       </div>
