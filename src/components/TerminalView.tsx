@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
-import { TerminalShell, HistoryItem } from '../types/terminal';
+import { TerminalShell, HistoryItem, FileNode } from '../types/terminal';
 import { Copy, Check, Eraser, ArrowUp, ArrowDown } from 'lucide-react';
+import { completePath } from '../terminal/complete';
 
 /** A history entry, plus what the prompt looked like when it was typed */
 export interface TerminalLine extends HistoryItem {
@@ -30,6 +31,8 @@ interface TerminalViewProps {
   promptStyle?: 'standard' | 'bracket' | 'short' | 'host-first';
   /** An extra line under the login banner (the Sandbox lets learners pick one) */
   bannerLine?: string;
+  /** The machine's files, so Tab can complete file and folder names as well as commands */
+  fs?: FileNode;
 }
 
 const SHELL_NAMES: Record<TerminalShell, string> = {
@@ -86,8 +89,15 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
   onActivity,
   promptStyle = 'standard',
   bannerLine,
+  fs,
 }) => {
-  const [input, setInput] = useState('');
+  const [input, setInputValue] = useState('');
+  // Names Tab could not choose between, shown under the line until the next change (bash lists them on a second Tab)
+  const [tabNames, setTabNames] = useState<string[]>([]);
+  const setInput = (value: string) => {
+    setInputValue(value);
+    setTabNames([]);
+  };
   const [copied, setCopied] = useState(false);
   const [historyIndex, setHistoryIndex] = useState<number | null>(null);
   const [showBanner, setShowBanner] = useState(true);
@@ -140,10 +150,10 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
       historyNext();
-    } else if (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && /^\S+$/.test(input.trimStart())) {
-      // Tab completes a partly typed command name; on an empty line or after it, Tab moves focus as usual
+    } else if (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && input.trim() !== '') {
+      // Tab completes the word being typed (a command, or a file or folder name); on an empty line it moves focus as usual
       e.preventDefault();
-      completeCommand();
+      complete();
     } else if (e.ctrlKey && e.key.toLowerCase() === 'c') {
       // Let a real selection copy; otherwise Ctrl+C abandons the line like a shell does
       const el = inputRef.current;
@@ -176,10 +186,10 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
     }
   };
 
-  // Completes the command name (first word) from a short list of commands the labs use
-  const completeCommand = () => {
+  // Completes the command name (first word) from a short list of commands the labs use. True when it found a match.
+  const completeCommand = (): boolean => {
     const word = input.trimStart();
-    if (!word || /\s/.test(word)) return;
+    if (!word || /\s/.test(word)) return false;
     const pool = shell === 'bash' ? COMPLETIONS.linux : COMPLETIONS.windows;
     const matches = pool.filter(c => c.toLowerCase().startsWith(word.toLowerCase()));
     if (matches.length === 1) {
@@ -194,8 +204,33 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
       if (prefix.length > word.length) {
         setInput(prefix);
         onActivity?.(['tab']);
+      } else {
+        setTabNames(matches);
       }
     }
+    return matches.length > 0;
+  };
+
+  // Completes the last word of the line as a file or folder name on this machine
+  const completeFileName = () => {
+    if (!fs) return;
+    const word = /\S*$/.exec(input)?.[0] ?? '';
+    const result = completePath(fs, cwd, word, shell !== 'bash');
+    if (!result) return;
+    const next = input.slice(0, input.length - word.length) + result.text;
+    if (next !== input) {
+      setInput(next);
+      onActivity?.(['tab']);
+    } else if (result.names.length > 1) {
+      setTabNames(result.names);
+    }
+  };
+
+  // The first word is a command (unless it looks like a path, such as ./script.sh); later words are file names
+  const complete = () => {
+    const first = !/\s/.test(input.trimStart());
+    if (first && !/[/\\~.]/.test(input.trimStart()) && completeCommand()) return;
+    completeFileName();
   };
 
   const cancelLine = () => {
@@ -405,6 +440,11 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
             />
           </div>
         )}
+        {!readOnly && tabNames.length > 0 && (
+          <p className="text-term-muted break-words" aria-live="polite">
+            {tabNames.join('  ')}
+          </p>
+        )}
       </div>
 
       {/* Keys that phone keyboards bury or lack. Hidden for mouse users. pointerdown keeps the keyboard open */}
@@ -415,7 +455,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
           aria-label="Terminal keys"
         >
           {[
-            { label: 'Tab', aria: 'Tab, complete command', run: completeCommand },
+            { label: 'Tab', aria: 'Tab, complete the command or file name', run: complete },
             { label: 'Ctrl+C', aria: 'Control C, cancel line', run: cancelLine },
           ].map(k => (
             <button

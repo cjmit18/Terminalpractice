@@ -121,6 +121,26 @@ test('Tab completes the commands the first-steps labs teach', async ({ page, isM
   await tab('pw', 'pwd ');
 });
 
+test('Tab completes file and folder names after the command, and lists the names it cannot choose between', async ({ page, isMobile }) => {
+  test.skip(isMobile, 'same code path on both projects');
+  const tab = async (typed: string, expected: string) => {
+    await commandInput(page).fill(typed);
+    await commandInput(page).press('Tab');
+    await expect(commandInput(page)).toHaveValue(expected);
+  };
+  await page.goto('#/sandbox');
+  await tab('cat no', 'cat notes.txt ');
+  await tab('cd scr', 'cd scripts/');
+  await tab('ls /var/log/sy', 'ls /var/log/syslog ');
+  // hostname and hosts: extend to what they share, then list both
+  await tab('cat /etc/ho', 'cat /etc/host');
+  await commandInput(page).press('Tab');
+  await expect(page.getByText('hostname  hosts')).toBeVisible();
+  // Typing hides the list again
+  await commandInput(page).press('s');
+  await expect(page.getByText('hostname  hosts')).toHaveCount(0);
+});
+
 test('walkthrough steps run in the shell they are written for', async ({ page, isMobile }) => {
   // Walkthrough steps are written for the lab's default shell, even if the header picked the other one
   test.skip(isMobile, 'same code path on both projects');

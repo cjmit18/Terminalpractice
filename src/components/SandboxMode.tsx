@@ -282,6 +282,7 @@ export const SandboxMode: React.FC = () => {
             suggestedCommands={examples}
             promptStyle={promptStyle}
             bannerLine={bannerLine || undefined}
+            fs={session.fs}
           />
         </div>
 
