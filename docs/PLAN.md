@@ -40,9 +40,10 @@ Rules for parts 4-9: port from `portal/base` by hand, never copy whole files fro
 3. Content start: challenge pool without a cap and with random rotation; tone exceptions in DESIGN.md and "Review complete!".
 
 **Then, interleaved** (one PR at a time)
+- The 15 confirmed bugs in [issue #28](https://github.com/cjmit18/Terminalpractice/issues/28), one small PR each with a regression test, starting with the service-worker cache deletion, verification-token replacement, fabricated lab answers, and identity/permission bugs.
 - Portal parts 4-9 in order.
 - Content build steps 1-6 from CONTENT_PLAN.md, and the Monday task.
 - The open round-3 simulator fixes (PRs 8-24 in the round-3 plan): option parsing, trailing newlines, sort keys, script arguments, su/sudo, honest "not simulated" builtins, find predicates, awk, findstr, drives, shell fidelity, lesson text, app polish.
 - Design fixes: phone touch targets, `--subtle` contrast, Mono 600.
 
-The full scan reports (round 3 and round 4) are summarised here; their open items are the list above.
+The full scan reports (round 3 and round 4) are summarised here; their open items are the list above. Issue #28 tracks its own 15 findings until each is fixed.
