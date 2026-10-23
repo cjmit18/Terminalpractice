@@ -36,7 +36,7 @@ export function verificationEmail(origin: string, to: string, token: string): Me
       'Open this link to confirm the email address on your Terminus CertSim account. The link works once and expires in 24 hours.',
       'Confirm email',
       link,
-      'If you did not create an account or add this address, you can ignore this email.',
+      'If you did not create an account with this address, ignore this email and do not open the link.',
     ),
   };
 }

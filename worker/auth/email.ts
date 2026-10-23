@@ -1,5 +1,5 @@
 // Email + password accounts: sign up, sign in, and confirm the address. Resetting a password comes next.
-import { HttpError, appOrigin, inBackground, ipSubject, isUniqueViolation, json, str, type Db, type Route, type RouteContext } from '../http';
+import { HttpError, appOrigin, inBackground, ipSubject, isUniqueViolation, json, sha256, str, type Db, type Route, type RouteContext } from '../http';
 import { sendEmail, verificationEmail } from '../mail';
 import { hashPassword, passwordProblem, verifyAgainstDummy, verifyPassword } from '../password';
 import { LIMITS, countLimit, enforceLimit, rateLimited } from '../ratelimit';
@@ -139,6 +139,8 @@ async function login(c: RouteContext): Promise<Response> {
 /**
  * POST /api/auth/email/verify { token }: the link from the email confirms the address. It does not sign the
  * browser in: whoever opens the link proves the inbox, not that they may use the account here.
+ * A link only confirms the claim it was sent for: the account's current address must have been set before
+ * the link was made (an older link never confirms a newer address), and the claim must not have lapsed.
  */
 async function verify(c: RouteContext): Promise<Response> {
   const now = c.deps.now();
@@ -149,9 +151,18 @@ async function verify(c: RouteContext): Promise<Response> {
       ? new HttpError(400, 'token_expired', 'This link has expired. Ask for a new one.')
       : new HttpError(400, 'invalid_token', 'This link is invalid or was already used. Ask for a new one.');
   }
-  await c.env.DB.prepare('UPDATE users SET email_verified_at = COALESCE(email_verified_at, ?) WHERE id = ? AND email IS NOT NULL')
-    .bind(now, userId)
-    .run();
+  const confirmed = await c.env.DB.prepare(
+    `UPDATE users SET email_verified_at = COALESCE(email_verified_at, ?)
+      WHERE id = ? AND email IS NOT NULL
+        AND (email_verified_at IS NOT NULL
+          OR (email_set_at <= (SELECT created_at FROM auth_tokens WHERE token_hash = ?) AND email_set_at > ?))
+      RETURNING id`,
+  )
+    .bind(now, userId, await sha256(token), now - EMAIL_CLAIM_TTL)
+    .first<{ id: string }>();
+  if (!confirmed) {
+    throw new HttpError(400, 'invalid_token', 'This link is for an earlier sign-up or address on the account. Sign in and ask for a new link, or sign up again.');
+  }
   return json({ ok: true });
 }
 
@@ -160,6 +171,10 @@ async function resendVerification(c: RouteContext): Promise<Response> {
   const { user } = await requireUser(c);
   await enforceLimit(c.env, LIMITS.resendVerification, user.id, c.deps.now());
   if (!user.email) throw new HttpError(400, 'no_email', 'Add an email address to your account first.');
+  // A lapsed claim no longer holds the address, so it gets no new links (stops endless confirm emails to a stranger)
+  if (staleEmailClaim(user, c.deps.now())) {
+    throw new HttpError(409, 'email_claim_lapsed', 'This address was not confirmed within 24 hours, so it is no longer held for this account. Sign up again to use it.');
+  }
   if (user.email_verified_at === null) await sendVerification(c, user.id, user.email);
   return json({ ok: true }, 202);
 }

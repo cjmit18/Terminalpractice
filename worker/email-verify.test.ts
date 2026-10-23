@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { verificationEmail } from './mail.ts';
 import { TOKEN_TTL } from './tokens.ts';
 import { ORIGIN, sessionOf, setup, tokenIn } from './testkit.ts';
+import { DAY } from './session.ts';
 
 const me = async (s: ReturnType<typeof setup>, session: string | null) =>
   (await (await s.call('GET', '/api/me', undefined, { Cookie: `__Host-session=${session}` })).json()).user;
@@ -83,4 +84,27 @@ test('the email is plain and safe: links and text are escaped in the HTML versio
   assert.ok(!m.html.includes('<en>'));
   assert.ok(!/!/.test(m.subject), 'calm wording, no exclamation marks');
   assert.match(m.text, /expires in 24 hours/);
+});
+
+test('a link only confirms the claim it was sent for, never a newer address on the account', async () => {
+  const s = setup();
+  await s.register();
+  const token = tokenIn(s.sent[0]);
+  // The account's address was set again after the link was made (as an email change will do)
+  s.advance(1000);
+  s.db.raw.prepare('UPDATE users SET email = ?, email_set_at = ?').run('newer@example.com', Date.UTC(2026, 9, 23) + 1000);
+  const res = await s.call('POST', '/api/auth/email/verify', { token });
+  assert.equal(res.status, 400);
+  assert.equal((await res.json()).error, 'invalid_token');
+  assert.equal(s.db.raw.prepare('SELECT email_verified_at FROM users').get()?.email_verified_at, null);
+});
+
+test('a lapsed claim gets no new links, so nobody can keep mailing confirm links to a stranger', async () => {
+  const s = setup();
+  const session = sessionOf(await s.register());
+  s.advance(DAY + 1);
+  const res = await s.call('POST', '/api/auth/email/resend-verification', {}, { Cookie: `__Host-session=${session}` });
+  assert.equal(res.status, 409);
+  assert.equal((await res.json()).error, 'email_claim_lapsed');
+  assert.equal(s.sent.length, 1, 'only the sign-up email');
 });

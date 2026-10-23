@@ -24,7 +24,7 @@ export interface ApiEnv {
   GOOGLE_CLIENT_SECRET?: string;
   /** SMTP server for account emails (a var; default smtp.purelymail.com) */
   SMTP_HOST?: string;
-  /** SMTP port (a var): 465 for TLS from the start (default), 587 for STARTTLS */
+  /** SMTP port (a var): only 465 (TLS from the start) is accepted */
   SMTP_PORT?: string;
   /** SMTP username, the sending mailbox's address, e.g. no-reply@terminuscli.com (a var) */
   SMTP_USER?: string;
