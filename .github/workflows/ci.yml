@@ -49,12 +49,10 @@ jobs:
         run: npx playwright install chromium
 
       - name: Install Chromium system packages
-        timeout-minutes: 8
+        timeout-minutes: 6
+        # One attempt only: when the time limit stops npx, its apt-get keeps the package lock, so a retry cannot run
         run: |
-          for attempt in 1 2; do
-            if timeout 180 npx playwright install-deps chromium; then exit 0; fi
-            echo "Attempt $attempt to install system packages did not finish in time"
-          done
+          if timeout 240 npx playwright install-deps chromium; then exit 0; fi
           echo "::warning::Chromium system packages could not be installed from the Ubuntu mirror; continuing with the runner's preinstalled libraries"
 
       - name: Run end-to-end tests
