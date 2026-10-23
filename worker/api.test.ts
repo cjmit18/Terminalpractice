@@ -1,19 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { handleApi, safeReturn, type ApiDeps, type ApiEnv, type Db, type DbStatement } from './api.ts';
 
 const ORIGIN = 'https://terminalpractice.example.workers.dev';
 
-/** D1's prepare/bind/first/run on top of Node's built-in SQLite, with the real migration applied. */
+/** D1's prepare/bind/first/all/run on top of Node's built-in SQLite, with the real migrations applied. */
 function testDb(): Db & { raw: DatabaseSync } {
   const raw = new DatabaseSync(':memory:');
   raw.exec('PRAGMA foreign_keys = ON;');
-  raw.exec(readFileSync(new URL('../migrations/0001_accounts.sql', import.meta.url), 'utf8'));
+  for (const name of readdirSync(new URL('../migrations/', import.meta.url)).filter(f => f.endsWith('.sql')).sort()) {
+    raw.exec(readFileSync(new URL(`../migrations/${name}`, import.meta.url), 'utf8'));
+  }
   const statement = (sql: string, values: unknown[] = []): DbStatement => ({
     bind: (...v) => statement(sql, v),
     first: async <T,>() => (raw.prepare(sql).get(...(values as never[])) as T | undefined) ?? null,
+    all: async <T,>() => ({ results: raw.prepare(sql).all(...(values as never[])) as T[] }),
     run: async () => raw.prepare(sql).run(...(values as never[])),
   });
   return { raw, prepare: sql => statement(sql) };
@@ -80,6 +83,7 @@ test('/api/me treats a database without the account tables as signed out', async
   const statement = (sql: string, values: unknown[] = []): DbStatement => ({
     bind: (...v) => statement(sql, v),
     first: async <T,>() => (raw.prepare(sql).get(...(values as never[])) as T | undefined) ?? null,
+    all: async <T,>() => ({ results: raw.prepare(sql).all(...(values as never[])) as T[] }),
     run: async () => raw.prepare(sql).run(...(values as never[])),
   });
   const env: ApiEnv = { DB: { prepare: sql => statement(sql) }, GITHUB_CLIENT_ID: '' };
@@ -90,7 +94,14 @@ test('/api/me treats a database without the account tables as signed out', async
 
   // Any other database error is still an error
   const broken: ApiEnv = {
-    DB: { prepare: () => ({ bind() { return this; }, first: async () => { throw new Error('D1_ERROR: network'); }, run: async () => ({}) }) },
+    DB: {
+      prepare: () => ({
+        bind() { return this; },
+        first: async () => { throw new Error('D1_ERROR: network'); },
+        all: async () => { throw new Error('D1_ERROR: network'); },
+        run: async () => ({}),
+      }),
+    },
   };
   await assert.rejects(handleApi(new Request(`${ORIGIN}/api/me`, { headers: { Cookie: '__Host-session=x' } }), broken), /network/);
 });
@@ -128,7 +139,14 @@ test('a full sign-in creates the user and a hashed session, and returns to where
   assert.match(stored[0].token_hash, /^[0-9a-f]{64}$/);
 
   const me = await (await s.call('GET', '/api/me', { Cookie: `__Host-session=${session}` })).json();
-  assert.deepEqual(me.user, { id: me.user.id, name: 'Octo Learner', login: 'octo-learner', avatarUrl: 'https://avatars.example/4242' });
+  assert.deepEqual(me.user, {
+    id: me.user.id,
+    name: 'Octo Learner',
+    login: 'octo-learner',
+    email: null,
+    emailVerified: false,
+    avatarUrl: 'https://avatars.example/4242',
+  });
 
   // Signing in again reuses the same user
   await signIn(s);

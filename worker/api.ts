@@ -1,35 +1,29 @@
-// Account API served by the Worker under /api/*: GitHub sign-in, sessions, "who am I" and sign-out.
+// Account API served by the Worker under /api/*: GitHub sign-in, email sign-up and sign-in (auth/email.ts),
+// sessions, "who am I" and sign-out.
 // Kept free of Cloudflare-only imports so it runs (and is tested) in Node with a SQLite stand-in for D1.
 
-/** The slice of D1 this API uses. Cloudflare's D1Database satisfies it. */
-export interface DbStatement {
-  bind(...values: unknown[]): DbStatement;
-  first<T = Record<string, unknown>>(): Promise<T | null>;
-  run(): Promise<unknown>;
-}
-export interface Db {
-  prepare(sql: string): DbStatement;
-}
+import {
+  BODY_LIMIT,
+  HttpError,
+  errorResponse,
+  isMissingSchema,
+  originAllowed,
+  readJsonObject,
+  type ApiDeps,
+  type ApiEnv,
+  type Db,
+  type Route,
+  type RouteContext,
+} from './http';
+import { emailRoutes } from './auth/email';
+import { currentSession, loadUser, toPublicUser } from './session';
 
-export interface ApiEnv {
-  DB: Db;
-  /** Public Client ID of the GitHub App (a var in wrangler.jsonc) */
-  GITHUB_CLIENT_ID?: string;
-  /** Client secret of the GitHub App (set with `wrangler secret put GITHUB_CLIENT_SECRET`) */
-  GITHUB_CLIENT_SECRET?: string;
-}
-
-export interface ApiDeps {
-  fetch: (input: string, init?: RequestInit) => Promise<Response>;
-  now: () => number;
-}
+export type { ApiDeps, ApiEnv, Db, DbStatement } from './http';
 
 const SESSION_COOKIE = '__Host-session';
 const STATE_COOKIE = '__Host-oauth';
 const DAY = 24 * 60 * 60 * 1000;
 const SESSION_TTL = 30 * DAY;
-/** Sliding expiry: a session used with less than this left is extended to the full TTL */
-const RENEW_BELOW = 15 * DAY;
 const STATE_TTL_SECONDS = 10 * 60;
 const DEFAULT_RETURN = '#/learn';
 
@@ -41,6 +35,8 @@ export interface PublicUser {
   id: string;
   name: string;
   login: string | null;
+  email: string | null;
+  emailVerified: boolean;
   avatarUrl: string | null;
 }
 
@@ -54,6 +50,9 @@ const defaultDeps: ApiDeps = {
 export async function handleApi(request: Request, env: ApiEnv, deps: ApiDeps = defaultDeps): Promise<Response | null> {
   const url = new URL(request.url);
   if (!url.pathname.startsWith('/api/')) return null;
+
+  const routed = emailRoutes.filter(r => r.path === url.pathname);
+  if (routed.length) return handleRoute(routed.find(r => r.method === request.method), request, url, env, deps);
 
   const route = `${request.method} ${url.pathname}`;
   switch (route) {
@@ -70,6 +69,28 @@ export async function handleApi(request: Request, env: ApiEnv, deps: ApiDeps = d
   }
   const known = ['/api/health', '/api/me', '/api/auth/github/start', '/api/auth/github/callback', '/api/logout'];
   return known.includes(url.pathname) ? json({ error: 'Method not allowed' }, 405) : json({ error: 'Not found' }, 404);
+}
+
+/**
+ * Runs a route from the route modules (auth/email.ts): state-changing requests must come from the app's
+ * own pages, bodies are size-capped JSON, and errors answer as JSON with a stable `error` code.
+ */
+async function handleRoute(route: Route | undefined, request: Request, url: URL, env: ApiEnv, deps: ApiDeps): Promise<Response> {
+  if (!route) return json({ error: 'method_not_allowed', message: 'This method is not allowed here.' }, 405);
+  const limit = route.bodyLimit ?? BODY_LIMIT;
+  try {
+    if (route.method !== 'GET') {
+      if (!originAllowed(env, url, request.headers.get('Origin'))) throw new HttpError(403, 'forbidden_origin', 'This request must come from the app itself.');
+      if (Number(request.headers.get('Content-Length') ?? '0') > limit) throw new HttpError(413, 'payload_too_large', 'This request is too large.');
+    }
+    const c: RouteContext = { request, url, env, deps, params: {}, body: () => readJsonObject(request, limit) };
+    return await route.handler(c);
+  } catch (err) {
+    if (err instanceof HttpError) return errorResponse(err);
+    // A database without the account tables (a preview build's empty D1) cannot hold accounts
+    if (isMissingSchema(err)) return json({ error: 'unavailable', message: 'Accounts are not available on this server.' }, 503);
+    throw err;
+  }
 }
 
 // --- Sign-in with GitHub -------------------------------------------------------------------
@@ -221,37 +242,24 @@ async function me(request: Request, env: ApiEnv, deps: ApiDeps): Promise<Respons
   const token = readCookie(request, SESSION_COOKIE);
   // Signed out is a normal answer, not an error: 200 with user null
   if (!token) return json({ user: null, providers });
+  const signedOut = () => json({ user: null, providers }, 200, { 'Set-Cookie': clearCookie(SESSION_COOKIE) });
 
-  const hash = await sha256(token);
-  let row: { expires_at: number; id: string; display_name: string; avatar_url: string | null; login: string | null } | null;
   try {
-    row = await env.DB.prepare(
-      `SELECT s.expires_at, u.id, u.display_name, u.avatar_url,
-              (SELECT login FROM identities i WHERE i.user_id = u.id AND i.provider = 'github') AS login
-         FROM sessions s JOIN users u ON u.id = s.user_id
-        WHERE s.token_hash = ?`,
-    )
-      .bind(hash)
-      .first();
+    // Expiry, the 90-day cap and sliding renewal follow the same rules for every sign-in method (session.ts)
+    const session = await currentSession({ request, env, deps });
+    const row = session && (await loadUser(env.DB, session.userId));
+    if (!session || !row) {
+      await env.DB.prepare('DELETE FROM sessions WHERE token_hash = ?').bind(await sha256(token)).run();
+      return signedOut();
+    }
+    const user: PublicUser = toPublicUser(row);
+    return json({ user, providers }, 200, session.renewedCookie ? { 'Set-Cookie': session.renewedCookie } : {});
   } catch (err) {
     // A database without the account tables (a preview build's empty D1, where sign-in is off) has
     // no sessions, so a stray cookie means signed out rather than a 500
     if (!isMissingTable(err)) throw err;
-    return json({ user: null, providers }, 200, { 'Set-Cookie': clearCookie(SESSION_COOKIE) });
+    return signedOut();
   }
-
-  const now = deps.now();
-  if (!row || row.expires_at <= now) {
-    if (row) await env.DB.prepare('DELETE FROM sessions WHERE token_hash = ?').bind(hash).run();
-    return json({ user: null, providers }, 200, { 'Set-Cookie': clearCookie(SESSION_COOKIE) });
-  }
-
-  const user: PublicUser = { id: row.id, name: row.display_name, login: row.login, avatarUrl: row.avatar_url };
-  if (row.expires_at - now < RENEW_BELOW) {
-    await env.DB.prepare('UPDATE sessions SET expires_at = ? WHERE token_hash = ?').bind(now + SESSION_TTL, hash).run();
-    return json({ user, providers }, 200, { 'Set-Cookie': cookie(SESSION_COOKIE, token, SESSION_TTL / 1000) });
-  }
-  return json({ user, providers });
 }
 
 async function logout(request: Request, url: URL, env: ApiEnv): Promise<Response> {
