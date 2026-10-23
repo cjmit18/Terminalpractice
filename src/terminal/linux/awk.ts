@@ -4,6 +4,13 @@
 
 import { MAX_FORMAT_WIDTH } from '../limits';
 import { posixToJsRegex } from '../textUtils';
+import { checkRegexWork, userRegex } from '../safeRegex';
+
+/** A regex test that refuses matches that would take far too long (see safeRegex.ts) */
+const safeTest = (re: RegExp, s: string) => {
+  checkRegexWork('awk', re, s);
+  return re.test(s);
+};
 
 type Value = string | number;
 type Arr = Map<string, Value>;
@@ -174,7 +181,7 @@ function parse(src: string, fieldSplit: (env: Env) => void): Program {
     const t = peek();
     if (t.k === 'num') { p++; return () => t.v; }
     if (t.k === 'str') { p++; return () => t.v; }
-    if (t.k === 're') { p++; const re = new RegExp(posixToJsRegex(t.v, true)); return env => (re.test(env.fields[0]) ? 1 : 0); }
+    if (t.k === 're') { p++; const re = userRegex('awk', posixToJsRegex(t.v, true)); return env => (safeTest(re, env.fields[0]) ? 1 : 0); }
     if (isOp('(')) { p++; const e = expr(); expect(')'); return e; }
     if (isOp('$')) { p++; const idx = highPrecOperand(); return env => env.fields[toNum(idx(env))] ?? ''; }
     if (t.k === 'name') {
@@ -248,7 +255,7 @@ function parse(src: string, fieldSplit: (env: Env) => void): Program {
       case 'split': return env => {
         const s = toStr(a(env, 0));
         const sep = args[2] ? toStr(a(env, 2)) : toStr(getVar(env, 'FS'));
-        const parts = sep === ' ' ? s.trim().split(/\s+/).filter(Boolean) : s.split(sep.length === 1 ? sep : new RegExp(sep));
+        const parts = sep === ' ' ? s.trim().split(/\s+/).filter(Boolean) : s.split(sep.length === 1 ? sep : userRegex('awk', sep));
         const target = arr(env, arrName); target.clear();
         parts.forEach((v, i) => target.set(String(i + 1), v));
         return parts.length;
@@ -339,10 +346,10 @@ function parse(src: string, fieldSplit: (env: Env) => void): Program {
       const neg = isOp('!~'); p++;
       const t = peek();
       let re: (env: Env) => RegExp;
-      if (t.k === 're') { p++; const r = new RegExp(posixToJsRegex(t.v, true)); re = () => r; }
-      else { const e = comparison(); re = env => new RegExp(posixToJsRegex(toStr(e(env)), true)); }
+      if (t.k === 're') { p++; const r = userRegex('awk', posixToJsRegex(t.v, true)); re = () => r; }
+      else { const e = comparison(); re = env => userRegex('awk', posixToJsRegex(toStr(e(env)), true)); }
       const left = l;
-      l = env => (re(env).test(toStr(left(env))) !== neg ? 1 : 0);
+      l = env => (safeTest(re(env), toStr(left(env))) !== neg ? 1 : 0);
     }
     return l;
   }
@@ -511,7 +518,7 @@ export function runAwk(program: string, inputs: string[][], fs = ' ', assigns: [
     let parts: string[];
     if (sep === ' ') parts = rec.trim() === '' ? [] : rec.trim().split(/[ \t\n]+/);
     else if (sep.length === 1) parts = rec === '' ? [] : rec.split(sep === '\t' ? '\t' : sep);
-    else parts = rec === '' ? [] : rec.split(new RegExp(sep));
+    else parts = rec === '' ? [] : rec.split(userRegex('awk', sep));
     env.fields = [rec, ...parts];
   };
   const prog = parse(program, fieldSplit);

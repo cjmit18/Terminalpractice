@@ -34,3 +34,43 @@ export function treeHeight(node: { children?: Record<string, unknown> }): number
   }
   return max;
 }
+
+// --- Work budget for one typed command line ------------------------------------------------------------
+
+/** Most command lines one typed line may run, counting every line of every script it starts. */
+export const MAX_LINES_PER_COMMAND = 5000;
+
+/** Largest value a shell variable may hold, in characters. */
+export const MAX_VALUE_LENGTH = 1_000_000;
+
+/** Most words brace expansion ({1..N}, {a,b}{c,d}) may produce. */
+export const MAX_BRACE_WORDS = 10000;
+
+/**
+ * Thrown when a command line goes over its budget. The message is the full line to show ("bash: simulator
+ * limit: ..."); the terminal prints it and leaves the machine as it was.
+ */
+export class BudgetExceeded extends Error {}
+
+let linesRun = 0;
+
+/** Starts a fresh budget: call once per line the learner types. */
+export function startBudget(): void {
+  linesRun = 0;
+}
+
+/** Counts one command line (typed, from a script, or from $(...)), and stops runaway fan-out. */
+export function chargeLine(): void {
+  if (++linesRun > MAX_LINES_PER_COMMAND) {
+    throw new BudgetExceeded(
+      `bash: simulator limit: this command ran more than ${MAX_LINES_PER_COMMAND} command lines (for example a script that starts itself), so the simulator stopped it. A real shell would keep going until it ran out of processes or memory.`,
+    );
+  }
+}
+
+/** Stops a variable from growing without bound (x=$x$x in a loop). */
+export function checkValueLength(name: string, value: string): void {
+  if (value.length > MAX_VALUE_LENGTH) {
+    throw new BudgetExceeded(`bash: simulator limit: the value of ${name} is longer than this simulator allows (${MAX_VALUE_LENGTH} characters).`);
+  }
+}

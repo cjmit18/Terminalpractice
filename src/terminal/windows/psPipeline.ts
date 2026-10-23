@@ -7,6 +7,7 @@ import { getADGroupMemberRows, getADUserRows, listView, searchADAccountRows } fr
 import { tcpConnectionRows, tcpTable } from './psSystem';
 import { NATIVE_TOOLS } from './help';
 import { childItems, itemTable } from './psFiles';
+import { PatternTooComplex, checkRegexWork, userRegex } from '../safeRegex';
 
 // The PowerShell object pipeline: a source cmdlet produces objects, Where-Object, Sort-Object,
 // Select-Object, Select-String and Measure-Object transform them, and a cmdlet such as
@@ -110,7 +111,7 @@ function compare(actual: unknown, op: string, wanted: unknown): boolean {
     case 'ge': r = numeric ? na >= nw : sa >= sw; break;
     case 'le': r = numeric ? na <= nw : sa <= sw; break;
     case 'like': r = globToRegex(sw, true).test(sa); break;
-    case 'match': try { r = new RegExp(String(wanted), 'i').test(String(a)); } catch { r = false; } break;
+    case 'match': try { r = safeMatch('-match', String(wanted), String(a)); } catch (e) { if (e instanceof PatternTooComplex) throw e; r = false; } break;
     case 'contains': r = sa.split(/,\s*/).includes(sw); break;
     default: r = false;
   }
@@ -223,15 +224,26 @@ function selectString(ctx: WindowsContext, objs: Objects, stage: PsStage): Objec
   return { kind: 'string', items: hits.map(h => ({ '': text(h) })) };
 }
 
+/** -match with a learner's pattern, refusing ones that would freeze the page */
+function safeMatch(op: string, pattern: string, value: string): boolean {
+  const re = userRegex(op, pattern, 'i');
+  checkRegexWork(op, re, value);
+  return re.test(value);
+}
+
 export function lineMatcher(patterns: string[], simple: boolean, caseSensitive: boolean): (line: string) => boolean {
   const res = patterns.map(p => {
     try {
-      return new RegExp(simple ? p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : p, caseSensitive ? '' : 'i');
-    } catch {
+      return userRegex('Select-String', simple ? p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : p, caseSensitive ? '' : 'i');
+    } catch (e) {
+      if (e instanceof PatternTooComplex) throw e;
       return new RegExp(p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), caseSensitive ? '' : 'i');
     }
   });
-  return line => res.some(r => r.test(line));
+  return line => res.some(r => {
+    checkRegexWork('Select-String', r, line);
+    return r.test(line);
+  });
 }
 
 function measureObject(ctx: WindowsContext, objs: Objects, stage: PsStage): Objects | WindowsResult {

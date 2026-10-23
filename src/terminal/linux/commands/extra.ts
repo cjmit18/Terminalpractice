@@ -6,6 +6,7 @@ import { readInputs } from '../input';
 import { runChildLine } from '../scripts';
 import { blockDevices, MODULES, KERNEL_RELEASE } from '../virtualFs';
 import { labNow } from '../../labClock';
+import { PatternTooComplex, userRegex } from '../../safeRegex';
 
 // Smaller utilities the lessons use: rmdir, du, who, uptime, pgrep/pkill, nice/renice, xargs, nl,
 // mount, swapon, blkid, lsusb, modinfo, timedatectl.
@@ -115,7 +116,10 @@ function selectProcesses(ctx: LinuxContext, cmd: 'pgrep' | 'pkill') {
   const pattern = opts.operands[0];
   if (pattern === undefined) return { error: `${cmd}: no matching criteria specified\nTry \`${cmd} --help' for more information.` };
   let re: RegExp;
-  try { re = new RegExp(opts.flags.has('x') ? `^(?:${pattern})$` : pattern); } catch { return { error: `${cmd}: invalid regular expression` }; }
+  try { re = userRegex(cmd, opts.flags.has('x') ? `^(?:${pattern})$` : pattern); } catch (e) {
+    if (e instanceof PatternTooComplex) throw e;
+    return { error: `${cmd}: invalid regular expression` };
+  }
   const users = optionValue(opts, 'u')?.split(',');
   const procs = ctx.state.processes.filter(p =>
     re.test(opts.flags.has('f') ? p.command : procName(p.command)) && (!users || users.includes(p.user)));

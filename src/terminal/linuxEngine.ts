@@ -10,6 +10,7 @@ import {
 import { shellVariable, homeOf } from './linux/env';
 import { runChain, StageResult } from './chain';
 import { cloneState } from './state';
+import { BudgetExceeded, chargeLine, checkValueLength, startBudget } from './limits';
 import { LinuxContext, linuxCommands, newFileMode, createInDir } from './linux/context';
 import { runScriptFile, isScriptPath, setLineRunner } from './linux/scripts';
 import './linux/commands/files';
@@ -50,9 +51,14 @@ export function executeLinuxLine(
     ...state,
     commandHistory: [...(state.commandHistory ?? []), line].slice(-HISTORY_LIMIT),
   };
+  startBudget();
   try {
     return runLinuxLine(line, cwd, fs, recorded, 0, true);
   } catch (e) {
+    // Over the work budget (runaway scripts, huge values): stop with a clear note, machine unchanged
+    if (e instanceof BudgetExceeded) {
+      return { stdout: '', stderr: e.message, exitCode: 1, newCwd: cwd, newFs: fs, newState: { ...recorded, lastExitCode: 1 } };
+    }
     // A simulator bug must never take the terminal down: report it and leave the machine as it was
     const message = e instanceof Error ? e.message : String(e);
     return { stdout: '', stderr: `bash: internal error: ${message}`, exitCode: 1, newCwd: cwd, newFs: fs, newState: recorded };
@@ -64,6 +70,7 @@ export function executeLinuxLine(
  * the line's standard output is the terminal (ls then prints columns) or a pipe, file or $(...).
  */
 export function runLinuxLine(line: string, cwd: string, fs: FileNode, state: SystemState, depth: number, tty = false): LinuxExecutionResult {
+  chargeLine();
   // bash parses the whole line first: a syntax error means nothing on it runs
   const syntax = checkBashSyntax(line);
   if (syntax) return { stdout: '', stderr: syntax, exitCode: 2, newCwd: cwd, newFs: fs, newState: { ...state, lastExitCode: 2 } };
@@ -267,7 +274,10 @@ function executeLinuxPipeline(
         // Only assignments (or a bare redirect such as "> file"): set the variables in this shell
         if (assignments.length) {
           activeState = { ...activeState, envVars: { ...activeState.envVars } };
-          for (const a of assignments) activeState.envVars[a.name] = a.value;
+          for (const a of assignments) {
+            checkValueLength(a.name, a.value);
+            activeState.envVars[a.name] = a.value;
+          }
         }
         return { stdout: '', stderr: '', exitCode: 0, newCwd: currentCwd, newFs: activeFs, newState: activeState };
       }
