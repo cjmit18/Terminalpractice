@@ -19,7 +19,7 @@ The app sends one kind of email today: the link that confirms a new account's ad
 | `SMTP_USER` | `wrangler.jsonc` vars | `no-reply@terminuscli.com` | The mailbox that signs in to send |
 | `SMTP_PASSWORD` | Secret | none | That mailbox's password; without it nothing is sent |
 | `SMTP_HOST` | vars (optional) | `smtp.purelymail.com` | Mail server |
-| `SMTP_PORT` | vars (optional) | `465` | 465 uses TLS from the start; 587 uses STARTTLS |
+| `SMTP_PORT` | vars (optional) | `465` | Must be 465 (TLS from the start). 587/STARTTLS is refused, because the library can fall back to plain text |
 | `EMAIL_FROM` | vars (optional) | `SMTP_USER` | Sender address shown to the reader, as "Terminus CertSim" |
 | `REPLY_TO` | vars (optional) | none | Where replies go, e.g. a support inbox |
 
