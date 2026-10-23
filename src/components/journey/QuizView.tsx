@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ArrowRight, Check, RotateCcw, X } from 'lucide-react';
 import { PathStep, QuizQuestion } from '../../types/paths';
 import { QuizScore, correctNeeded, quizPassed } from '../../lib/journey';
+import { freshOrder } from '../../lib/rotation';
 import { cx } from '../sims/ui';
 import { primaryLinkClass, secondaryLinkClass } from './shared';
 
@@ -25,12 +26,16 @@ const buttonClass = (primary: boolean) => (primary ? primaryLinkClass : secondar
  * One question at a time: answer, check, read why, move on. The explanation sits right
  * under the choices you just made, which is the point of a checkpoint, and on a phone
  * there is never a long page to scroll back through to find the feedback.
+ *
+ * Every question in the checkpoint is asked each time, in a new random order on every attempt.
  */
 export const QuizView: React.FC<QuizViewProps> = ({ step, best, onScore, next, onAnswer, passedNote }) => {
-  const total = step.questions.length;
+  // This attempt's order: all of the checkpoint's questions, shuffled; Try again shuffles again
+  const [questions, setQuestions] = useState(() => freshOrder(step.questions, null));
+  const total = questions.length;
   const needed = correctNeeded(total, step.passMark);
   const [index, setIndex] = useState(0);
-  const [answers, setAnswers] = useState<(number | null)[]>(() => step.questions.map(() => null));
+  const [answers, setAnswers] = useState<(number | null)[]>(() => questions.map(() => null));
   const [checked, setChecked] = useState(false);
   const [finished, setFinished] = useState(false);
   const [nudge, setNudge] = useState(false);
@@ -44,7 +49,7 @@ export const QuizView: React.FC<QuizViewProps> = ({ step, best, onScore, next, o
   // Only move focus after the learner acts, never on first render
   const focusTarget = useRef<'feedback' | 'question' | 'result' | null>(null);
 
-  const question = step.questions[index];
+  const question = questions[index];
   const selected = answers[index];
 
   useEffect(() => {
@@ -79,7 +84,7 @@ export const QuizView: React.FC<QuizViewProps> = ({ step, best, onScore, next, o
       setChecked(false);
       return;
     }
-    const correct = step.questions.filter((q, i) => answers[i] === q.answer).length;
+    const correct = questions.filter((q, i) => answers[i] === q.answer).length;
     setPreviousBest(best);
     onScore({ correct, total });
     focusTarget.current = 'result';
@@ -87,7 +92,8 @@ export const QuizView: React.FC<QuizViewProps> = ({ step, best, onScore, next, o
   };
 
   const retry = () => {
-    setAnswers(step.questions.map(() => null));
+    setQuestions(freshOrder(step.questions, questions));
+    setAnswers(questions.map(() => null));
     setIndex(0);
     setChecked(false);
     setFinished(false);
@@ -108,10 +114,10 @@ export const QuizView: React.FC<QuizViewProps> = ({ step, best, onScore, next, o
   );
 
   if (finished) {
-    const correct = step.questions.filter((q, i) => answers[i] === q.answer).length;
+    const correct = questions.filter((q, i) => answers[i] === q.answer).length;
     return (
       <QuizResult
-        questions={step.questions}
+        questions={questions}
         answers={answers}
         correct={correct}
         needed={needed}

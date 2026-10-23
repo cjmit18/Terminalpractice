@@ -2,6 +2,7 @@ import { CommandContext } from '../types/modules';
 import { FileNode, SystemState, TerminalShell } from '../types/terminal';
 import { getNodeAtPath } from '../terminal/filesystem';
 import { printsTypedText, runsTool } from './verifiers';
+import { shuffled } from '../lib/rotation';
 
 /**
  * Mini challenges: short puzzles answered with one command (sometimes two), on the machines of
@@ -318,23 +319,6 @@ export const CHALLENGES_BY_ID = new Map(CHALLENGES.map(c => [c.id, c]));
 /** Days since 1970-01-01 for a local calendar date, so the pick changes at local midnight. */
 function dayNumber(d: Date): number {
   return Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86_400_000);
-}
-
-/** The list in a random order fixed by `seed` (Fisher-Yates with a mulberry32 generator), the same on every device */
-function shuffled<T>(list: readonly T[], seed: number): T[] {
-  let s = seed >>> 0;
-  const random = () => {
-    s = (s + 0x6d2b79f5) >>> 0;
-    let t = Math.imul(s ^ (s >>> 15), 1 | s);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-  const out = [...list];
-  for (let i = out.length - 1; i > 0; i--) {
-    const j = Math.floor(random() * (i + 1));
-    [out[i], out[j]] = [out[j], out[i]];
-  }
-  return out;
 }
 
 /** One cycle's shuffle; a cycle never starts with the challenge the previous cycle ended on */

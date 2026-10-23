@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures';
+import { test, expect, takeCheckpoint } from './fixtures';
 import type { Page } from '@playwright/test';
 import { LEARNING_PATHS } from '../src/data/paths';
 import type { QuizQuestion } from '../src/types/paths';
@@ -37,14 +37,11 @@ async function answer(page: Page, right: boolean, nextLabel: string) {
 test('checkpoint answers are saved for review, one record per question', async ({ page }) => {
   const { path, quiz } = linux;
   await page.goto(`#/learn/${path.id}/${quiz.id}`);
-  for (const [i, q] of quiz.questions.entries()) {
-    const choice = i === 0 ? (q.answer + 1) % q.choices.length : q.answer;
-    await page.getByRole('main').getByRole('group', { name: q.prompt }).getByRole('radio').nth(choice).check();
-    await page.getByRole('button', { name: 'Check answer' }).click();
-    await page.getByRole('button', { name: i < quiz.questions.length - 1 ? 'Next question' : 'See your score' }).click();
-  }
+  // The first question shown is answered wrong, the rest right (the order is random each attempt)
+  const shown = await takeCheckpoint(page, quiz.questions, (_, i) => i !== 0);
+  expect([...shown].sort((a, b) => a.id.localeCompare(b.id))).toEqual([...quiz.questions].sort((a, b) => a.id.localeCompare(b.id)));
   const saved = await journey(page);
-  for (const [i, q] of quiz.questions.entries()) {
+  for (const [i, q] of shown.entries()) {
     expect(saved.answers[`${path.id}/${q.id}`].history).toEqual([i !== 0]);
   }
 

@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures';
+import { test, expect, takeCheckpoint } from './fixtures';
 import type { Page } from '@playwright/test';
 import { LEARNING_PATHS } from '../src/data/paths';
 
@@ -44,11 +44,7 @@ test('a later stage says when it is suggested and every step in it opens', async
 test('passing a later checkpoint tests out of that stage: its lessons are marked as known', async ({ page }) => {
   await page.goto(`#/learn/${path.id}/${quiz.id}`);
   await expect(page.getByRole('note')).toContainText('Passing this checkpoint marks the lessons in this stage as known.');
-  for (const [i, q] of quiz.questions.entries()) {
-    await page.getByRole('main').getByRole('group', { name: q.prompt }).getByRole('radio').nth(q.answer).check();
-    await page.getByRole('button', { name: 'Check answer' }).click();
-    await page.getByRole('button', { name: i < quiz.questions.length - 1 ? 'Next question' : 'See your score' }).click();
-  }
+  await takeCheckpoint(page, quiz.questions, () => true);
   await expect(page.getByText(/^You passed\./)).toBeVisible();
   await expect(page.getByText(/so the (lesson|\d+ lessons) in this stage (is|are) marked as known/)).toBeVisible();
 
