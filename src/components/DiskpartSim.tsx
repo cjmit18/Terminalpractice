@@ -1,6 +1,7 @@
 import React from 'react';
 import { SystemState, VirtualDisk, VirtualDiskPartition } from '../types/terminal';
 import { HardDrive } from 'lucide-react';
+import { freeMB } from '../terminal/windows/diskpart';
 import { Button, SimPanel, SimToolbar, cx, thClass } from './sims/ui';
 
 interface DiskpartSimProps {
@@ -76,7 +77,8 @@ export const DiskpartSim: React.FC<DiskpartSimProps> = ({
             ...d.partitions.filter(p => p.fsType !== 'Unallocated'),
             {
               id: nextId,
-              sizeMB: 250000,
+              // Like create partition primary with no size: all the free space
+              sizeMB: freeMB(d),
               fsType: 'Unallocated' as const,
               isPrimary: true,
             }
@@ -103,6 +105,7 @@ export const DiskpartSim: React.FC<DiskpartSimProps> = ({
               ...p,
               fsType: 'NTFS' as const,
               label: 'DataDrive',
+              quickFormatted: true,
             };
           }
           return p;

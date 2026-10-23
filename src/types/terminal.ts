@@ -74,6 +74,8 @@ export interface VirtualDiskPartition {
   label?: string;
   isPrimary?: boolean;
   isActive?: boolean;
+  /** Set by `format ... quick`; a full format leaves it unset */
+  quickFormatted?: boolean;
 }
 
 export interface VirtualDisk {
@@ -87,6 +89,8 @@ export interface VirtualDisk {
 
 export interface ADUser {
   sAMAccountName: string;
+  /** Unset on the seeded accounts, which use sAMAccountName@corp.local; '' when New-ADUser was given none */
+  userPrincipalName?: string;
   givenName: string;
   surname: string;
   displayName: string;

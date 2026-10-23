@@ -13,6 +13,7 @@ const ONLINE = {
   dnsWorking: true,
 };
 const user = (run: ReturnType<typeof windowsSession>, sam: string) => run.state().adUsers.find(u => u.sAMAccountName === sam);
+const named = (run: ReturnType<typeof windowsSession>, name: string) => run.state().adUsers.find(u => u.displayName === name);
 const pids = (run: ReturnType<typeof windowsSession>) => run.state().processes.map(p => p.pid);
 
 test('psTokenize: quotes removed, (...) and {...} kept whole, spaced comma lists joined', () => {
@@ -43,7 +44,11 @@ test('PR #10 review: -Name:"value" is a parameter, and a quoted list element kee
 test('E (W-2, E-9, N-7): New-ADUser binds positional and quoted values and creates disabled accounts', () => {
   const run = windowsSession('powershell');
   assert.equal(run('New-ADUser alex').exitCode, 0);
-  const alex = run('Get-ADUser alex -Properties *').stdout;
+  // -Name is not copied into the sign-in name: the domain controller makes one up and sets no UPN
+  assert.match(run('Get-ADUser alex').stderr, /Cannot find an object with identity: 'alex'/);
+  const alex = run('Get-ADUser "CN=alex,CN=Users,DC=corp,DC=local" -Properties *').stdout;
+  assert.match(alex, /SamAccountName +: \$[A-Z0-9]{3}000-[A-Z0-9]{12}\n/);
+  assert.match(alex, /UserPrincipalName +:\n/);
   assert.match(alex, /DistinguishedName +: CN=alex,CN=Users,DC=corp,DC=local/);
   assert.match(alex, /Enabled +: False/);
   assert.match(alex, /GivenName +:\n/);
@@ -56,10 +61,10 @@ test('E (W-2, E-9, N-7): New-ADUser binds positional and quoted values and creat
   assert.equal(user(run, 'achen')?.enabled, false);
 
   run('New-ADUser bob -AccountPassword (ConvertTo-SecureString "P@ssw0rd!" -AsPlainText -Force) -Enabled $true');
-  assert.equal(user(run, 'bob')?.enabled, true, 'a password and -Enabled $true enable it');
+  assert.equal(named(run, 'bob')?.enabled, true, 'a password and -Enabled $true enable it');
   const noPw = run('New-ADUser carl -Enabled $true');
   assert.equal(noPw.exitCode, 1);
-  assert.equal(user(run, 'carl')?.enabled, false);
+  assert.equal(named(run, 'carl')?.enabled, false);
   assert.match(run('New-ADUser dan -AccountPassword P@ss').stderr, /Cannot convert the "P@ss" value of type "System.String" to type "System.Security.SecureString"/);
   assert.match(run('New-ADUser alex').stderr, /The specified account already exists/);
   assert.match(run('New-ADUser eve -Path "OU=Nowhere,DC=corp,DC=local"').stderr, /Directory object not found/);
