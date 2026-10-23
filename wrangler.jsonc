@@ -1,8 +1,13 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   // Must match the Worker connected to this repo in the Cloudflare dashboard (Workers Builds).
-  // terminuscli serves https://terminuscli.com (custom domain set in the dashboard).
+  // terminuscli serves https://terminuscli.com.
   "name": "terminuscli",
+  // Listed here so every deploy keeps the domain attached: a deploy whose config named only another
+  // domain once detached terminuscli.com (#27). www.terminuscli.com is a separate DNS record, not a Worker domain.
+  "routes": [{ "pattern": "terminuscli.com", "custom_domain": true }],
+  // With routes set, workers_dev would default to off; keep the workers.dev address on as it is today.
+  "workers_dev": true,
   // No preview links for the live site: pull-request builds still build and test, but test features are
   // previewed on the test site (https://<branch>.terminus.wayne-mitchell.com, branch site/wayne-mitchell).
   // Set explicitly so a deploy never turns them back on.
