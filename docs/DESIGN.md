@@ -54,7 +54,7 @@ Radius: `rounded-md` (6px) for controls and panels, `rounded-sm` for small tags.
 - Second person, present tense, specific. "The finance folder is readable by everyone. Lock it down so only root and the finance group can get in." not "Security Audit Warning: ...".
 - Headings say what is there: "Your tasks", "Hints", "Walkthrough", "Exam tips". Not "Task Objectives Checklist", "Exam Trap & Scoring Advice".
 - No "seamless", "robust", "high-fidelity", "enterprise-grade", "live", "interactive" as filler.
-- Exclamation marks only for earned encouragement: finishing a review, a lab, a challenge, a stage or a goal, or a correct answer ("Review complete!", "Nice work!"). One short phrase, never in instructions, errors, headings or buttons.
+- Exclamation marks only for earned encouragement: finishing a review, a lab, a challenge, a stage or a goal, or a correct answer ("Review complete!", "Nice work!"). One short phrase, which may be the heading of a completion screen. Never in instructions, errors, buttons or other headings.
 - Counts as words: "2 of 4 done", not "50% Verified".
 - Buttons are verbs: "Run", "Reset lab", "Show hint", "Copy".
 
