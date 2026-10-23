@@ -1,6 +1,7 @@
 import { CommandContext } from '../types/modules';
 import { FileNode, SystemState, TerminalShell } from '../types/terminal';
 import { getNodeAtPath } from '../terminal/filesystem';
+import { printsTypedText, runsTool } from './verifiers';
 
 /**
  * Mini challenges: short puzzles answered with one command (sometimes two), on the machines of
@@ -49,12 +50,14 @@ const printsLines = (stdout: string, expected: string[]) => {
   return expected.length > 0 && out.length === expected.length && out.every((l, i) => l === expected[i]);
 };
 
-/** Commands that print what you type: they can repeat an answer but never find one. */
-const ECHO = /^\s*(echo|printf|write-output|write-host)\b/i;
-
-/** The last command succeeded, read from `source`, and did not simply print typed text. */
-function answered(ctx: CommandContext | undefined, source: RegExp): ctx is CommandContext {
-  return !!ctx && ctx.exitCode === 0 && source.test(ctx.command) && !ECHO.test(ctx.command);
+/**
+ * The last command succeeded, read from `source`, and no part of it simply printed typed text (echo and
+ * friends can repeat an answer but never find one, also after a real command: cat f >/dev/null; echo 2).
+ * `okCodes` lists the exit codes that count as success: find exits 1 when a folder such as /root cannot be
+ * read, even though it printed every match it could reach.
+ */
+function answered(ctx: CommandContext | undefined, source: RegExp, okCodes: number[] = [0]): ctx is CommandContext {
+  return !!ctx && okCodes.includes(ctx.exitCode) && source.test(ctx.command) && !printsTypedText(ctx.command);
 }
 
 /** Output rows without table headers and dashed underlines (PowerShell and tasklist tables). */
@@ -105,7 +108,7 @@ export const CHALLENGES: Challenge[] = [
     verifier: (_fs, _s, ctx) => answered(ctx, /auth\.log/) && /failed/i.test(ctx.command) && ctx.stdout.trim() === '3',
     hint: 'grep -c prints how many lines match instead of the lines themselves. Quote the two words so grep sees them as one pattern.',
     explanation:
-      'Three. grep -c "Failed password" /var/log/auth.log counts them. Without the quotes, grep would search for "Failed" in a file called password.',
+      'Three. grep -c "Failed password" /var/log/auth.log counts them. Without the quotes, grep treats password as a second file name: it reports that password does not exist and still counts Failed in auth.log, with the file name in front.',
     solution: ['grep -c "Failed password" /var/log/auth.log'],
   },
   {
@@ -115,7 +118,9 @@ export const CHALLENGES: Challenge[] = [
     machineFrom: 'lpi-104-5-permissions',
     prompt: 'Which programs in /usr/bin have the SUID bit set, so they run with their owner\'s rights? List just those files.',
     verifier: (_fs, _s, ctx) => {
-      if (!answered(ctx, /\/usr\/bin|\bfind\s+\//)) return false;
+      // find / as a normal user cannot read /root and exits 1; the matches it printed are still the answer
+      const okCodes = ctx && runsTool(ctx.command, /^find$/) ? [0, 1] : [0];
+      if (!answered(ctx, /\/usr\/bin|\bfind\s+\//, okCodes)) return false;
       const out = lines(ctx.stdout).map(l => l.trim().split(/\s+/).pop() ?? '').map(p => p.replace(/^.*\//, ''));
       return out.length === 3 && ['passwd', 'su', 'sudo'].every(n => out.includes(n));
     },
@@ -234,7 +239,7 @@ export const CHALLENGES: Challenge[] = [
     },
     hint: 'ipconfig prints the adapter settings. findstr keeps only the lines that contain a word, such as IPv4.',
     explanation:
-      '169.254.82.114. ipconfig | findstr IPv4 shows it. An address that starts with 169.254 is APIPA: Windows picked it itself because no DHCP server answered, so the PC can only reach others on the same cable.',
+      '169.254.82.114. ipconfig | findstr IPv4 shows it. An address that starts with 169.254 is APIPA: Windows picked it itself because no DHCP server answered, so the PC can only reach others on the same local network.',
     solution: ['ipconfig | findstr IPv4'],
   },
   {
@@ -262,7 +267,8 @@ export const CHALLENGES: Challenge[] = [
     machineFrom: 'win-pbq-powershell-automation',
     prompt: 'Which services on this PC are stopped? List only those.',
     verifier: (_fs, _s, ctx) => {
-      if (!answered(ctx, /get-service/i)) return false;
+      // gsv is PowerShell's own alias for Get-Service
+      if (!answered(ctx, /get-service|\bgsv\b/i)) return false;
       const rows = dataRows(ctx.stdout, PS_SERVICE_HEADER);
       return rows.length === 2 && rows.every(r => /^\s*Stopped\b/.test(r)) && rows.some(r => /W32Time/.test(r));
     },
@@ -278,7 +284,8 @@ export const CHALLENGES: Challenge[] = [
     machineFrom: 'win-pbq-incident-response-taskkill',
     prompt: 'Which process is using the most CPU time? Show only that one process.',
     verifier: (_fs, _s, ctx) => {
-      if (!answered(ctx, /get-process/i)) return false;
+      // gps is PowerShell's own alias for Get-Process
+      if (!answered(ctx, /get-process|\bgps\b/i)) return false;
       const rows = dataRows(ctx.stdout, PS_PROCESS_HEADER);
       return rows.length === 1 && /\bsvchost_update\s*$/.test(rows[0]);
     },
@@ -300,8 +307,8 @@ export const CHALLENGES: Challenge[] = [
     },
     hint: 'Select-String is PowerShell\'s grep: give it -Path and a -Pattern to look for.',
     explanation:
-      'Servicing Stack v10.0.22621.1. Select-String -Path C:\\Logs\\CBS.log -Pattern Servicing finds it and adds the file name and line number. Get-Content C:\\Logs\\CBS.log | Select-String Servicing prints just the line.',
-    solution: ['Select-String -Path C:\\Logs\\CBS.log -Pattern Servicing'],
+      'Servicing Stack v10.0.22621.1. Get-Content C:\\Logs\\CBS.log | Select-String Servicing prints just the line. Select-String -Path C:\\Logs\\CBS.log -Pattern Servicing finds it too, with the file name and line number in front.',
+    solution: ['Get-Content C:\\Logs\\CBS.log | Select-String Servicing'],
   },
 ];
 
