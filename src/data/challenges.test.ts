@@ -29,7 +29,10 @@ function machine(c: Challenge) {
 
 // Plausible near misses: the whole file, an echoed guess, the wrong count or filter
 const WRONG: Record<string, string[]> = {
-  'bash-login-shells': ['cat /etc/passwd', 'echo 2', 'grep -c nologin /etc/passwd', 'wc -l /etc/passwd', 'cat /etc/passwd >/dev/null; echo 2', 'grep -c bash /etc/passwd && echo 2'],
+  'bash-login-shells': ['cat /etc/passwd', 'echo 2', 'grep -c nologin /etc/passwd', 'wc -l /etc/passwd', 'cat /etc/passwd >/dev/null; echo 2', 'grep -c bash /etc/passwd && echo 2',
+    // Quoting or a path does not hide the command name from the check (the shell still runs echo / printf)
+    'cat /etc/passwd >/dev/null; e"ch"o 2', "cat /etc/passwd >/dev/null; 'echo' 2", 'cat /etc/passwd >/dev/null; \\echo 2',
+    "cat /etc/passwd >/dev/null; pr'in'tf 2", 'cat /etc/passwd >/dev/null; "/bin/echo" 2'],
   'bash-sshd-line': ['cat /var/log/syslog', 'grep sshd /var/log/auth.log', 'grep nginx /var/log/syslog', 'echo "sshd[2410]: listening /var/log/syslog"', "grep -o 'sshd\\[2410\\]' /var/log/syslog"],
   'bash-failed-count': ['wc -l /var/log/auth.log', 'grep -c sshd /var/log/syslog', 'echo 3', 'grep "Failed password" /var/log/auth.log'],
   'bash-suid-programs': ['ls -l /usr/bin', 'ls /usr/bin', 'find /usr/bin -perm -2000'],

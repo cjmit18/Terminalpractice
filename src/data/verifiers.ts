@@ -65,7 +65,9 @@ export function commandStages(command: string): string[] {
 function toolOf(stage: string): string {
   const words = stage.split(/\s+/);
   while (words.length > 1 && /^(sudo|\w+=\S*)$/.test(words[0])) words.shift();
-  return (words[0] ?? '').replace(/^["']|["']$/g, '').replace(/^.*[\\/]/, '').replace(/\.exe$/i, '').toLowerCase();
+  // The name the shell runs: quotes anywhere in the word are removed (e"ch"o and 'echo' run echo), then any
+  // directory (/bin/echo, C:\Windows\System32\findstr.exe) or leading backslash (\echo) goes
+  return (words[0] ?? '').replace(/["']/g, '').replace(/^.*[\\/]/, '').replace(/\.exe$/i, '').toLowerCase();
 }
 
 /** True when the line just prints text: its first command is echo, printf, Write-Output or Write-Host. */
