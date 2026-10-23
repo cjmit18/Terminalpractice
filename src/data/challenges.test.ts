@@ -38,7 +38,7 @@ const WRONG: Record<string, string[]> = {
   'bash-suid-programs': ['ls -l /usr/bin', 'ls /usr/bin', 'find /usr/bin -perm -2000'],
   'bash-listening-ports': ['ps aux', 'ss -tan', 'cat /etc/hosts'],
   'bash-name-servers': ['cat /etc/resolv.conf', 'grep search /etc/resolv.conf', 'grep nameserver /etc/hosts', "grep nameserver /etc/resolv.conf | sed 's/[0-9]/1/g'"],
-  'bash-adm-group': ['cat /etc/group', 'grep student /etc/group', 'getent group sudo'],
+  'bash-adm-group': ['cat /etc/group', 'grep student /etc/group', 'getent group sudo', "getent group adm | sed 's/syslog,student/root/'"],
   'bash-boot-usage': ['df -h', 'df /boot', 'du -sh /boot'],
   'cmd-port-4444-pid': ['netstat -ano', 'netstat -ano | findstr 445', 'echo 3892'],
   'cmd-port-4444-program': ['tasklist', 'tasklist /fi "PID eq 844"', 'netstat -ano | findstr 4444'],
