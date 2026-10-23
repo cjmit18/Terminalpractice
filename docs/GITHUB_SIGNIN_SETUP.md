@@ -53,7 +53,7 @@ The site has two addresses today, each served by its own Worker:
 
 | Address | Worker | Deployed from |
 |---|---|---|
-| `https://terminuscli.com` | `terminuscli` | `main` (custom domain set in the dashboard) |
+| `https://terminuscli.com` | `terminuscli` | `main` (custom domain listed in `wrangler.jsonc` routes) |
 | `https://terminus.wayne-mitchell.com` | `terminus-wm` | the separate `site/wayne-mitchell` branch (custom domain set in its `wrangler.jsonc` `routes`) |
 
 Both can use the same GitHub App. For each address, including a new one:
