@@ -39,6 +39,7 @@ import { lazyWithReload, reloadOnPreloadError } from './lib/chunkReload';
 import { ACTIVITY_KEY, activityCodec, addFacts, addPractice, quizMissFact, resetFact } from './lib/activity';
 import { GameLayerProvider } from './components/celebrate/GameLayer';
 import { CHALLENGES_BY_ID } from './data/challenges';
+import { TEST_SITE } from './lib/testSite';
 import { BadgePage } from './components/badges/BadgePage';
 
 const MODULES_BY_ID = new Map(ALL_MODULES.map(m => [m.id, m]));
@@ -54,6 +55,7 @@ const LAB_PLACEMENTS = labPlacements(LEARNING_PATHS);
 reloadOnPreloadError();
 const SimulatorsHub = lazyWithReload(() => import('./components/SimulatorsHub').then(m => ({ default: m.SimulatorsHub })));
 const SandboxMode = lazyWithReload(() => import('./components/SandboxMode').then(m => ({ default: m.SandboxMode })));
+const TestingPage = lazyWithReload(() => import('./components/testing/TestingPage').then(m => ({ default: m.TestingPage })));
 const ChallengesPage = lazyWithReload(() =>
   import('./components/challenges/ChallengesPage').then(m => ({ default: m.ChallengesPage })),
 );
@@ -274,7 +276,7 @@ export default function App() {
       challengeTitle,
       challengeRoute ? 'Challenges' : null,
       reviewOpen ? 'Review' : null,
-      route.section === 'badge' ? 'Badge' : PAGE_TITLES[route.section],
+      route.section === 'badge' ? 'Badge' : route.section === 'testing' ? 'Testing' : PAGE_TITLES[route.section],
       'Terminus CertSim',
     ];
     document.title = parts.filter(Boolean).join(' · ');
@@ -360,6 +362,15 @@ export default function App() {
       >
         Skip to content
       </a>
+
+      {TEST_SITE && (
+        <p className="shrink-0 px-4 sm:px-6 py-1.5 text-sm bg-accent-soft text-text border-b border-line">
+          Test site.{' '}
+          <a href={routeHref({ section: 'testing' })} className="font-medium text-accent underline-offset-2 hover:underline">
+            What's new to test
+          </a>
+        </p>
+      )}
 
       <Header
         current={navSection(route.section)}
@@ -451,6 +462,12 @@ export default function App() {
         )}
 
         {route.section === 'badge' && <BadgePage badgeId={route.badgeId} />}
+
+        {route.section === 'testing' && (
+          <Suspense fallback={loading}>
+            <TestingPage />
+          </Suspense>
+        )}
         </PageErrorBoundary>
       </main>
 

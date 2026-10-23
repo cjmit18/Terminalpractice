@@ -42,3 +42,9 @@ test('an unknown lab id falls back to the catalog', async ({ page }) => {
   await expect(page).toHaveURL(/#\/linux$/);
   await expect(page.getByRole('heading', { level: 1, name: 'Linux labs' })).toBeVisible();
 });
+
+test('#/testing exists only on the test site: on the live build it falls back to Learn, with no test strip', async ({ page }) => {
+  await page.goto('#/testing');
+  await expect(page).toHaveURL(/#\/learn$/);
+  await expect(page.getByText("What's new to test")).toHaveCount(0);
+});
