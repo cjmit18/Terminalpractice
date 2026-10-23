@@ -92,6 +92,13 @@ export const runsTool = (command: string, tools: RegExp) => stagesRunning(comman
 export const printsTypedText = (command: string) =>
   commandStages(command).some(s => /^(echo|printf|write-output|write-host)$/.test(toolOf(s)));
 
+/**
+ * The last command succeeded and its output came from the system, not from text the learner typed: a line
+ * with echo, printf, Write-Output or Write-Host anywhere (even after a real command, as in
+ * `grep NEVER /var/log/auth.log; echo 198.51.100.44`) cannot be evidence of what the system holds.
+ */
+const realOutput = (ctx?: CommandContext): ctx is CommandContext => !!ctx && ctx.exitCode === 0 && !printsTypedText(ctx.command);
+
 /** True when a command on the line that is not echo or printf names the path. */
 const namesPath = (command: string, path: RegExp) =>
   stagesRunning(command, /^(?!(echo|printf|write-output|write-host)$)/).some(s => path.test(s));
@@ -104,7 +111,7 @@ const ATTACKER = '198.51.100.44';
 
 /** Output is only the attacker's address, one per line, read from auth.log by any filter. */
 export function extractedSourceIps(ctx?: CommandContext): boolean {
-  if (!ctx || ctx.exitCode !== 0 || !namesPath(ctx.command, /auth\.log/)) return false;
+  if (!realOutput(ctx) || !namesPath(ctx.command, /auth\.log/)) return false;
   const out = lines(ctx.stdout).filter(l => l.trim() !== '');
   return out.length > 0 && out.every(l => /^\s*198\.51\.100\.44\s*$/.test(l));
 }
@@ -116,7 +123,7 @@ export function extractedSourceIps(ctx?: CommandContext): boolean {
  * why the output alone cannot tell the difference.
  */
 export function countedSourceIps(ctx?: CommandContext): boolean {
-  if (!ctx || ctx.exitCode !== 0) return false;
+  if (!realOutput(ctx)) return false;
   const stages = commandStages(ctx.command);
   if (onlyPrints(stages)) return false;
   const tools = stages.map(toolOf);
@@ -127,7 +134,7 @@ export function countedSourceIps(ctx?: CommandContext): boolean {
 
 /** grep found the attacker's lines. Any grep pattern that does is fine, as long as grep ran it. */
 export function failedLinesFound(ctx?: CommandContext): boolean {
-  return !!ctx && ctx.exitCode === 0 && runsTool(ctx.command, /^[efz]?grep$/) && ctx.stdout.includes(ATTACKER);
+  return realOutput(ctx) && runsTool(ctx.command, /^[efz]?grep$/) && ctx.stdout.includes(ATTACKER);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -169,14 +176,14 @@ export function sarahHomeOwned(fs: FileNode): boolean {
  * does not tick this task by itself; the task is to check.
  */
 export function sarahHomeChecked(fs: FileNode, ctx?: CommandContext): boolean {
-  if (!sarahHomeOwned(fs) || !ctx || ctx.exitCode !== 0) return false;
+  if (!sarahHomeOwned(fs) || !realOutput(ctx)) return false;
   const looks = stagesRunning(ctx.command, /^(ls|stat)$/).some(s => /(^|\s)(\/home\/sarah|\/home|~sarah)\/?(\s|$)/.test(s));
   return looks && /\bsarah\b/.test(ctx.stdout);
 }
 
 /** The last command read /etc/passwd (grep, cat, getent ...) and printed sarah's entry. */
 export function passwdEntryShown(ctx?: CommandContext): boolean {
-  if (!ctx || ctx.exitCode !== 0) return false;
+  if (!realOutput(ctx)) return false;
   const readsPasswd = namesPath(ctx.command, /\/etc\/passwd\b/) || stagesRunning(ctx.command, /^getent$/).some(s => /\spasswd\b/.test(s));
   return readsPasswd && /(^|[\s:])sarah:[^:\n]*:\d+:\d+:/m.test(ctx.stdout);
 }
@@ -190,7 +197,7 @@ export function passwdEntryShown(ctx?: CommandContext): boolean {
  * itself: an ls line for a directory whose name is finance, or stat's File: line for it.
  */
 export function financeDirShown(ctx?: CommandContext): boolean {
-  if (!ctx || ctx.exitCode !== 0 || isChained(ctx.command)) return false;
+  if (!realOutput(ctx) || isChained(ctx.command)) return false;
   const first = (commandStages(ctx.command)[0] ?? '').replace(/^sudo\s+/, '');
   const name = /^(\S+\/)?finance\/?$/;
   if (/^ls\s/.test(first)) {
@@ -214,17 +221,17 @@ export function financeDirShown(ctx?: CommandContext): boolean {
 
 /** Kernel messages (dmesg, or journalctl, which also holds them) that include the SATA (AHCI) controller. */
 export function sataInDmesg(ctx?: CommandContext): boolean {
-  return !!ctx && ctx.exitCode === 0 && runsTool(ctx.command, /^(dmesg|journalctl)$/) && /SATA|ahci/.test(ctx.stdout);
+  return realOutput(ctx) && runsTool(ctx.command, /^(dmesg|journalctl)$/) && /SATA|ahci/.test(ctx.stdout);
 }
 
 /** lspci ran and listed the Ethernet controller. */
 export function pciListed(ctx?: CommandContext): boolean {
-  return !!ctx && ctx.exitCode === 0 && runsTool(ctx.command, /^lspci$/) && ctx.stdout.includes('Ethernet');
+  return realOutput(ctx) && runsTool(ctx.command, /^lspci$/) && ctx.stdout.includes('Ethernet');
 }
 
 /** The loaded modules: lsmod, or /proc/modules (which lsmod reads), showing e1000e or the lsmod table. */
 export function modulesListed(ctx?: CommandContext): boolean {
-  if (!ctx || ctx.exitCode !== 0) return false;
+  if (!realOutput(ctx)) return false;
   const reads = runsTool(ctx.command, /^lsmod$/) || namesPath(ctx.command, /\/proc\/modules\b/);
   return reads && (ctx.stdout.includes('e1000e') || /^Module\s/m.test(ctx.stdout));
 }
@@ -235,12 +242,12 @@ export function modulesListed(ctx?: CommandContext): boolean {
 
 /** fdisk -l (or --list) printed the partition table of /dev/sda. */
 export function partitionTableListed(ctx?: CommandContext): boolean {
-  return !!ctx && ctx.exitCode === 0 && stagesRunning(ctx.command, /^fdisk$/).some(s => /\s(-[a-zA-Z]*l[a-zA-Z]*|--list)\b/.test(s)) && ctx.stdout.includes('Disk /dev/sda');
+  return realOutput(ctx) && stagesRunning(ctx.command, /^fdisk$/).some(s => /\s(-[a-zA-Z]*l[a-zA-Z]*|--list)\b/.test(s)) && ctx.stdout.includes('Disk /dev/sda');
 }
 
 /** df ran and showed the /boot filesystem. */
 export function mountsShown(ctx?: CommandContext): boolean {
-  return !!ctx && ctx.exitCode === 0 && runsTool(ctx.command, /^df$/) && ctx.stdout.includes('/boot');
+  return realOutput(ctx) && runsTool(ctx.command, /^df$/) && ctx.stdout.includes('/boot');
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -249,7 +256,7 @@ export function mountsShown(ctx?: CommandContext): boolean {
 
 /** ipconfig /all in any case, or with a dash (ipconfig -all). */
 export function ipconfigAllRun(ctx?: CommandContext): boolean {
-  return !!ctx && ctx.exitCode === 0 && stagesRunning(ctx.command, /^ipconfig$/).some(s => /\s[/-]all\b/i.test(s)) && ctx.stdout.includes('Windows IP Configuration');
+  return realOutput(ctx) && stagesRunning(ctx.command, /^ipconfig$/).some(s => /\s[/-]all\b/i.test(s)) && ctx.stdout.includes('Windows IP Configuration');
 }
 
 const PROBE = /^\s*(ping|tnc|test-netconnection|test-connection)\b/i;
@@ -292,7 +299,7 @@ function probeTargets(tool: string, words: string[]): string[] {
  * lease. Loopback and the PC's own address answer even with no network, so they do not count.
  */
 export function connectivityVerified(state: SystemState, ctx?: CommandContext): boolean {
-  if (!ctx || ctx.exitCode !== 0) return false;
+  if (!realOutput(ctx)) return false;
   const iface = state.interfaces[0];
   if (!state.gatewayWorking || !iface || iface.ip.startsWith('169.254.')) return false;
   const probe = commandStages(ctx.command)[0] ?? '';
@@ -377,7 +384,7 @@ export function diskpartStarted(ctx?: CommandContext): boolean {
 
 /** Get-Service (or its alias gsv) listed W32Time. */
 export function servicesListed(ctx?: CommandContext): boolean {
-  return !!ctx && ctx.exitCode === 0 && runsTool(ctx.command, /^(get-service|gsv)$/) && ctx.stdout.includes('W32Time');
+  return realOutput(ctx) && runsTool(ctx.command, /^(get-service|gsv)$/) && ctx.stdout.includes('W32Time');
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -386,12 +393,12 @@ export function servicesListed(ctx?: CommandContext): boolean {
 
 /** netstat or Get-NetTCPConnection output that shows the 4444 connection and its PID. */
 export function maliciousConnectionFound(ctx?: CommandContext): boolean {
-  return !!ctx && ctx.exitCode === 0 && runsTool(ctx.command, /^(netstat|get-nettcpconnection)$/) && ctx.stdout.includes('4444') && /\b3892\b/.test(ctx.stdout);
+  return realOutput(ctx) && runsTool(ctx.command, /^(netstat|get-nettcpconnection)$/) && ctx.stdout.includes('4444') && /\b3892\b/.test(ctx.stdout);
 }
 
 /** tasklist or Get-Process output that names the malicious program. */
 export function maliciousProcessNamed(ctx?: CommandContext): boolean {
-  return !!ctx && ctx.exitCode === 0 && runsTool(ctx.command, /^(tasklist|get-process|gps|ps)$/) && ctx.stdout.includes('svchost_update');
+  return realOutput(ctx) && runsTool(ctx.command, /^(tasklist|get-process|gps|ps)$/) && ctx.stdout.includes('svchost_update');
 }
 
 /** PID 3892 is gone, however it was killed. */

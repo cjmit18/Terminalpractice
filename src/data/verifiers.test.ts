@@ -11,7 +11,7 @@ import {
   alexInDomainAdmins, alexInItAdmins, commandStages, connectivityVerified, countedSourceIps, diskpartStarted,
   extractedSourceIps, financeDirShown, ipconfigAllRun, jdoeUnlocked, maliciousConnectionFound, maliciousProcessKilled,
   maliciousProcessNamed, modulesListed, passwdEntryShown, sarahCreated, sarahHomeChecked, sarahHomeOwned, sataInDmesg,
-  servicesListed, sfcRan, sfcRepairedAfterDism,
+  servicesListed, sfcRan, sfcRepairedAfterDism, failedLinesFound, pciListed, partitionTableListed, mountsShown,
 } from './verifiers.ts';
 
 // ---------------------------------------------------------------------------------------------
@@ -899,4 +899,43 @@ test('network lab in the engine: Test-NetConnection to a real host passes after 
   own('ipconfig /renew');
   own('Test-NetConnection 127.0.0.1');
   assert.ok(!own.done.has('net-verify-ping'), 'loopback still does not count');
+});
+
+// ---------------------------------------------------------------------------------------------
+// Typed answers are not evidence (issue #28, finding 3)
+// ---------------------------------------------------------------------------------------------
+
+test('a real command followed by an echoed answer does not pass any output check', () => {
+  const linux = lab('lpi-101-1-system-architecture');
+  // Each line is run in the engine, so the output is exactly what the learner would see
+  const run = (line: string, m: ExamModule = linux) => {
+    const res = executeLinuxLine(line, '/home/student', structuredClone(m.initialFs), structuredClone(m.initialState));
+    return ctx(line, res.stdout, res.exitCode);
+  };
+  const text = lab('lpi-103-2-text-processing');
+  const cases: [string, (c: CommandContext) => boolean, ExamModule?][] = [
+    ['grep NEVER /var/log/auth.log; echo 198.51.100.44', failedLinesFound, text],
+    ['grep NEVER /var/log/auth.log; echo 198.51.100.44', extractedSourceIps, text],
+    ['sort /dev/null | uniq -c; echo "3 198.51.100.44"', countedSourceIps, text],
+    ['lspci > /dev/null; echo Ethernet', pciListed],
+    ['lsmod > /dev/null; echo e1000e', modulesListed],
+    ['dmesg > /dev/null; echo ahci', sataInDmesg],
+    ['df > /dev/null; echo /boot', mountsShown],
+    ['grep nobody /etc/passwd; echo "sarah:x:1001:1001::/home/sarah:/bin/bash"', passwdEntryShown],
+  ];
+  for (const [line, check, m] of cases) {
+    const c = run(line, m);
+    assert.equal(c.exitCode, 0, `${line}: the line itself succeeds`);
+    assert.equal(check(c), false, `${line}: passes ${check.name}`);
+  }
+  // The real commands on their own still pass
+  assert.ok(failedLinesFound(run('grep "Failed password" /var/log/auth.log', text)));
+  assert.ok(pciListed(run('lspci')));
+  assert.ok(modulesListed(run('lsmod')));
+  // Windows output checks follow the same rule
+  assert.equal(servicesListed(ctx('Get-Service | Out-Null; Write-Output W32Time', 'W32Time')), false);
+  assert.equal(maliciousConnectionFound(ctx('netstat -ano > nul & echo 4444 3892', '4444 3892')), false);
+  assert.equal(maliciousProcessNamed(ctx('tasklist > nul & echo svchost_update', 'svchost_update')), false);
+  assert.equal(ipconfigAllRun(ctx('ipconfig /all > nul & echo Windows IP Configuration', 'Windows IP Configuration')), false);
+  assert.equal(partitionTableListed(ctx('fdisk -l > /dev/null; echo Disk /dev/sda', 'Disk /dev/sda')), false);
 });
