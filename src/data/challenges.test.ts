@@ -6,7 +6,7 @@ import { executeLinuxLine } from '../terminal/linuxEngine.ts';
 import { executeWindowsLine } from '../terminal/windowsEngine.ts';
 import { LPI_MODULES } from './lpiModules.ts';
 import { WINDOWS_PBQS } from './windowsPbqs.ts';
-import { CHALLENGES, Challenge, challengeFact, nextChallenge, todaysPick } from './challenges.ts';
+import { CHALLENGES, Challenge, challengeFact, dailyOrder, nextChallenge, todaysPick } from './challenges.ts';
 import { parseHash, routeHref } from '../lib/router.ts';
 
 const MODULES = new Map<string, ExamModule>([...LPI_MODULES, ...WINDOWS_PBQS].map(m => [m.id, m]));
@@ -49,8 +49,8 @@ const WRONG: Record<string, string[]> = {
   'ps-servicing-stack': ['Get-Content C:\\Logs\\CBS.log', 'Select-String -Path C:\\Logs\\CBS.log -Pattern CBS', 'Write-Output "Servicing Stack v10.0.22621.1 CBS.log"'],
 };
 
-test('there are 10 to 15 challenges across bash, Command Prompt and PowerShell, with unique ids', () => {
-  assert.ok(CHALLENGES.length >= 10 && CHALLENGES.length <= 15, `${CHALLENGES.length} challenges`);
+test('there are at least 10 challenges (no upper cap) across bash, Command Prompt and PowerShell, with unique ids', () => {
+  assert.ok(CHALLENGES.length >= 10, `${CHALLENGES.length} challenges`);
   assert.equal(new Set(CHALLENGES.map(c => c.id)).size, CHALLENGES.length);
   for (const shell of ['bash', 'cmd', 'powershell'] as const) {
     assert.ok(CHALLENGES.some(c => c.shell === shell), `no ${shell} challenge`);
@@ -142,9 +142,31 @@ test("today's pick depends only on the date and reaches every challenge", () => 
   const day = (y: number, mo: number, d: number, h = 12) => new Date(y, mo - 1, d, h);
   assert.equal(todaysPick(day(2026, 10, 21, 0)).id, todaysPick(day(2026, 10, 21, 23)).id, 'same all day');
   const seen = new Set<string>();
-  for (let i = 0; i < CHALLENGES.length; i++) seen.add(todaysPick(day(2026, 1, 1 + i)).id);
-  assert.equal(seen.size, CHALLENGES.length, 'consecutive days cycle through every challenge');
+  // Any 2n days in a row hold a whole cycle, which leads with every challenge once
+  for (let i = 0; i < 2 * CHALLENGES.length; i++) seen.add(todaysPick(day(2026, 1, 1 + i)).id);
+  assert.equal(seen.size, CHALLENGES.length, 'consecutive days reach every challenge');
   assert.notEqual(todaysPick(day(2026, 10, 21)).id, todaysPick(day(2026, 10, 22)).id);
+});
+
+test("today's order holds every challenge, is reshuffled each cycle, and never repeats the pick on consecutive days", () => {
+  const day = (offset: number) => new Date(2026, 0, 1 + offset, 12);
+  const n = CHALLENGES.length;
+  const ids = (list: Challenge[]) => list.map(c => c.id);
+  for (let i = 0; i < 4 * n; i++) {
+    const order = dailyOrder(day(i));
+    assert.deepEqual([...ids(order)].sort(), [...ids(CHALLENGES)].sort(), 'every challenge is shown');
+    assert.equal(order[0].id, todaysPick(day(i)).id);
+    assert.notEqual(todaysPick(day(i)).id, todaysPick(day(i + 1)).id, `day ${i}: same pick two days running`);
+  }
+  // Any 2n days in a row hold a whole cycle, so they lead with every challenge; the shuffle differs between cycles
+  for (const startDay of [0, 5, 3 * n + 2]) {
+    assert.equal(new Set(Array.from({ length: 2 * n }, (_, i) => todaysPick(day(startDay + i)).id)).size, n);
+  }
+  const cycles = new Set(Array.from({ length: 6 }, (_, k) => ids(dailyOrder(day(k * n))).join()));
+  assert.ok(cycles.size > 1, 'the rotation is not the same every cycle');
+  // A larger pool works the same way: nothing is capped
+  const big = Array.from({ length: 40 }, (_, i) => ({ ...CHALLENGES[i % n], id: `c${i}` }));
+  assert.equal(new Set(Array.from({ length: 80 }, (_, i) => todaysPick(day(i), big).id)).size, 40);
 });
 
 test('router: challenge routes round-trip and leave the other sandbox route alone', () => {
