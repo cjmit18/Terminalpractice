@@ -1,6 +1,6 @@
 import React from 'react';
 import { Check } from 'lucide-react';
-import { CHALLENGES, Challenge, challengeFact, todaysPick } from '../../data/challenges';
+import { CHALLENGES, Challenge, challengeFact, dailyOrder } from '../../data/challenges';
 import { routeHref } from '../../lib/router';
 import { ALL_MODULES } from '../../lib/modules';
 import { SHELL_LABELS } from '../lab/PageHeader';
@@ -17,11 +17,13 @@ export const challengeMeta = (c: Challenge) => {
   return lab ? `${SHELL_LABELS[c.shell]} · the machine from ${lab}` : SHELL_LABELS[c.shell];
 };
 
-/** #/sandbox/challenge: every challenge, with one highlighted as today's pick. */
+/** #/sandbox/challenge: every challenge in today's rotated order, with the first highlighted as today's pick. */
 export const ChallengeList: React.FC = () => {
   const { activity } = useGameLayer();
   const solved = (id: string) => activity.facts.includes(challengeFact(id));
-  const pick = todaysPick();
+  // Today's order: the pick first, then every other challenge, reshuffled as the days go by
+  const order = dailyOrder();
+  const pick = order[0];
   const count = CHALLENGES.filter(c => solved(c.id)).length;
 
   return (
@@ -58,7 +60,7 @@ export const ChallengeList: React.FC = () => {
           All challenges
         </h2>
         <ul className="mt-3 border-t border-line">
-          {CHALLENGES.map(c => (
+          {order.map(c => (
             <li key={c.id} className="border-b border-line">
               <a
                 href={challengeHref(c.id)}

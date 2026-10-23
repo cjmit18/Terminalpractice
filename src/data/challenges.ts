@@ -7,8 +7,9 @@ import { printsTypedText, runsTool } from './verifiers';
  * Mini challenges: short puzzles answered with one command (sometimes two), on the machines of
  * the existing labs. Each one is checked like a lab task, from what the last command printed.
  *
- * Every challenge stays open forever. "Today's pick" only highlights one of them, chosen from the
- * date; nothing expires and nothing is lost by skipping a day.
+ * Every challenge stays open forever, and there is no cap on how many there are: new ones are added to
+ * this list and old ones stay. The order they are shown in, and "Today's pick" at the top, is a random
+ * rotation chosen from the date; nothing expires and nothing is lost by skipping a day.
  *
  * The checks look at the output, not the exact command, so any correct way passes. They also
  * want the command to read the real source (the file or the tool named in the question) and the
@@ -319,10 +320,46 @@ function dayNumber(d: Date): number {
   return Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86_400_000);
 }
 
-/** The challenge highlighted today. Only a highlight: every challenge is always open. */
-export function todaysPick(date: Date = new Date(), list: Challenge[] = CHALLENGES): Challenge {
+/** The list in a random order fixed by `seed` (Fisher-Yates with a mulberry32 generator), the same on every device */
+function shuffled<T>(list: readonly T[], seed: number): T[] {
+  let s = seed >>> 0;
+  const random = () => {
+    s = (s + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const out = [...list];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+/** One cycle's shuffle; a cycle never starts with the challenge the previous cycle ended on */
+function cycleOrder<T>(list: readonly T[], cycle: number): T[] {
+  const order = shuffled(list, cycle);
+  if (order.length > 1 && order[0] === shuffled(list, cycle - 1)[order.length - 1]) [order[0], order[1]] = [order[1], order[0]];
+  return order;
+}
+
+/**
+ * Every challenge, in an order that changes each day. Days run in cycles as long as the list: each
+ * cycle shuffles the whole list at random, and each day starts at its own place in that shuffle. So
+ * every challenge leads the list (as today's pick) once per cycle, in a new order each cycle.
+ */
+export function dailyOrder(date: Date = new Date(), list: Challenge[] = CHALLENGES): Challenge[] {
   const n = list.length;
-  return list[((dayNumber(date) % n) + n) % n];
+  const day = dayNumber(date);
+  const start = ((day % n) + n) % n;
+  const order = cycleOrder(list, Math.floor((day - start) / n));
+  return [...order.slice(start), ...order.slice(0, start)];
+}
+
+/** The challenge highlighted today: the first of today's order. Only a highlight: every challenge is always open. */
+export function todaysPick(date: Date = new Date(), list: Challenge[] = CHALLENGES): Challenge {
+  return dailyOrder(date, list)[0];
 }
 
 /** The activity fact recorded when a challenge is solved */
