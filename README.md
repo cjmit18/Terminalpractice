@@ -1,6 +1,6 @@
 # Terminus CertSim
 
-A browser-based terminal simulator for IT certification practice. Everything runs in the browser: it installs as an app on phones and desktops and works offline after the first visit. Signing in (with GitHub) is optional.
+A browser-based terminal simulator for IT certification practice. Everything runs in the browser: it installs as an app on phones and desktops and works offline after the first visit. An account (email and password, or GitHub) is optional.
 
 > **About this project.** Terminus CertSim was built with AI assistance: much of the code and lesson content was generated with AI tools (Google AI Studio, Anthropic's Claude, GitHub Copilot) working from my direction and review. I maintain and develop it myself ([@cjmit18](https://github.com/cjmit18)) as a personal project for my own learning and practice for the LPIC-1 and CompTIA exams. It is a study aid, not official exam material: check anything important against the official objectives.
 >
@@ -12,9 +12,12 @@ Covers hands-on objectives for:
 
 ## What's in the app
 
-- **Learn paths** (the start page, `#/learn`): four guided courses, one per exam (LPIC-1 101 and 102, CompTIA A+ Core 2, and Network+ and Security+ on Windows), plus "Your first terminal" for people who have never used one. Each exam path has five stages that unlock in order and mixes short lessons, the labs below and checkpoint quizzes.
+- **Learn paths** (the start page, `#/learn`): four guided courses covering five exams (LPIC-1 101 and 102, CompTIA A+ Core 2, and one path for Network+ and Security+ on Windows), plus "Your first terminal" for people who have never used one. Each exam path has five stages, suggested in order but never locked, and mixes short lessons, the labs below and checkpoint quizzes.
 - **First-steps banner**: until anything is saved, the Learn page offers "Your first terminal"; once dismissed it stays hidden in that browser.
-- **Checkpoint quizzes**: multiple-choice questions at the end of each stage, with a pass mark and the best score kept.
+- **Checkpoint quizzes**: multiple-choice questions at the end of each stage, with a pass mark and the best score kept. Every question is asked each time, in a new order on every attempt.
+- **Review queue**: checkpoint questions come back for review on a spaced schedule, missed ones sooner. Feedback on each answer, "Review complete!" at the end, no score.
+- **Challenges**: short puzzles on the lab machines, answered with a command or two. All of them stay open; the list is shown in a new random order each day, with one as "Today's pick".
+- **Skill map, field guide and weekly goal**: what you have practised per exam objective, every command grouped by shell and area with quiet ticks for seen, ran and read, and an optional practice goal for the week (no streaks).
 - **14 guided labs**: 6 Linux and 8 Windows, including a first-steps lab on each side. Each has a short scenario, a task list that is checked against the simulated system's real state, hints, exam tips and a walkthrough you can run step by step. Hints come as a ladder: a nudge first, then the command's shape, then the answer.
 - **Explanations when you are blocked**: when a command fails with "Permission denied", the terminal adds a short note saying which permission check failed and why.
 - **Sandbox**: free-form bash, Command Prompt and PowerShell sessions, with a file tree that shows the real simulated filesystem, permissions and owners.
@@ -48,6 +51,8 @@ src/
 ├── components/
 │   ├── journey/            # Learn paths: path list, overview, lessons, quizzes, first-steps banner
 │   ├── lab/                # lab manual, page header, shell session hook, file tree
+│   ├── challenges/         # challenge list (daily rotation) and challenge page
+│   ├── fieldguide/         # the field guide of commands
 │   ├── badges/             # badge list and names
 │   ├── celebrate/          # celebration notes, recaps, confetti
 │   ├── settings/           # game settings (badges, celebrations)
@@ -76,7 +81,7 @@ public/                     # web app manifest, service worker, icons
 
 ## Development
 
-Requires Node.js 22 or newer.
+Requires Node.js 22.13 or newer (the worker tests use the built-in `node:sqlite`).
 
 ```bash
 npm ci
@@ -95,7 +100,7 @@ Before the first `npm run e2e`, install the browser with `npx playwright install
 `npm test` runs the Node test runner through `tsx` over every `*.test.ts` in `src/` and `worker/`. Besides unit tests for the parsers, filesystem, both engines, the learning paths and badges, it includes:
 
 - **Walkthrough replay:** every module's own solution steps are run through the engine, and every objective's verifier must pass. A module that cannot be completed fails `npm test` (and so the Cloudflare build, which runs the tests first).
-- **Account API tests:** `worker/api.test.ts` (see below).
+- **Account API tests:** `worker/*.test.ts` (see below).
 - **Regression tests** for each bug found in review (`ls -ld`, `chmod -R` with files you do not own, `tar` flag parsing, `usermod` with unknown users, `id` group numbers, CMD `2>&1`, `ls -l` on unreadable files).
 
 ### Adding a command
@@ -112,26 +117,28 @@ Add it to `src/data/lpiModules.ts` or `src/data/windowsPbqs.ts`, with a one-sent
 
 ## Deployment
 
-The app is static and works without any server. On Cloudflare, a small Worker adds an optional account API (Sign in with GitHub); everywhere else the app simply does not offer sign-in.
+The app is static and works without any server. On Cloudflare, a small Worker adds an optional account API (email and password, or GitHub); everywhere else the app simply does not offer sign-in.
 
 ### Cloudflare Workers
 
-`wrangler.jsonc` describes the Worker `terminuscli`, which serves https://terminuscli.com: it serves `dist/` as static assets and runs `worker/index.ts` only for `/api/*` (`run_worker_first`), with a D1 database (`DB`) for accounts. Cloudflare Workers Builds is connected to this repository: pushes to the production branch deploy, and pull-request builds run `wrangler preview`.
+`wrangler.jsonc` describes the Worker `terminuscli`, which serves https://terminuscli.com: it serves `dist/` as static assets and runs `worker/index.ts` only for `/api/*` (`run_worker_first`), with a D1 database (`DB`) for accounts. Cloudflare Workers Builds is connected to this repository: pushes to the production branch deploy, and pull-request builds run `wrangler preview`. The live site posts no preview links (`preview_urls: false`); pull requests are previewed on the private test site at `https://<branch>.terminus.wayne-mitchell.com`.
 
 - Before every deploy or preview, wrangler runs the `build.command` from `wrangler.jsonc`: `npm test && npm run lint && VITE_BASE=/ npm run build`. A failing test or typecheck stops the deploy. The build image installs devDependencies, which is where `tsx`, `typescript` and `wrangler` come from.
-- `npm run deploy`: applies new database migrations (`migrations/`) to the remote D1 database, then `wrangler deploy`. Run `npx wrangler login` once before deploying from your machine. Set the same command as the **Deploy command** in the Workers Builds settings.
-- **Previews:** the `previews` block in `wrangler.jsonc` is what `wrangler preview` uses (nothing is inherited from the top level). It turns sign-in off (`GITHUB_CLIENT_ID` empty) and binds a separate D1 database, `terminuscli-preview`, so a preview link can never touch real accounts. No migrations are applied to that database on purpose: with sign-in off nothing writes to it, and `/api/me` answers "signed out" when the account tables are missing, so a stray session cookie gets the normal signed-out answer instead of an error.
+- `npm run deploy`: applies new database migrations (`migrations/`) to the remote D1 database, then `wrangler deploy` (which runs the build command and its tests). Migrations therefore run before the tests: keep each migration safe for the code already deployed. Run `npx wrangler login` once before deploying from your machine. Set the same command as the **Deploy command** in the Workers Builds settings.
+- **Previews:** the `previews` block in `wrangler.jsonc` is what `wrangler preview` uses (nothing is inherited from the top level). It turns sign-in off (`GITHUB_CLIENT_ID` empty) and binds a separate D1 database, `terminuscli-preview`, so a preview can never touch real accounts. No migrations are applied to that database on purpose: `/api/me` answers "signed out" when the account tables are missing, and the email sign-up and sign-in routes fail there because the tables are missing, so nothing is written and no email is sent (previews have no SMTP settings either).
 - `npm run dev:cf`: the full stack locally (static app, Worker and a local D1 copy) at <http://localhost:8787>.
 - Node 22 for Workers Builds comes from `.node-version`.
 - Cloudflare builds use `VITE_BASE=/` (set in `wrangler.jsonc`), so a deep link such as `/old/path` still loads `/assets/...`; the default relative base keeps GitHub Pages' `/<repo>/` path working.
 
 ### Accounts (optional sign-in)
 
-- `worker/api.ts`: GitHub sign-in (`/api/auth/github/start`, `/api/auth/github/callback`), `/api/me`, `/api/logout`. Sessions are random tokens in an `HttpOnly; Secure; SameSite=Lax` `__Host-` cookie; D1 stores only their SHA-256.
-- The GitHub token is used once to read the public profile and never stored. No passwords, no email address.
-- Sign-in stays hidden until the GitHub App is configured: see [docs/GITHUB_SIGNIN_SETUP.md](docs/GITHUB_SIGNIN_SETUP.md). The plan for the next phases (progress sync, account page) is in [docs/LOGIN_PLAN.md](docs/LOGIN_PLAN.md).
-- The callback address is built from the address the site was reached on, so another domain needs no code change. A second copy runs at https://terminus.wayne-mitchell.com (Worker `terminus-wm`, deployed from the `site/wayne-mitchell` branch); see "Adding another domain" in the setup guide.
-- Tests: `worker/api.test.ts` runs the API against Node's built-in SQLite with the real migration and a fake GitHub; `e2e/account.spec.ts` covers the header control.
+- **Email and password** (`worker/auth/email.ts`): sign-up, sign-in and email verification. Passwords are hashed with PBKDF2-SHA256; the email address is stored to sign in with and to send account emails (verification, and password reset next; sending starts once the account pages ship). Verification links are single-use and stored only as hashes. Emails go out over SMTP from `noreply@terminuscli.com` (Purelymail): see [docs/EMAIL_SETUP.md](docs/EMAIL_SETUP.md).
+- **GitHub** (`worker/api.ts`): `/api/auth/github/start` and `/callback`. The GitHub token is used once to read the public profile and never stored. Setup: [docs/GITHUB_SIGNIN_SETUP.md](docs/GITHUB_SIGNIN_SETUP.md).
+- `/api/me` and `/api/logout`. Sessions are random tokens in an `HttpOnly; Secure; SameSite=Lax` `__Host-` cookie; D1 stores only their SHA-256. Sign-up and sign-in are rate limited, which needs the `RATE_LIMIT_PEPPER` secret on each Worker (without it those routes answer "not configured").
+- A daily job (`17 3 * * *`, `worker/maintenance.ts`) deletes expired sessions, one-time links and rate-limit rows.
+- What comes next (password reset, account pages, Google, security page, sync, admin dashboard) is in [docs/PLAN.md](docs/PLAN.md).
+- The callback address is built from the address the site was reached on, so another domain needs no code change. The private test site runs at https://terminus.wayne-mitchell.com (Worker `terminus-wm`, deployed from the `site/wayne-mitchell` branch, behind Cloudflare Access). Changes flow from `main` into that branch, never back; see "Adding another domain" in the setup guide.
+- Tests: `worker/*.test.ts` run the API against Node's built-in SQLite with all migrations, a fake GitHub and a fake mailer; `e2e/account.spec.ts` covers the header control.
 
 ### GitHub Pages
 
