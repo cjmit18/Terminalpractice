@@ -1,0 +1,42 @@
+name: Test site
+
+# Keeps the private test site (branch site/wayne-mitchell, Worker terminus-wm) equal to main plus every open
+# pull request, so every new feature can be tried in one place. See scripts/build-test-site.mjs.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: read
+
+# One rebuild at a time; a newer event replaces a queued one
+concurrency:
+  group: test-site
+  cancel-in-progress: true
+
+jobs:
+  rebuild:
+    # Pull requests from forks never touch the test site
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Rebuild site/wayne-mitchell from main and the open pull requests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/build-test-site.mjs
