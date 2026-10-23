@@ -2,7 +2,7 @@
 
 Goal: learners find something new every visit, and the content gets a real refresh at least once a month, without big, hard-to-review pushes. Every change below ships as its own small PR.
 
-Status: **planned, not built yet.** Build it after the login portal and the round-3 scan fixes, in the order in [Build order](#build-order).
+Status: **started.** Content work runs alongside the login portal and the scan fixes (see [PLAN.md](PLAN.md)), in the order in [Build order](#build-order).
 
 ## 1. Content that varies on its own (built once)
 
@@ -11,11 +11,14 @@ These make the site feel new even between releases:
 - **Generated drills:** subnetting, `chmod` numbers, port and protocol matching, and log reading.
   - Each round makes new numbers or log lines from a random seed.
   - The checker works the answer out from that seed, so there is no fixed answer key to memorise.
-  - Subnetting drills double as the subnetting feature already on the roadmap.
+  - Subnetting drills are the subnetting practice CJ asked for (Network+ and LPIC-1 109.1).
 - **Varied labs:** the same scenario with different usernames, IPs, failing services or attacker addresses each run.
   - Verifiers read the scenario's values, never hard-coded ones.
   - Convert one lab at a time.
-- **Rotation that already exists:** "Today's pick" for challenges and the spaced review queue. New questions join the review queue automatically.
+- **Rotation:** there is no cap on how many questions or challenges exist or are shown, and every one stays active.
+  - Challenges, new and old, live in one data file; the featured ones are swapped in at random.
+  - Quiz and review questions stay in their pools; the order they appear in is rotated.
+  - "Today's pick" and the spaced review queue already exist. New questions join the review queue once their checkpoint has been taken.
 
 ## 2. The weekly and monthly cycle
 
@@ -23,7 +26,7 @@ A scheduled task runs **every Monday at 5:00 AM America/Chicago**. `CRON_TZ=Amer
 
 | Run | Contents |
 |---|---|
-| **First Monday of the month: monthly release** | 10–15 new quiz/review questions, aimed at the thinnest exam objectives. 2–3 new challenges. 1 new lab, or a new variant of an existing lab. A refresh of dated content: exam versions, tool changes, and last month's scan findings. A "What's new" entry. |
+| **First Monday of the month: monthly release** | 10–15 new quiz/review questions, aimed at the thinnest exam objectives. 2–3 new challenges (added to the pool, nothing removed). 1 new lab, or a new variant of an existing lab. A refresh of dated content: exam versions, tool changes, and last month's scan findings. A "What's new" entry. |
 | **Other Mondays: light refresh** | 2–3 new questions or one challenge, plus small fixes from reviews or notes. If there's nothing worth adding, it reports that and opens no PR. |
 
 **Themes** keep each monthly release focused. Pick the next month's theme in the previous release. For example:
@@ -38,7 +41,7 @@ A scheduled task runs **every Monday at 5:00 AM America/Chicago**. `CRON_TZ=Amer
 ## 3. Choosing what to add
 
 1. **Coverage report.** A script (`scripts/coverage.ts`, to be built) lists each exam objective in `src/data/examObjectives.ts` with its count of questions, labs and challenges. The thinnest objectives get content first.
-2. **Most-missed questions.** These come from the admin dashboard once it exists, as anonymous totals from signed-in users who opt in only. A question nearly everyone misses usually needs clearer wording, not more practice.
+2. **Most-missed questions.** These come from the admin dashboard (login portal part 9), as anonymous totals from signed-in users who opt in only. Admin accounts are never counted. A question nearly everyone misses usually needs clearer wording, not more practice.
 3. **CJ's notes** from studying: anything confusing or missing goes on the list for the next run.
 
 ## 4. Quality checks on every content PR
@@ -49,7 +52,7 @@ A scheduled task runs **every Monday at 5:00 AM America/Chicago**. `CRON_TZ=Amer
 - **Generated drills:** for many seeds, the computed answer matches an independent calculation.
 - The correct choice is not the obvious "longest answer". This test exists already, with a 35% limit.
 - Every command a question or lesson names runs in the simulator without "command not found".
-- Tone rules from `docs/DESIGN.md`: no exclamation marks and calm wording.
+- Tone rules from `docs/DESIGN.md`: calm wording, with exclamation marks only in the encouraging-copy exceptions it lists.
 
 ### Review
 - One fact-checker agent reviews each content PR: real command behaviour, current exam objectives, and one defensible answer per question.
@@ -58,9 +61,8 @@ A scheduled task runs **every Monday at 5:00 AM America/Chicago**. `CRON_TZ=Amer
 
 ## 5. The scheduled task (to set up in build step 4)
 
-- **Schedule:** `CRON_TZ=America/Chicago 47 4 * * 1`. That is every Monday at 4:47 AM. The minutes before 5:00 are on purpose: on-the-hour runs get delayed by server traffic.
-  - Alternative: plain `0 5 * * 1`, if exactly 5:00 matters.
-- **Mode:** a fresh session each run, on the `cjmit18/Terminalpractice` repository.
+- **Schedule:** `CRON_TZ=America/Chicago 0 5 * * 1`: every Monday at 5:00 AM Chicago time, as CJ decided. An on-the-hour run may start a little late; that is fine.
+- **Mode:** a fresh session each run, in an environment that has the `cjmit18/Terminalpractice` repository, the GitHub connector with push access (to open the PR) and the agent tool (for the fact-check).
 - **Prompt, roughly:**
   1. Read `docs/CONTENT_PLAN.md` and run the coverage report.
   2. Decide whether it's the first Monday of the month, and pick monthly or light accordingly.
@@ -83,4 +85,6 @@ Each step is its own small PR:
 3. Generated subnetting drills, which are also the subnetting feature.
 4. The Monday scheduled task, as described in section 5.
 5. Varied labs, one lab per PR.
-6. Most-missed questions, after the admin dashboard exists.
+6. Most-missed questions, after the admin dashboard (login portal part 9).
+
+Alongside step 1: remove the 15-challenge cap from the tests and add the random challenge rotation, so monthly releases can add challenges.
