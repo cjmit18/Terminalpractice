@@ -1,4 +1,4 @@
-import { test, expect, runCommand, showLab, showTerminal, terminalLog } from './fixtures';
+import { test, expect, runCommand, showLab, showTerminal, takeCheckpoint, terminalLog } from './fixtures';
 import type { Page } from '@playwright/test';
 import { LEARNING_PATHS } from '../src/data/paths';
 import { LPI_MODULES } from '../src/data/lpiModules';
@@ -73,16 +73,10 @@ const path = LEARNING_PATHS.find(p => p.stages[0].steps.some(s => s.kind === 'qu
 const quiz = path.stages[0].steps.find(s => s.kind === 'quiz')!;
 if (quiz.kind !== 'quiz') throw new Error('expected a quiz');
 
-/** Answers each question, right only where `right(i)` says so. */
+/** Answers each question in the order shown, right only where `right(i)` says so. */
 async function takeQuiz(page: Page, right: (i: number) => boolean) {
   if (quiz.kind !== 'quiz') return;
-  for (const [i, q] of quiz.questions.entries()) {
-    const choice = right(i) ? q.answer : (q.answer + 1) % q.choices.length;
-    // Scoped to the question: the header has its own theme radios
-    await page.getByRole('main').getByRole('group', { name: q.prompt }).getByRole('radio').nth(choice).check();
-    await page.getByRole('button', { name: 'Check answer' }).click();
-    await page.getByRole('button', { name: i < quiz.questions.length - 1 ? 'Next question' : 'See your score' }).click();
-  }
+  await takeCheckpoint(page, quiz.questions, (_, i) => right(i));
 }
 
 test('quiz not passed yet: neutral, missed explanations first, compared with the best so far', async ({ page }) => {

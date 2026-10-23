@@ -1,4 +1,5 @@
 import { test as base, expect, type Locator, type Page } from '@playwright/test';
+import type { QuizQuestion } from '../src/types/paths';
 
 /**
  * Shared test setup: every test fails if the page logs a console error or throws,
@@ -82,4 +83,30 @@ export async function expectNoHorizontalOverflow(page: Page): Promise<void> {
     return report;
   });
   expect(overflow, 'horizontal overflow').toEqual([]);
+}
+
+/**
+ * Takes a checkpoint to the end. Its questions come in a new random order on every attempt, so each
+ * one is found by the prompt on screen; `right(q, i)` says whether to answer the i-th shown question
+ * right. Returns the questions in the order they were shown.
+ */
+export async function takeCheckpoint(
+  page: Page,
+  questions: readonly QuizQuestion[],
+  right: (q: QuizQuestion, i: number) => boolean,
+): Promise<QuizQuestion[]> {
+  const shown: QuizQuestion[] = [];
+  for (let i = 0; i < questions.length; i++) {
+    const legend = page.getByRole('main').locator('fieldset legend span[tabindex="-1"]');
+    const prompt = (await legend.textContent())?.trim() ?? '';
+    const q = questions.find(x => x.prompt === prompt);
+    if (!q) throw new Error(`question not in this checkpoint: ${prompt}`);
+    const choice = right(q, i) ? q.answer : (q.answer + 1) % q.choices.length;
+    // Scoped to the question: the header has its own theme radios
+    await page.getByRole('main').getByRole('group', { name: q.prompt }).getByRole('radio').nth(choice).check();
+    await page.getByRole('button', { name: 'Check answer' }).click();
+    await page.getByRole('button', { name: i < questions.length - 1 ? 'Next question' : 'See your score' }).click();
+    shown.push(q);
+  }
+  return shown;
 }
