@@ -125,3 +125,19 @@ test.describe('first steps on a phone', () => {
     await expect(show.getByRole('button', { name: /^Lab/ })).toContainText('5 of 5');
   });
 });
+
+test('a finished path offers the next step: choose an exam path', async ({ page }) => {
+  const { LPI_MODULES } = await import('../src/data/lpiModules');
+  const lab = LPI_MODULES.find(m => m.id === 'lpi-000-first-steps')!;
+  const objectives = lab.objectives.map(o => o.id);
+  await page.addInitScript(ids => {
+    localStorage.setItem('certsim:journey:v1', JSON.stringify({
+      read: ['first-steps/what-the-prompt-means', 'first-steps/you-cannot-break-anything'], quiz: {}, last: null,
+    }));
+    localStorage.setItem('certsim:progress:v1', JSON.stringify({ 'lpi-000-first-steps': ids }));
+  }, objectives);
+  await page.goto('#/learn/first-steps');
+  await expect(page.getByText('You have finished this path')).toBeVisible();
+  await page.getByRole('main').getByRole('link', { name: 'Choose an exam path' }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Learning paths' })).toBeVisible();
+});

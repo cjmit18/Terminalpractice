@@ -18,6 +18,7 @@ import {
   stepTitle,
 } from '../../lib/journey';
 import { learnHref } from '../../lib/router';
+import { FIRST_STEPS_PATH_ID } from '../../data/paths';
 import { KIND_ICON, KIND_LABEL, ProgressBar, primaryLinkClass } from './shared';
 import { pathProgressText, stagesText } from './progressText';
 import { PathBadgeLine } from '../badges/PathBadgeLine';
@@ -85,10 +86,17 @@ export const PathOverview: React.FC<PathOverviewProps> = ({ path, src, modulesBy
               <ArrowRight className="w-4 h-4" aria-hidden="true" />
             </a>
           ) : (
-            <p className="text-sm font-medium text-ok inline-flex items-center gap-1.5">
-              <Check className="w-4 h-4" aria-hidden="true" />
-              You have finished this path
-            </p>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+              <p className="text-sm font-medium text-ok inline-flex items-center gap-1.5">
+                <Check className="w-4 h-4" aria-hidden="true" />
+                You have finished this path
+              </p>
+              {/* A finished path is not a dead end: the next thing to do is pick another path */}
+              <a href={learnHref()} className={`${primaryLinkClass} self-start sm:self-auto`}>
+                {path.id === FIRST_STEPS_PATH_ID ? 'Choose an exam path' : 'Choose your next path'}
+                <ArrowRight className="w-4 h-4" aria-hidden="true" />
+              </a>
+            </div>
           )}
         </div>
         {!next && <PathBadgeLine pathId={path.id} />}
