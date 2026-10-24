@@ -29,7 +29,8 @@ export const TestingPage: React.FC = () => {
     };
   }, []);
 
-  const notes = notesInBuild(NOTES, build === null || build === 'none' ? null : build);
+  // Nothing until the build details have loaded, so a card never shows and then disappears
+  const notes = build === null ? [] : notesInBuild(NOTES, build === 'none' ? null : build);
 
   const clearProgress = () => {
     if (!window.confirm('Clear all progress, badges and settings saved in this browser for this site?')) return;
@@ -84,16 +85,15 @@ export const TestingPage: React.FC = () => {
 
       <section aria-labelledby="new-heading" className="space-y-4">
         <h2 id="new-heading" className="text-base font-semibold">New to try</h2>
-        {notes.length === 0 && <p className="text-sm text-muted">Nothing new to try in this build.</p>}
+        {build !== null && notes.length === 0 && <p className="text-sm text-muted">Nothing new to try in this build.</p>}
         <ul className="grid gap-4 md:grid-cols-2">
-          {notes.map(({ note: n, inMain }) => (
+          {notes.map(n => (
             <li key={n.pr} className="rounded-md border border-line bg-surface p-4 space-y-2">
               <p className="text-sm text-muted">
                 <a href={`${REPO}/pull/${n.pr}`} target="_blank" rel="noreferrer" className={`${linkClass} inline-flex items-center gap-1`}>
                   #{n.pr}
                   <ExternalLink className="size-3" aria-hidden="true" />
                 </a>
-                {inMain && ' · already merged into main'}
               </p>
               <h3 className="text-[15px] font-semibold">{n.title}</h3>
               <ol className="list-decimal pl-5 text-sm space-y-1">

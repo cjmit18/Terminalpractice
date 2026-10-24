@@ -9,14 +9,13 @@ export interface BuildInfo {
 }
 
 /**
- * The notes for changes this build really has. The workflow merges every open pull request it can, so a
- * note's PR is in the build when it was included, left out when it was skipped (the build section says
- * why), and otherwise no longer open: merged into main, which every build starts from. Without build
- * details (a local build) every note is shown.
+ * The notes for changes this build is known to hold: those whose pull request the workflow merged into
+ * it. A note whose PR was skipped, or is no longer open, is left out: the builder only sees open pull
+ * requests, so it cannot tell a PR merged into main from one closed without merging. (A merged change is
+ * on the live site anyway.) Without build details (a local build) every note is shown.
  */
-export function notesInBuild(notes: TestNote[], build: Pick<BuildInfo, 'included' | 'skipped'> | null): { note: TestNote; inMain: boolean }[] {
-  if (!build) return notes.map(note => ({ note, inMain: false }));
+export function notesInBuild(notes: TestNote[], build: Pick<BuildInfo, 'included'> | null): TestNote[] {
+  if (!build) return notes;
   const included = new Set(build.included.map(p => p.number));
-  const skipped = new Set(build.skipped.map(p => p.number));
-  return notes.filter(n => !skipped.has(n.pr)).map(note => ({ note, inMain: !included.has(note.pr) }));
+  return notes.filter(n => included.has(n.pr));
 }
