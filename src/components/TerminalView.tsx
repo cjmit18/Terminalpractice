@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import { TerminalShell, HistoryItem, FileNode } from '../types/terminal';
 import { Copy, Check, Eraser, ArrowUp, ArrowDown } from 'lucide-react';
-import { completePath } from '../terminal/complete';
+import { completeFileAt, wordBefore } from '../terminal/complete';
 
 /** A history entry, plus what the prompt looked like when it was typed */
 export interface TerminalLine extends HistoryItem {
@@ -186,51 +186,51 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
     }
   };
 
+  // Where Tab works: the caret, or the start of a selection (which the completion replaces, as typing would)
+  const caretRange = () => {
+    const el = inputRef.current;
+    const start = el?.selectionStart ?? input.length;
+    return { start, end: el?.selectionEnd ?? start };
+  };
+  // A completed line; the caret goes just after the completed word, with any text after it kept
+  const applyCompletion = (line: string, caret: number) => {
+    pendingCaret.current = caret;
+    setInput(line);
+    onActivity?.(['tab']);
+  };
+
   // Completes the command name (first word) from a short list of commands the labs use. True when it found a match.
-  const completeCommand = (): boolean => {
-    const word = input.trimStart();
-    if (!word || /\s/.test(word)) return false;
+  const completeCommand = (word: string, before: string, after: string): boolean => {
     const pool = shell === 'bash' ? COMPLETIONS.linux : COMPLETIONS.windows;
     const matches = pool.filter(c => c.toLowerCase().startsWith(word.toLowerCase()));
     if (matches.length === 1) {
-      setInput(matches[0] + ' ');
-      onActivity?.(['tab']);
+      applyCompletion(before + matches[0] + ' ' + after, before.length + matches[0].length + 1);
     } else if (matches.length > 1) {
       // Extend to the longest shared prefix, like bash does on the first Tab
       let prefix = matches[0];
       for (const m of matches) {
         while (!m.toLowerCase().startsWith(prefix.toLowerCase())) prefix = prefix.slice(0, -1);
       }
-      if (prefix.length > word.length) {
-        setInput(prefix);
-        onActivity?.(['tab']);
-      } else {
-        setTabNames(matches);
-      }
+      if (prefix.length > word.length) applyCompletion(before + prefix + after, before.length + prefix.length);
+      else setTabNames(matches);
     }
     return matches.length > 0;
   };
 
-  // Completes the last word of the line as a file or folder name on this machine
-  const completeFileName = () => {
-    if (!fs) return;
-    const word = /\S*$/.exec(input)?.[0] ?? '';
-    const result = completePath(fs, cwd, word, shell !== 'bash');
-    if (!result) return;
-    const next = input.slice(0, input.length - word.length) + result.text;
-    if (next !== input) {
-      setInput(next);
-      onActivity?.(['tab']);
-    } else if (result.names.length > 1) {
-      setTabNames(result.names);
-    }
-  };
-
-  // The first word is a command (unless it looks like a path, such as ./script.sh); later words are file names
+  // Completes the word at the caret: the first word is a command (unless it looks like a path, such as
+  // ./script.sh), later words are file or folder names on this machine
   const complete = () => {
-    const first = !/\s/.test(input.trimStart());
-    if (first && !/[/\\~.]/.test(input.trimStart()) && completeCommand()) return;
-    completeFileName();
+    const { start, end } = caretRange();
+    const line = input.slice(0, start) + input.slice(end);
+    const word = wordBefore(line, start, shell);
+    const raw = line.slice(word.start, start);
+    const first = line.slice(0, word.start).trim() === '';
+    if (first && raw && !/[/\\~.'"]/.test(raw) && completeCommand(raw, line.slice(0, word.start), line.slice(start))) return;
+    if (!fs) return;
+    const result = completeFileAt(fs, cwd, line, start, shell);
+    if (!result) return;
+    if (result.line !== input) applyCompletion(result.line, result.caret);
+    else if (result.names.length > 1) setTabNames(result.names);
   };
 
   const cancelLine = () => {
