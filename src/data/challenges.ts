@@ -125,7 +125,7 @@ export const CHALLENGES: Challenge[] = [
       const out = lines(ctx.stdout).map(l => l.trim().split(/\s+/).pop() ?? '').map(p => p.replace(/^.*\//, ''));
       return out.length === 3 && ['passwd', 'su', 'sudo'].every(n => out.includes(n));
     },
-    hint: 'find can match permission bits: -perm -4000 means "at least the SUID bit".',
+    hint: '`find` can match permission bits: `-perm -4000` means "at least the SUID bit".',
     explanation:
       'passwd, su and sudo. find /usr/bin -perm -4000 lists them. In ls -l they show an s where the owner\'s x would be (rwsr-xr-x). chage has the SGID bit instead (rwxr-sr-x), so it is not in the list.',
     solution: ['find /usr/bin -perm -4000'],
@@ -222,7 +222,7 @@ export const CHALLENGES: Challenge[] = [
       const rows = dataRows(ctx.stdout, TASKLIST_HEADER);
       return rows.length === 1 && /^svchost_update\.exe\s+3892\b/i.test(rows[0].trim());
     },
-    hint: 'netstat -ano | findstr 4444 gives the PID. tasklist /fi "PID eq <pid>" then shows only that process.',
+    hint: '`netstat -ano | findstr 4444` gives the PID. `tasklist /fi "PID eq <pid>"` then shows only that process.',
     explanation:
       'svchost_update.exe, PID 3892. The name is made to look like the real svchost.exe, which is why matching the PID matters more than reading the name. tasklist | findstr 3892 works as well.',
     solution: ['netstat -ano | findstr 4444', 'tasklist /fi "PID eq 3892"'],

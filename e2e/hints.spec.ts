@@ -107,3 +107,25 @@ test('quiz not passed yet: neutral, missed explanations first, compared with the
   await expect(page.getByRole('heading', { name: 'You got these right' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible();
 });
+
+test('commands in task text and hints show as code, and the quotes a command needs stay on screen', async ({ page, isMobile }) => {
+  test.skip(isMobile, 'same rendering on both projects');
+  // Windows first steps: the command named type is marked, so "type type" never reads as one muddle
+  await page.goto('#/learn/first-steps/lab-first-steps-windows');
+  const read = page.getByRole('listitem').filter({ hasText: 'Read a file' });
+  await expect(read.locator('code', { hasText: /^type$/ }).first()).toBeVisible();
+  await read.getByRole('button', { name: 'Show a nudge' }).click();
+  await read.getByRole('button', { name: 'Show more' }).click();
+  await read.getByRole('button', { name: 'Show more' }).click();
+  await expect(read.locator('code', { hasText: /^type welcome\.txt$/ })).toBeVisible();
+  await expect(read.getByText(/type type/i)).toHaveCount(0);
+
+  // A hint whose command has quotes in it shows them, so copying it gives the right command
+  await page.goto('#/linux/lpi-103-2-text-processing');
+  await showLab(page);
+  const find = page.getByRole('listitem').filter({ hasText: 'Find the failed logins' });
+  await find.getByRole('button', { name: 'Show a nudge' }).click();
+  await find.getByRole('button', { name: 'Show more' }).click();
+  await find.getByRole('button', { name: 'Show more' }).click();
+  await expect(find.locator('code', { hasText: 'grep "Failed password" /var/log/auth.log' })).toBeVisible();
+});

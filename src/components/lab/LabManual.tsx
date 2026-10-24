@@ -4,7 +4,7 @@ import { Check, CheckCircle2 } from 'lucide-react';
 import { TicketAsk } from './Ticket';
 
 /**
- * Hints in the data read like `Execute: chmod 750 dir` or `Run "ls -ld dir" to ...`.
+ * Task text, nudges and hints read like "Execute: chmod 750 dir" or "Type `pwd` and press Enter".
  * Show the command parts in mono and the rest as prose.
  */
 export function HintText({ text }: { text: string }) {
@@ -16,7 +16,9 @@ export function HintText({ text }: { text: string }) {
       </>
     );
   }
-  const parts = text.split(/"([^"]+)"/g);
+  // `backticks` mark what to type (shown as code, without the backticks). Double quotes are real quote
+  // marks, part of the command or the sentence, and stay on screen.
+  const parts = text.split(/`([^`]+)`/g);
   return (
     <>
       {parts.map((part, i) =>
