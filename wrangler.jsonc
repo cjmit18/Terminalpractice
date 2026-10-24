@@ -1,13 +1,14 @@
+// Generated for the test site by scripts/site-config.mjs from main's wrangler.jsonc. Do not edit here.
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   // Must match the Worker connected to this repo in the Cloudflare dashboard (Workers Builds).
   // terminuscli serves https://terminuscli.com.
-  "name": "terminuscli",
+  "name": "terminus-wm",
   // Listed here so every deploy keeps the domain attached: a deploy whose config named only another
   // domain once detached terminuscli.com (#27). www.terminuscli.com is a separate DNS record, not a Worker domain.
-  "routes": [{ "pattern": "terminuscli.com", "custom_domain": true }],
+  "routes": [{ "pattern": "terminus.wayne-mitchell.com", "custom_domain": true, "previews_enabled": true }],
   // With routes set, workers_dev would default to off; keep the workers.dev address on as it is today.
-  "workers_dev": true,
+  "workers_dev": false,
   // No preview links for the live site: pull-request builds still build and test, but test features are
   // previewed on the test site (https://<branch>.terminus.wayne-mitchell.com, branch site/wayne-mitchell).
   // Set explicitly so a deploy never turns them back on.
@@ -19,7 +20,7 @@
   // (npm clean-install), which is where tsx, typescript and wrangler itself come from.
   "build": {
     // Absolute asset paths: with the SPA fallback, /any/path serves index.html, and its assets must still resolve from /
-    "command": "npm test && npm run lint && VITE_BASE=/ npm run build"
+    "command": "npm test && npm run lint && VITE_TEST_SITE=1 VITE_BASE=/ npm run build"
   },
   // Account API (sign-in, sessions). Only /api/* reaches it; see run_worker_first below.
   "main": "./worker/index.ts",

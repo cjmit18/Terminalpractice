@@ -1,0 +1,12 @@
+{
+  "builtAt": "2026-10-24T18:57:54.255Z",
+  "main": "6b5ba1b5d772c21dfd8d31b86cad6ca0bac71c4c",
+  "included": [
+    {
+      "number": 49,
+      "title": "Portal part 4: password reset, and the open email-claim fixes",
+      "url": "https://github.com/cjmit18/Terminalpractice/pull/49"
+    }
+  ],
+  "skipped": []
+}
