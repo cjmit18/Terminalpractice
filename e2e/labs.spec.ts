@@ -141,6 +141,27 @@ test('Tab completes file and folder names after the command, and lists the names
   await expect(page.getByText('hostname  hosts')).toHaveCount(0);
 });
 
+test('Tab completes the word at the caret, keeps the rest of the line, and escapes a name with a space', async ({ page, isMobile }) => {
+  test.skip(isMobile, 'same code path on both projects');
+  await page.goto('#/sandbox');
+  const input = commandInput(page);
+  // The caret just after "no", with another word after it
+  await input.fill('cat no /etc/ho');
+  await input.evaluate((el: HTMLInputElement) => el.setSelectionRange(6, 6));
+  await input.press('Tab');
+  await expect(input).toHaveValue('cat notes.txt  /etc/ho');
+  expect(await input.evaluate((el: HTMLInputElement) => el.selectionStart)).toBe(14);
+
+  // A file whose name has a space completes so the line still runs
+  await input.fill('touch "quarterly report.txt"');
+  await input.press('Enter');
+  await input.fill('cat qua');
+  await input.press('Tab');
+  await expect(input).toHaveValue('cat quarterly\\ report.txt ');
+  await input.press('Enter');
+  await expect(terminalLog(page)).not.toContainText('No such file');
+});
+
 test('walkthrough steps run in the shell they are written for', async ({ page, isMobile }) => {
   // Walkthrough steps are written for the lab's default shell, even if the header picked the other one
   test.skip(isMobile, 'same code path on both projects');
