@@ -125,5 +125,8 @@ export function completeFileAt(
   const sep = isWindows ? '\\' : '/';
   const text = quotePath(m.path, syntax, word.quote, m.end === 'file') + (m.end === 'dir' ? sep : m.end === 'file' ? ' ' : '');
   const before = line.slice(0, word.start) + text;
-  return { line: before + line.slice(caret), caret: before.length, names: m.names };
+  // A finished file closes the open quote; when the word already had its closing quote right after
+  // the caret (`cat "qua|"`), that one is used up instead of being left as a stray extra quote
+  const after = m.end === 'file' && word.quote && line[caret] === word.quote ? line.slice(caret + 1) : line.slice(caret);
+  return { line: before + after, caret: before.length, names: m.names };
 }
