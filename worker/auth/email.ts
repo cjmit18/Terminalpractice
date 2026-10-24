@@ -1,12 +1,20 @@
-// Email + password accounts: sign up, sign in, and confirm the address. Resetting a password comes next.
+// Email + password accounts: sign up, sign in, confirm the address, and reset a forgotten password.
 import { HttpError, appOrigin, inBackground, ipSubject, isUniqueViolation, json, sha256, str, type Db, type Route, type RouteContext } from '../http';
-import { sendEmail, verificationEmail } from '../mail';
+import { emailSendingEnabled, resetEmail, sendEmail, verificationEmail } from '../mail';
 import { hashPassword, passwordProblem, verifyAgainstDummy, verifyPassword } from '../password';
 import { LIMITS, countLimit, enforceLimit, rateLimited } from '../ratelimit';
-import { EMAIL_CLAIM_TTL, createSession, endIncomingSession, loadUser, requireUser, sessionCookie, staleEmailClaim, toPublicUser } from '../session';
-import { consumeToken, issueToken, revokeTokens, tokenFailure } from '../tokens';
+import { EMAIL_CLAIM_TTL, createSession, endAllSessions, endIncomingSession, loadUser, requireUser, sessionCookie, staleEmailClaim, toPublicUser } from '../session';
+import { consumeToken, issueToken, peekToken, revokeTokens, tokenFailure, type TokenPurpose } from '../tokens';
 
 const INVALID_CREDENTIALS = () => new HttpError(401, 'invalid_credentials', 'That email and password do not match an account.');
+const INVALID_TOKEN = () => new HttpError(400, 'invalid_token', 'This link is invalid or was already used. Ask for a new one.');
+
+/** invalid_token, or token_expired for a link that only ran out of time */
+async function badToken(c: RouteContext, token: string, purpose: TokenPurpose): Promise<HttpError> {
+  return (await tokenFailure(c.env.DB, token, purpose, c.deps.now())) === 'token_expired'
+    ? new HttpError(400, 'token_expired', 'This link has expired. Ask for a new one.')
+    : INVALID_TOKEN();
+}
 
 const LOCAL_PART = /^[a-z0-9!#$%&'*+/=?^_`{|}~-]+(\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*$/;
 const DOMAIN = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
@@ -102,7 +110,8 @@ async function register(c: RouteContext): Promise<Response> {
   const session = await createSession(c.env.DB, id, now);
   await sendVerification(c, id, email);
   const user = await loadUser(c.env.DB, id);
-  return json({ user: toPublicUser(user!) }, 201, { 'Set-Cookie': sessionCookie(session) });
+  // emailSent false: this site cannot send email yet, so no confirmation link is on its way
+  return json({ user: toPublicUser(user!), emailSent: emailSendingEnabled(c.env, c.deps) }, 201, { 'Set-Cookie': sessionCookie(session) });
 }
 
 async function login(c: RouteContext): Promise<Response> {
@@ -110,10 +119,10 @@ async function login(c: RouteContext): Promise<Response> {
   const body = await c.body();
   const password = str(body, 'password', 1024);
   const email = normalizeEmail(str(body, 'email', 320));
-  // The per-IP limit and the hourly per-email ceiling are hard. The 15-minute per-email limit is soft:
-  // past it, only a correct password gets through, so strangers cannot lock the owner out.
+  // The per-IP limit is hard. Both per-email limits are soft: past them, only a correct password gets
+  // through, so strangers trying passwords from many addresses cannot lock the owner out.
   await enforceLimit(c.env, LIMITS.loginIp, ipSubject(c.request), now);
-  if (email) await enforceLimit(c.env, LIMITS.loginEmailHour, email, now);
+  const perHour = email ? await countLimit(c.env, LIMITS.loginEmailHour, email, now) : null;
   const perEmail = email ? await countLimit(c.env, LIMITS.loginEmail, email, now) : null;
 
   const row = email
@@ -121,12 +130,14 @@ async function login(c: RouteContext): Promise<Response> {
         .bind(email)
         .first<{ id: string; password_hash: string | null; email: string; email_verified_at: number | null; email_set_at: number | null }>()
     : null;
-  // A lapsed unverified address no longer signs in (same answer as a wrong password)
-  const usable = row && row.password_hash && !staleEmailClaim(row, now) ? row : null;
+  // An unconfirmed address still signs in to its account, even after its 24 hours, until someone else signs
+  // up with it and takes it: a learner who signed out before confirming is not locked out of their account
+  const usable = row && row.password_hash ? row : null;
   // Same work, same answer whether or not the account exists or has a password
   const ok = usable ? await verifyPassword(password, usable.password_hash!) : await verifyAgainstDummy(password);
   if (!usable || !ok) {
-    if (perEmail?.over) throw rateLimited(perEmail.retryAfter);
+    const over = [perEmail, perHour].find(l => l?.over);
+    if (over) throw rateLimited(over.retryAfter);
     throw INVALID_CREDENTIALS();
   }
 
@@ -148,11 +159,7 @@ async function verify(c: RouteContext): Promise<Response> {
   const token = str(await c.body(), 'token', 200);
   const tokenHash = await sha256(token);
   const userId = await consumeToken(c.env.DB, token, 'verify', now);
-  if (!userId) {
-    throw (await tokenFailure(c.env.DB, token, 'verify', now)) === 'token_expired'
-      ? new HttpError(400, 'token_expired', 'This link has expired. Ask for a new one.')
-      : new HttpError(400, 'invalid_token', 'This link is invalid or was already used. Ask for a new one.');
-  }
+  if (!userId) throw await badToken(c, token, 'verify');
   const confirmed = await c.env.DB.prepare(
     `UPDATE users SET email_verified_at = COALESCE(email_verified_at, ?)
       WHERE id = ? AND email IS NOT NULL
@@ -175,12 +182,80 @@ async function resendVerification(c: RouteContext): Promise<Response> {
   const { user } = await requireUser(c);
   await enforceLimit(c.env, LIMITS.resendVerification, user.id, c.deps.now());
   if (!user.email) throw new HttpError(400, 'no_email', 'Add an email address to your account first.');
-  // A lapsed claim no longer holds the address, so it gets no new links (stops endless confirm emails to a stranger)
+  // A lapsed claim gets no new links from a signed-in account (stops endless confirm emails to a stranger).
+  // The inbox owner confirms it with a password reset instead: that link goes to the inbox, not to whoever signed up.
   if (staleEmailClaim(user, c.deps.now())) {
-    throw new HttpError(409, 'email_claim_lapsed', 'This address was not confirmed within 24 hours, so it is no longer held for this account. Sign up again to use it.');
+    throw new HttpError(409, 'email_claim_lapsed', 'This address was not confirmed within 24 hours. To confirm it now, use Forgot password: the reset link confirms the address too.');
   }
   if (user.email_verified_at === null) await sendVerification(c, user.id, user.email);
+  return json({ ok: true, emailSent: emailSendingEnabled(c.env, c.deps) }, 202);
+}
+
+/**
+ * POST /api/auth/password/forgot { email }: emails a reset link to the address if an account holds it. The answer
+ * is always 202, also when limited or when no account has the address, so it never says which addresses have one.
+ */
+async function forgot(c: RouteContext): Promise<Response> {
+  const now = c.deps.now();
+  const raw = str(await c.body(), 'email', 320);
+  const email = normalizeEmail(raw);
+  const perIp = await countLimit(c.env, LIMITS.forgotIp, ipSubject(c.request), now);
+  const perEmail = await countLimit(c.env, LIMITS.forgotEmail, email ?? raw, now);
+  if (perIp.over || perEmail.over || !email) return json({ ok: true }, 202);
+  // Looking the account up, issuing the token and sending all happen after the answer when possible,
+  // so neither the answer nor its timing says whether the email has an account
+  await inBackground(c.deps, async () => {
+    const row = await c.env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first<{ id: string }>();
+    if (!row) return;
+    const token = await issueToken(c.env.DB, row.id, 'reset', now, email);
+    await sendEmail(c.env, c.deps, resetEmail(appOrigin(c), email, token));
+  });
   return json({ ok: true }, 202);
+}
+
+/**
+ * POST /api/auth/password/reset { token, password }: sets a new password from the emailed link, confirms the
+ * address (the link reached its inbox), ends every other session and signs this browser in.
+ * An address that was never confirmed was only a claim: whoever signed up with it may not own the inbox
+ * (address squatting), so before the inbox owner takes the account over, the claimant's other sign-in
+ * methods and sessions are removed.
+ */
+async function reset(c: RouteContext): Promise<Response> {
+  const now = c.deps.now();
+  const body = await c.body();
+  const token = str(body, 'token', 200);
+  const password = str(body, 'password', 1024);
+  // Check the new password before using the link up, so a refused password can be retried with the same link
+  const pendingUser = await peekToken(c.env.DB, token, 'reset', now);
+  if (!pendingUser) throw await badToken(c, token, 'reset');
+  const before = await loadUser(c.env.DB, pendingUser);
+  if (!before) throw INVALID_TOKEN();
+  requireStrongPassword(password, before.email, before.display_name);
+  const hash = await hashPassword(password);
+
+  const tokenHash = await sha256(token);
+  const userId = await consumeToken(c.env.DB, token, 'reset', now);
+  if (!userId) throw await badToken(c, token, 'reset');
+  // The link proves only the inbox it was sent to: if the account's address changed since, it is stale
+  const current = await c.env.DB.prepare(
+    `SELECT id, email_verified_at FROM users WHERE id = ? AND email IS NOT NULL
+       AND email = (SELECT email FROM auth_tokens WHERE token_hash = ?)`,
+  )
+    .bind(userId, tokenHash)
+    .first<{ id: string; email_verified_at: number | null }>();
+  if (!current) throw INVALID_TOKEN();
+  if (current.email_verified_at === null) {
+    await c.env.DB.prepare("DELETE FROM identities WHERE user_id = ? AND provider <> 'email'").bind(userId).run();
+  }
+  await c.env.DB.prepare('UPDATE users SET password_hash = ?, email_verified_at = COALESCE(email_verified_at, ?), updated_at = ? WHERE id = ?')
+    .bind(hash, now, now, userId)
+    .run();
+  await revokeTokens(c.env.DB, userId, ['verify', 'reset'], now);
+  await endAllSessions(c.env.DB, userId);
+  await endIncomingSession(c);
+  const session = await createSession(c.env.DB, userId, now);
+  const user = await loadUser(c.env.DB, userId);
+  return json({ user: toPublicUser(user!) }, 200, { 'Set-Cookie': sessionCookie(session) });
 }
 
 /**
@@ -213,4 +288,6 @@ export const emailRoutes: Route[] = [
   { method: 'POST', path: '/api/auth/email/login', handler: login },
   { method: 'POST', path: '/api/auth/email/verify', handler: verify },
   { method: 'POST', path: '/api/auth/email/resend-verification', handler: resendVerification },
+  { method: 'POST', path: '/api/auth/password/forgot', handler: forgot },
+  { method: 'POST', path: '/api/auth/password/reset', handler: reset },
 ];
