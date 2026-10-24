@@ -168,10 +168,10 @@ export const CHALLENGES: Challenge[] = [
     shell: 'bash',
     machineFrom: 'lpi-104-5-permissions',
     prompt: 'The logs in /var/log belong to the adm group. Who is in it? Print only that group\'s entry.',
-    verifier: (_fs, _s, ctx) => {
+    verifier: (fs, _s, ctx) => {
       if (!answered(ctx, /\/etc\/group|getent\s+group/)) return false;
-      const out = lines(ctx.stdout);
-      return out.length === 1 && /^adm:x:4:/.test(out[0].trim());
+      // The whole entry as the machine holds it: an edited one (sed 's/syslog,student/root/') is not the answer
+      return printsLines(ctx.stdout, fileLines(fs, '/etc/group').filter(l => l.startsWith('adm:')));
     },
     hint: 'Groups are listed in /etc/group, one per line, with the members last. getent group can also look one up by name.',
     explanation:
