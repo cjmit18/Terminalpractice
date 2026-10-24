@@ -55,6 +55,12 @@ test('a name with a space is escaped in bash and quoted in Command Prompt and Po
   // Already escaped or quoted words are read as the shell reads them
   assert.equal(completeFileAt(fs, home, 'cat quarterly\\ r', 16, 'bash')?.line, 'cat quarterly\\ report.txt ');
   assert.equal(completeFileAt(fs, home, 'cat "old scripts/b', 18, 'bash')?.line, 'cat "old scripts/backup.sh" ');
+  // Tab before a closing quote that is already there: it is used, not doubled, and later words stay
+  assert.deepEqual(completeFileAt(fs, home, 'cat "qua"', 8, 'bash'), { line: 'cat "quarterly report.txt" ', caret: 27, names: ['quarterly report.txt'] });
+  assert.equal(completeFileAt(fs, home, 'cat "qua" notes.txt', 8, 'bash')?.line, 'cat "quarterly report.txt"  notes.txt');
+  assert.equal(completeFileAt(fs, home, 'cat "quarterly report.txt"', 25, 'bash')?.line, 'cat "quarterly report.txt" ');
+  // A folder keeps the quote open, so the closing quote after the caret still closes the path
+  assert.equal(completeFileAt(fs, home, 'cd "old"', 7, 'bash')?.line, 'cd "old scripts/"');
 
   const win = addCopy(createDefaultWindowsFs(), 'C:\\Users\\Student\\Documents', 'My Projects', true);
   const cwd = 'C:\\Users\\Student';
