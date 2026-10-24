@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { linuxSession } from './testUtils.ts';
+import { getNodeAtPath } from './filesystem.ts';
 
 // ls and cd behave like GNU ls and bash (fact-check L-7/E-12, E-26)
 
@@ -63,4 +64,36 @@ test('chmod X adds execute only to directories and already-executable files', ()
 test('/boot exists as the mount point df and lsblk name', () => {
   const run = linuxSession();
   assert.match(run('ls /boot').stdout, /vmlinuz-5\.15\.0-101-generic/);
+});
+
+test('rm -rf checks permission for every entry inside the tree, as real rm does (#28, 5)', () => {
+  // The issue's case: protected is r-x, so protected/data cannot be unlinked from it
+  const run = linuxSession();
+  run('mkdir protected; touch protected/data; chmod 500 protected');
+  const res = run('rm -rf protected');
+  assert.equal(res.exitCode, 1);
+  assert.equal(res.stderr, "rm: cannot remove 'protected/data': Permission denied");
+  assert.ok(getNodeAtPath(run.fs(), '/home/student/protected/data', false), 'the protected file must stay');
+  assert.ok(getNodeAtPath(run.fs(), '/home/student/protected', false), 'and so must the folder holding it');
+
+  // What can be removed is, even when something deeper cannot
+  run('mkdir -p tree/open tree/locked; touch tree/open/a tree/locked/b tree/c; chmod 555 tree/locked');
+  assert.equal(run('rm -r tree').stderr, "rm: cannot remove 'tree/locked/b': Permission denied");
+  assert.equal(getNodeAtPath(run.fs(), '/home/student/tree/open', false), null);
+  assert.equal(getNodeAtPath(run.fs(), '/home/student/tree/c', false), null);
+  assert.ok(getNodeAtPath(run.fs(), '/home/student/tree/locked/b', false));
+
+  // A folder that cannot be read cannot be emptied; an empty one goes, since only its parent matters
+  run('mkdir -p sealed/x empty; chmod 300 sealed; chmod 000 empty');
+  assert.equal(run('rm -rf sealed').stderr, "rm: cannot remove 'sealed': Permission denied");
+  assert.ok(getNodeAtPath(run.fs(), '/home/student/sealed/x', false));
+  assert.equal(run('rm -rf empty').exitCode, 0);
+
+  // Once the folder is writable again it all goes, and root is never stopped
+  run('chmod 700 protected');
+  assert.equal(run('rm -rf protected').exitCode, 0);
+  assert.equal(getNodeAtPath(run.fs(), '/home/student/protected', false), null);
+  const root = linuxSession({ currentUser: 'root', currentGroup: 'root', isRootOrAdmin: true });
+  root('mkdir /tmp/p; touch /tmp/p/d; chmod 500 /tmp/p');
+  assert.equal(root('rm -rf /tmp/p').exitCode, 0);
 });

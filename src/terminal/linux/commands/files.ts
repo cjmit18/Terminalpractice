@@ -233,6 +233,31 @@ function rm(ctx: LinuxContext): LinuxResult {
     if (force) return ctx.ok();
     return ctx.fail('rm: missing operand');
   }
+  // rm -r empties a directory from the bottom up, and each entry is a removal of its own: it needs
+  // write and search (x) on the directory holding it, and a directory with entries must be readable
+  // to list them. What cannot be removed stays, with every directory above it. -f does not change this.
+  const errors: string[] = [];
+  const removeTree = (abs: string, label: string, node: FileNode): boolean => {
+    const names = node.type === 'directory' ? Object.keys(node.children ?? {}) : [];
+    if (names.length) {
+      if (!ctx.access(node, abs, 'r').ok || !ctx.access(node, abs, 'x').ok) {
+        errors.push(`rm: cannot remove '${label}': Permission denied`);
+        return false;
+      }
+      let emptied = true;
+      for (const name of names) {
+        if (!removeTree(abs === '/' ? `/${name}` : `${abs}/${name}`, `${label.replace(/\/$/, '')}/${name}`, node.children![name])) emptied = false;
+      }
+      if (!emptied) return false;
+    }
+    const check = ctx.canDelete(abs);
+    if (!check.ok) {
+      errors.push(`rm: cannot remove '${label}': ${check.error || 'Permission denied'}`);
+      return false;
+    }
+    removeNode(ctx.fs, abs, false);
+    return true;
+  };
   for (const t of targets) {
     const targetPath = ctx.resolve(t);
     const node = ctx.node(targetPath);
@@ -241,11 +266,15 @@ function rm(ctx: LinuxContext): LinuxResult {
       return ctx.fail(`rm: cannot remove '${t}': No such file or directory`);
     }
     if (node.type === 'directory' && !recursive) return ctx.fail(`rm: cannot remove '${t}': Is a directory`);
+    if (node.type === 'directory') {
+      removeTree(targetPath, t, node);
+      continue;
+    }
     const check = ctx.canDelete(targetPath);
     if (!check.ok) return ctx.fail(`rm: cannot remove '${t}': ${check.error || 'Permission denied'}`);
     removeNode(ctx.fs, targetPath, false);
   }
-  return ctx.ok();
+  return errors.length ? ctx.fail(errors.join('\n')) : ctx.ok();
 }
 
 function tee(ctx: LinuxContext): LinuxResult {
