@@ -3,7 +3,7 @@ import { HttpError, appOrigin, inBackground, ipSubject, isUniqueViolation, json,
 import { emailSendingEnabled, resetEmail, sendEmail, verificationEmail } from '../mail';
 import { hashPassword, passwordProblem, verifyAgainstDummy, verifyPassword } from '../password';
 import { LIMITS, countLimit, enforceLimit, rateLimited } from '../ratelimit';
-import { EMAIL_CLAIM_TTL, createSession, endAllSessions, endIncomingSession, loadUser, requireUser, sessionCookie, staleEmailClaim, toPublicUser } from '../session';
+import { EMAIL_CLAIM_TTL, createPasswordSession, createSession, endAllSessions, endIncomingSession, loadUser, requireUser, sessionCookie, staleEmailClaim, toPublicUser } from '../session';
 import { consumeToken, issueToken, peekToken, revokeTokens, tokenFailure, type TokenPurpose } from '../tokens';
 
 const INVALID_CREDENTIALS = () => new HttpError(401, 'invalid_credentials', 'That email and password do not match an account.');
@@ -141,8 +141,10 @@ async function login(c: RouteContext): Promise<Response> {
     throw INVALID_CREDENTIALS();
   }
 
+  // Only while the password is still the one just checked: a reset that finished meanwhile wins
+  const session = await createPasswordSession(c.env.DB, usable.id, now, usable.password_hash!);
+  if (!session) throw INVALID_CREDENTIALS();
   await endIncomingSession(c);
-  const session = await createSession(c.env.DB, usable.id, now);
   const user = await loadUser(c.env.DB, usable.id);
   return json({ user: toPublicUser(user!) }, 200, { 'Set-Cookie': sessionCookie(session) });
 }
@@ -244,12 +246,19 @@ async function reset(c: RouteContext): Promise<Response> {
     .bind(userId, tokenHash)
     .first<{ id: string; email_verified_at: number | null }>();
   if (!current) throw INVALID_TOKEN();
+  // The same check again inside the write: the address may have been released to a new sign-up since.
+  // Nothing changes unless this account still holds the address the link was sent to.
+  const changed = await c.env.DB.prepare(
+    `UPDATE users SET password_hash = ?, email_verified_at = COALESCE(email_verified_at, ?), updated_at = ?
+      WHERE id = ? AND email IS NOT NULL AND email = (SELECT email FROM auth_tokens WHERE token_hash = ?)
+      RETURNING id`,
+  )
+    .bind(hash, now, now, userId, tokenHash)
+    .first<{ id: string }>();
+  if (!changed) throw INVALID_TOKEN();
   if (current.email_verified_at === null) {
     await c.env.DB.prepare("DELETE FROM identities WHERE user_id = ? AND provider <> 'email'").bind(userId).run();
   }
-  await c.env.DB.prepare('UPDATE users SET password_hash = ?, email_verified_at = COALESCE(email_verified_at, ?), updated_at = ? WHERE id = ?')
-    .bind(hash, now, now, userId)
-    .run();
   await revokeTokens(c.env.DB, userId, ['verify', 'reset'], now);
   await endAllSessions(c.env.DB, userId);
   await endIncomingSession(c);

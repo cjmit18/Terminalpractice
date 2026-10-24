@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PASSWORD, ORIGIN, count, sessionOf, setup, tokenIn } from './testkit.ts';
 import { DAY } from './session.ts';
+import type { Db, DbStatement } from './http.ts';
 import { TOKEN_TTL } from './tokens.ts';
 
 const NEW_PASSWORD = 'a brand new long passphrase';
@@ -137,4 +138,69 @@ test('SV3-11: sign-up and resend say whether a confirmation email could be sent'
   const resend = await off.call('POST', '/api/auth/email/resend-verification', {}, { Cookie: `__Host-session=${sessionOf(res)}` });
   assert.equal((await resend.json()).emailSent, false);
   assert.equal(off.sent.length, 0);
+});
+
+/** Holds the next statement that starts with `sql` until `release()`; every other statement runs at once */
+function holdNext(s: ReturnType<typeof setup>, sql: string) {
+  const db = s.env.DB as Db;
+  let release!: () => void;
+  const gate = new Promise<void>(r => (release = r));
+  let reached!: () => void;
+  const atGate = new Promise<void>(r => (reached = r));
+  let armed = true;
+  s.env.DB = {
+    ...db,
+    prepare: (text: string) => {
+      const inner = db.prepare(text);
+      if (!armed || !text.trimStart().startsWith(sql)) return inner;
+      armed = false;
+      const wrap = (st: DbStatement): DbStatement => ({
+        ...st,
+        bind: (...v: unknown[]) => wrap(st.bind(...v)),
+        run: async () => { reached(); await gate; return st.run(); },
+        first: async <T,>() => { reached(); await gate; return st.first<T>(); },
+      });
+      return wrap(inner);
+    },
+  } as Db;
+  return { atGate, release };
+}
+
+test('a sign-in with the old password that was checked before a reset finished gets no session after it', async () => {
+  const s = setup();
+  await s.register();
+  await forgot(s);
+  const token = tokenIn(s.sent.at(-1)!);
+  // The old-password sign-in has checked the password and waits just before creating its session
+  const hold = holdNext(s, 'INSERT INTO sessions');
+  const slowLogin = s.login();
+  await hold.atGate;
+  const done = await reset(s, token);
+  assert.equal(done.status, 200);
+  hold.release();
+  const late = await slowLogin;
+  assert.equal(late.status, 401, 'the old password no longer signs in');
+  assert.equal(sessionOf(late), null);
+  assert.equal(count(s.db, 'sessions'), 1, "only the reset's own session exists");
+});
+
+test('a reset whose address was released to a new sign-up meanwhile changes nothing and signs no one in', async () => {
+  const s = setup();
+  await s.register();
+  s.advance(DAY + 1000);
+  await forgot(s);
+  const token = tokenIn(s.sent.at(-1)!);
+  // The reset has checked the link and waits just before writing the new password
+  const hold = holdNext(s, 'UPDATE users SET password_hash');
+  const slowReset = reset(s, token);
+  await hold.atGate;
+  const other = await s.register({ displayName: 'New Owner', password: 'violet harbor lantern quiz' }, { 'CF-Connecting-IP': '198.51.100.7' });
+  assert.equal(other.status, 201, 'the lapsed claim gave way to a new sign-up');
+  hold.release();
+  const late = await slowReset;
+  assert.equal(late.status, 400);
+  assert.equal((await late.json()).error, 'invalid_token');
+  assert.equal(sessionOf(late), null, 'no session for the account that lost the address');
+  assert.equal((await s.login('learner@example.com', NEW_PASSWORD)).status, 401);
+  assert.equal((await s.login('learner@example.com', 'violet harbor lantern quiz')).status, 200, 'the new owner keeps the address');
 });

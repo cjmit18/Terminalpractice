@@ -94,6 +94,28 @@ export async function createSession(db: Db, userId: string, now: number): Promis
   return token;
 }
 
+/**
+ * A session for a password sign-in, created only if the account still has the password hash that was checked,
+ * in the same statement. A reset or password change that lands between the check and here (and ends every
+ * session) is not undone by the slower sign-in. Null when the password changed.
+ */
+export async function createPasswordSession(db: Db, userId: string, now: number, passwordHash: string): Promise<string | null> {
+  const token = randomToken();
+  await db
+    .prepare('DELETE FROM sessions WHERE user_id = ? AND (expires_at <= ? OR created_at <= ?)')
+    .bind(userId, now, now - SESSION_MAX_AGE)
+    .run();
+  const made = await db
+    .prepare(
+      `INSERT INTO sessions (token_hash, user_id, expires_at, created_at, authenticated_at)
+       SELECT ?, id, ?, ?, ? FROM users WHERE id = ? AND password_hash = ?
+       RETURNING token_hash`,
+    )
+    .bind(await sha256(token), now + SESSION_TTL, now, now, userId, passwordHash)
+    .first<{ token_hash: string }>();
+  return made ? token : null;
+}
+
 export function sessionCookie(token: string, maxAgeMs = SESSION_TTL): string {
   return cookie(SESSION_COOKIE, token, maxAgeMs / 1000);
 }
