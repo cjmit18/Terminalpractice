@@ -84,6 +84,54 @@ test('the service worker does not cache an HTML answer for a script (SPA fallbac
   expect(cached).toBe(false);
 });
 
+test('activating the service worker deletes only this app scope\'s old caches, not other apps\' caches', async ({ page }) => {
+  // Before the worker exists: another app's cache, this scope's cache from an older-style build
+  // (it holds this scope's index.html), and an older-style cache from a sibling app at another path
+  await page.addInitScript(() => {
+    void (async () => {
+      const index = new URL('./index.html', location.href).href;
+      await (await caches.open('other-app-cache')).put(new URL('./other.txt', location.href).href, new Response('other'));
+      await (await caches.open('certsim-oldbuild')).put(index, new Response('<!doctype html>', { headers: { 'Content-Type': 'text/html' } }));
+      await (await caches.open('certsim-sibling')).put(new URL('/another-repo/index.html', location.href).href, new Response('sibling'));
+    })();
+  });
+  await page.goto('#/linux');
+  await waitForServiceWorkerControl(page);
+  const keys = await page.evaluate(async () => {
+    // Activation finishes its cleanup before it claims the page; give a just-claimed worker a moment
+    await new Promise(r => setTimeout(r, 300));
+    return caches.keys();
+  });
+  expect(keys).toContain('other-app-cache');
+  expect(keys).toContain('certsim-sibling');
+  expect(keys).not.toContain('certsim-oldbuild');
+  // This build's own cache is named after the scope
+  expect(keys.some(k => k.startsWith('certsim:') && k.includes(new URL(page.url()).origin))).toBe(true);
+});
+
+test('an old-style cache shared with a sibling app keeps the sibling\'s entries and loses only this app\'s', async ({ page }) => {
+  // Same build, two apps on one origin: before cache names carried the scope, both used certsim-<build>
+  await page.addInitScript(() => {
+    void (async () => {
+      const at = (path: string) => new URL(path, location.href).href;
+      const shared = await caches.open('certsim-sharedbuild');
+      await shared.put(at('./index.html'), new Response('<!doctype html>', { headers: { 'Content-Type': 'text/html' } }));
+      await shared.put(at('./assets/app.js'), new Response('', { headers: { 'Content-Type': 'text/javascript' } }));
+      await shared.put(at('./sibling/index.html'), new Response('<!doctype html>', { headers: { 'Content-Type': 'text/html' } }));
+      await shared.put(at('./sibling/assets/app.js'), new Response('', { headers: { 'Content-Type': 'text/javascript' } }));
+    })();
+  });
+  await page.goto('#/linux');
+  await waitForServiceWorkerControl(page);
+  const left = await page.evaluate(async () => {
+    await new Promise(r => setTimeout(r, 300));
+    if (!(await caches.keys()).includes('certsim-sharedbuild')) return null;
+    const cache = await caches.open('certsim-sharedbuild');
+    return (await cache.keys()).map(r => new URL(r.url).pathname).sort();
+  });
+  expect(left).toEqual(['/sibling/assets/app.js', '/sibling/index.html']);
+});
+
 test('the test-site build details always come from the network, never the offline cache', async ({ page, context }) => {
   // A test-site rebuild can change only test-site.json, so the build ID (and cache name) stays the same
   let main = 'aaaaaaa';
