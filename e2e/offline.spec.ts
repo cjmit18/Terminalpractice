@@ -131,3 +131,21 @@ test('an old-style cache shared with a sibling app keeps the sibling\'s entries 
   });
   expect(left).toEqual(['/sibling/assets/app.js', '/sibling/index.html']);
 });
+
+test('the test-site build details always come from the network, never the offline cache', async ({ page, context }) => {
+  // A test-site rebuild can change only test-site.json, so the build ID (and cache name) stays the same
+  let main = 'aaaaaaa';
+  await context.route('**/test-site.json', route =>
+    route.fulfill({ json: { builtAt: '2026-01-01T00:00:00Z', main, included: [], skipped: [] } }));
+  await page.goto('#/linux');
+  await waitForServiceWorkerControl(page);
+  const read = () => page.evaluate(() => fetch('./test-site.json', { cache: 'no-store' }).then(r => r.json()).then(b => b.main));
+  expect(await read()).toBe('aaaaaaa');
+  main = 'bbbbbbb';
+  expect(await read()).toBe('bbbbbbb');
+  // Nothing was kept for it
+  expect(await page.evaluate(async () => {
+    for (const name of await caches.keys()) if (await (await caches.open(name)).match('./test-site.json')) return true;
+    return false;
+  })).toBe(false);
+});
