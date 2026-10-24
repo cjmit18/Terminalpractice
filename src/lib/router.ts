@@ -6,7 +6,8 @@ import { TEST_SITE } from './testSite';
  *   #/learn, #/learn/<pathId>, #/learn/<pathId>/<stepId>, #/learn/review,
  *   #/linux, #/linux/<moduleId>, #/windows, #/windows/<moduleId>,
  *   #/simulators, #/sandbox, #/sandbox/challenge, #/sandbox/challenge/<challengeId>, #/reference,
- *   #/badge/<badgeId>, #/testing (the test site only)
+ *   #/badge/<badgeId>, #/testing (the test site only),
+ *   #/account, #/account/forgot, #/account/verify?token=…, #/account/reset?token=…
  * Anything else falls back to #/learn.
  */
 
@@ -24,14 +25,24 @@ export type Route =
   /** #/badge/<badgeId>: what one badge means. Not a nav section; the link carries no personal data */
   | { section: 'badge'; badgeId: string }
   /** #/testing: what to try on the private test site. Not a route anywhere else */
-  | { section: 'testing' };
+  | { section: 'testing' }
+  /** #/account[/<page>]: sign in or create an account, the account page, and the pages emailed links open */
+  | { section: 'account'; page: AccountPage };
+
+/** 'home' is #/account itself: sign in when signed out, the account page when signed in */
+export type AccountPage = 'home' | 'forgot' | 'verify' | 'reset';
+const ACCOUNT_PAGES: AccountPage[] = ['home', 'forgot', 'verify', 'reset'];
+
+export function accountHref(page: AccountPage = 'home'): string {
+  return routeHref({ section: 'account', page });
+}
 
 /** Every page's section, including pages that are not in the nav */
 export type RouteSection = Route['section'];
 
 /** The nav section a page belongs to (a badge page sits with the badges on Learn) */
 export function navSection(section: RouteSection): Section {
-  return section === 'badge' || section === 'testing' ? 'learn' : section;
+  return section === 'badge' || section === 'testing' || section === 'account' ? 'learn' : section;
 }
 
 export function badgeHref(badgeId: string): string {
@@ -50,6 +61,16 @@ export function isTrackSection(section: RouteSection): section is TrackSection {
 
 /** Returns null when the hash is not a known route. */
 export function parseHash(hash: string): Route | null {
+  // Emailed links carry a one-time ?token=… (the page reads it, then takes it out of the address)
+  const bare = hash.replace(/^#\/?/, '');
+  if (bare === 'account' || bare.startsWith('account/') || bare.startsWith('account?')) {
+    const segs = bare.split('?')[0].split('/').filter(Boolean);
+    if (segs.length === 1) return { section: 'account', page: 'home' };
+    if (segs.length === 2 && segs[1] !== 'home' && ACCOUNT_PAGES.includes(segs[1] as AccountPage)) {
+      return { section: 'account', page: segs[1] as AccountPage };
+    }
+    return null;
+  }
   const parts = hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(p => {
     try {
       return decodeURIComponent(p);
@@ -93,6 +114,7 @@ export function routeHref(route: Route): string {
     return route.challengeId ? `#/sandbox/challenge/${encodeURIComponent(route.challengeId)}` : '#/sandbox/challenge';
   }
   if (route.section === 'badge') return `#/badge/${encodeURIComponent(route.badgeId)}`;
+  if (route.section === 'account') return route.page === 'home' ? '#/account' : `#/account/${route.page}`;
   if ('moduleId' in route && route.moduleId) {
     return `#/${route.section}/${encodeURIComponent(route.moduleId)}`;
   }
