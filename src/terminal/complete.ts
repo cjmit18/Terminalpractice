@@ -123,10 +123,13 @@ export function completeFileAt(
   const m = matchPath(fs, cwd, word.text, isWindows);
   if (!m) return null;
   const sep = isWindows ? '\\' : '/';
-  const text = quotePath(m.path, syntax, word.quote, m.end === 'file') + (m.end === 'dir' ? sep : m.end === 'file' ? ' ' : '');
+  // A finished file closes its quote. So does a folder in Command Prompt and PowerShell, which close
+  // quotes the way their own completion does ('My Projects\'); bash leaves it open so the path can go on.
+  const close = m.end === 'file' || (m.end === 'dir' && isWindows);
+  const text = quotePath(m.path + (m.end === 'dir' ? sep : ''), syntax, word.quote, close) + (m.end === 'file' ? ' ' : '');
   const before = line.slice(0, word.start) + text;
-  // A finished file closes the open quote; when the word already had its closing quote right after
-  // the caret (`cat "qua|"`), that one is used up instead of being left as a stray extra quote
-  const after = m.end === 'file' && word.quote && line[caret] === word.quote ? line.slice(caret + 1) : line.slice(caret);
+  // When the word already had its closing quote right after the caret (`cat "qua|"`), that one is
+  // used up instead of being left as a stray extra quote
+  const after = close && word.quote && line[caret] === word.quote ? line.slice(caret + 1) : line.slice(caret);
   return { line: before + after, caret: before.length, names: m.names };
 }

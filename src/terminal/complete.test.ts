@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createDefaultLinuxFs, createDefaultWindowsFs } from './filesystem.ts';
 import { completeFileAt, completePath, wordBefore } from './complete.ts';
+import { linuxSession, windowsSession } from './testUtils.ts';
 import { getNodeAtPath } from './filesystem.ts';
 import { FileNode } from '../types/terminal.ts';
 
@@ -64,9 +65,12 @@ test('a name with a space is escaped in bash and quoted in Command Prompt and Po
 
   const win = addCopy(createDefaultWindowsFs(), 'C:\\Users\\Student\\Documents', 'My Projects', true);
   const cwd = 'C:\\Users\\Student';
-  assert.equal(completeFileAt(win, cwd, 'cd my', 5, 'cmd')?.line, 'cd "My Projects\\');
-  assert.equal(completeFileAt(win, cwd, 'cd C:\\Users\\Student\\my', 22, 'cmd')?.line, 'cd "C:\\Users\\Student\\My Projects\\');
-  assert.equal(completeFileAt(win, cwd, 'Get-ChildItem my', 16, 'powershell')?.line, "Get-ChildItem 'My Projects\\");
+  assert.equal(completeFileAt(win, cwd, 'cd my', 5, 'cmd')?.line, 'cd "My Projects\\"');
+  assert.equal(completeFileAt(win, cwd, 'cd C:\\Users\\Student\\my', 22, 'cmd')?.line, 'cd "C:\\Users\\Student\\My Projects\\"');
+  assert.equal(completeFileAt(win, cwd, 'Get-ChildItem my', 16, 'powershell')?.line, "Get-ChildItem 'My Projects\\'");
+  // The next Tab goes on inside the closed quote, and a quote already after the caret is used
+  assert.equal(completeFileAt(win, cwd, 'Set-Location my', 15, 'powershell')?.line, "Set-Location 'My Projects\\'");
+  assert.equal(completeFileAt(win, cwd, "Set-Location 'my'", 16, 'powershell')?.line, "Set-Location 'My Projects\\'");
 });
 
 test('Tab completes the word at the caret and keeps the rest of the line', () => {
@@ -77,4 +81,24 @@ test('Tab completes the word at the caret and keeps the rest of the line', () =>
   assert.deepEqual(wordBefore('cat "my fi', 10, 'bash'), { start: 4, text: 'my fi', quote: '"' });
   assert.deepEqual(wordBefore('cat a\\ b', 8, 'bash'), { start: 4, text: 'a b', quote: null });
   assert.deepEqual(wordBefore('dir "a b', 8, 'cmd'), { start: 4, text: 'a b', quote: '"' });
+});
+
+test('a completed name with a space runs in every shell: the line Tab makes is valid syntax', () => {
+  const tabThenRun = (run: ReturnType<typeof windowsSession> | ReturnType<typeof linuxSession>, typed: string, syntax: 'bash' | 'cmd' | 'powershell') => {
+    const done = completeFileAt(run.fs(), run.cwd(), typed, typed.length, syntax);
+    assert.ok(done, `Tab completed "${typed}"`);
+    return run(done.line);
+  };
+  for (const shell of ['cmd', 'powershell'] as const) {
+    const run = windowsSession(shell);
+    assert.equal(run('mkdir "My Projects"').exitCode, 0);
+    const res = tabThenRun(run, shell === 'cmd' ? 'cd my' : 'Set-Location my', shell);
+    assert.equal(res.exitCode, 0, `${shell}: ${res.stderr || res.stdout}`);
+    assert.equal(run.cwd(), 'C:\\Users\\Student\\My Projects');
+  }
+  const bash = linuxSession();
+  bash('mkdir "old scripts"; touch "quarterly report.txt"');
+  assert.equal(tabThenRun(bash, 'cat qua', 'bash').exitCode, 0);
+  assert.equal(tabThenRun(bash, 'cd old', 'bash').exitCode, 0);
+  assert.equal(bash.cwd(), '/home/student/old scripts');
 });
