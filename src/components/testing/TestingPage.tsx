@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ExternalLink } from 'lucide-react';
 import type { TestNote } from '../../data/testing/types';
+import { BuildInfo, notesInBuild } from '../../lib/testNotes';
 import { LEARNING_PATHS } from '../../data/paths';
 import { CHALLENGES } from '../../data/challenges';
 import { TRACK_MODULES, topicLabel } from '../../lib/modules';
@@ -11,14 +12,6 @@ import { secondaryLinkClass } from '../journey/shared';
 const NOTES: TestNote[] = Object.values(import.meta.glob<{ default: TestNote }>('../../data/testing/pr-*.ts', { eager: true }))
   .map(m => m.default)
   .sort((a, b) => b.pr - a.pr);
-
-/** Written by the test-site workflow next to index.html: which pull requests this build holds */
-interface BuildInfo {
-  builtAt: string;
-  main: string;
-  included: { number: number; title: string; url: string }[];
-  skipped: { number: number; title: string; url: string; reason: string }[];
-}
 
 const REPO = 'https://github.com/cjmit18/Terminalpractice';
 const linkClass = 'text-accent underline-offset-2 hover:underline';
@@ -35,6 +28,8 @@ export const TestingPage: React.FC = () => {
       live = false;
     };
   }, []);
+
+  const notes = notesInBuild(NOTES, build === null || build === 'none' ? null : build);
 
   const clearProgress = () => {
     if (!window.confirm('Clear all progress, badges and settings saved in this browser for this site?')) return;
@@ -89,14 +84,16 @@ export const TestingPage: React.FC = () => {
 
       <section aria-labelledby="new-heading" className="space-y-4">
         <h2 id="new-heading" className="text-base font-semibold">New to try</h2>
+        {notes.length === 0 && <p className="text-sm text-muted">Nothing new to try in this build.</p>}
         <ul className="grid gap-4 md:grid-cols-2">
-          {NOTES.map(n => (
+          {notes.map(({ note: n, inMain }) => (
             <li key={n.pr} className="rounded-md border border-line bg-surface p-4 space-y-2">
               <p className="text-sm text-muted">
                 <a href={`${REPO}/pull/${n.pr}`} target="_blank" rel="noreferrer" className={`${linkClass} inline-flex items-center gap-1`}>
                   #{n.pr}
                   <ExternalLink className="size-3" aria-hidden="true" />
                 </a>
+                {inMain && ' · already merged into main'}
               </p>
               <h3 className="text-[15px] font-semibold">{n.title}</h3>
               <ol className="list-decimal pl-5 text-sm space-y-1">
