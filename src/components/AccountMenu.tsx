@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Github, LogOut } from 'lucide-react';
-import { githubSignInHref, useAccount } from '../lib/account';
+import { LogIn, LogOut } from 'lucide-react';
+import { useAccount } from '../lib/account';
+import { accountHref } from '../lib/router';
 
 /** Header control for optional sign-in. Renders nothing where sign-in is not offered. */
 export const AccountMenu: React.FC = () => {
@@ -22,11 +23,15 @@ export const AccountMenu: React.FC = () => {
         buttonRef.current?.focus();
       }
     };
+    // A link in the menu was followed
+    const onHash = () => setOpen(false);
     document.addEventListener('pointerdown', onPointer);
     document.addEventListener('keydown', onKey);
+    window.addEventListener('hashchange', onHash);
     return () => {
       document.removeEventListener('pointerdown', onPointer);
       document.removeEventListener('keydown', onKey);
+      window.removeEventListener('hashchange', onHash);
     };
   }, [open]);
 
@@ -35,15 +40,11 @@ export const AccountMenu: React.FC = () => {
   if (account.status === 'signed-out') {
     return (
       <a
-        // Read the current page at click time, so GitHub sends the learner back to it
-        href={githubSignInHref()}
-        onClick={e => {
-          e.currentTarget.href = githubSignInHref();
-        }}
-        aria-label="Sign in with GitHub"
+        href={accountHref()}
+        aria-label="Sign in"
         className="inline-flex items-center gap-2 h-10 md:h-9 px-2.5 md:px-3 rounded-md border border-line-strong text-sm font-medium text-text hover:bg-surface-2 whitespace-nowrap"
       >
-        <Github className="size-4" aria-hidden="true" />
+        <LogIn className="size-4" aria-hidden="true" />
         <span className="hidden sm:inline">Sign in</span>
       </a>
     );
@@ -70,12 +71,19 @@ export const AccountMenu: React.FC = () => {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-2 w-72 rounded-md border border-line bg-surface p-4 shadow-lg z-50 text-sm">
+        <div className="absolute right-0 top-full mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-md border border-line bg-surface p-4 shadow-lg z-50 text-sm">
           <p className="font-medium text-text truncate">{user.name}</p>
-          {user.login && <p className="text-muted truncate">Signed in with GitHub as {user.login}</p>}
+          {user.email ? (
+            <p className="text-muted truncate">{user.email}</p>
+          ) : (
+            user.login && <p className="text-muted truncate">Signed in with GitHub as {user.login}</p>
+          )}
           <p className="mt-3 text-muted">
             Your progress is saved in this browser. Syncing it between your devices is the next step.
           </p>
+          <a href={accountHref()} className="mt-3 flex items-center min-h-10 px-2 -mx-2 rounded-sm text-text hover:bg-surface-2">
+            Your account
+          </a>
           <button
             type="button"
             onClick={async () => {

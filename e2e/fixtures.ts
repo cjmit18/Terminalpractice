@@ -6,7 +6,11 @@ import type { QuizQuestion } from '../src/types/paths';
  * unless it opts out with `test.use({ allowConsoleErrors: true })`.
  */
 /** What the stubbed account API answers for /api/me (the preview server has no Worker behind it). */
-export type MeResponse = { user: { id: string; name: string; login: string | null; avatarUrl: string | null } | null; providers: { github: boolean } };
+export type MeResponse = {
+  user: { id: string; name: string; login: string | null; avatarUrl: string | null; email?: string | null; emailVerified?: boolean } | null;
+  providers: { github: boolean; email?: boolean };
+  emailSending?: boolean;
+};
 
 export const test = base.extend<{ allowConsoleErrors: boolean; consoleErrors: string[]; me: MeResponse; accountApi: void }>({
   allowConsoleErrors: [false, { option: true }],

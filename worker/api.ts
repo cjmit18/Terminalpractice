@@ -16,6 +16,7 @@ import {
   type RouteContext,
 } from './http';
 import { emailRoutes } from './auth/email';
+import { emailSendingEnabled } from './mail';
 import { currentSession, loadUser, toPublicUser } from './session';
 
 export type { ApiDeps, ApiEnv, Db, DbStatement } from './http';
@@ -237,12 +238,18 @@ async function createSession(db: Db, userId: string, now: number): Promise<strin
 }
 
 async function me(request: Request, env: ApiEnv, deps: ApiDeps): Promise<Response> {
-  // Which sign-in methods the app may offer: none until the GitHub App is configured
-  const providers = { github: Boolean(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET) };
+  // Which sign-in methods the app may offer. GitHub once its app is configured; email and password once
+  // the rate limits can run (they need the RATE_LIMIT_PEPPER secret, see ratelimit.ts).
+  const providers = {
+    github: Boolean(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET),
+    email: Boolean(env.RATE_LIMIT_PEPPER || env.ALLOW_UNPEPPERED_RATE_LIMITS === '1'),
+  };
+  // Whether confirmation and reset emails can go out (SMTP configured), so the app can say so
+  const emailSending = emailSendingEnabled(env, deps);
   const token = readCookie(request, SESSION_COOKIE);
   // Signed out is a normal answer, not an error: 200 with user null
-  if (!token) return json({ user: null, providers });
-  const signedOut = () => json({ user: null, providers }, 200, { 'Set-Cookie': clearCookie(SESSION_COOKIE) });
+  if (!token) return json({ user: null, providers, emailSending });
+  const signedOut = () => json({ user: null, providers, emailSending }, 200, { 'Set-Cookie': clearCookie(SESSION_COOKIE) });
 
   try {
     // Expiry, the 90-day cap and sliding renewal follow the same rules for every sign-in method (session.ts)
@@ -253,7 +260,7 @@ async function me(request: Request, env: ApiEnv, deps: ApiDeps): Promise<Respons
       return signedOut();
     }
     const user: PublicUser = toPublicUser(row);
-    return json({ user, providers }, 200, session.renewedCookie ? { 'Set-Cookie': session.renewedCookie } : {});
+    return json({ user, providers, emailSending }, 200, session.renewedCookie ? { 'Set-Cookie': session.renewedCookie } : {});
   } catch (err) {
     // A database without the account tables (a preview build's empty D1, where sign-in is off) has
     // no sessions, so a stray cookie means signed out rather than a 500

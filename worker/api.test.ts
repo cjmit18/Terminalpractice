@@ -69,10 +69,13 @@ test('non-API paths are left to the static assets', async () => {
   assert.equal((await s.call('DELETE', '/api/me')).status, 405);
 });
 
-test('/api/me says signed out, and whether GitHub sign-in is available', async () => {
-  assert.deepEqual(await (await setup().call('GET', '/api/me')).json(), { user: null, providers: { github: true } });
-  const unconfigured = setup({ GITHUB_CLIENT_ID: '', GITHUB_CLIENT_SECRET: undefined });
-  assert.deepEqual(await (await unconfigured.call('GET', '/api/me')).json(), { user: null, providers: { github: false } });
+test('/api/me says signed out, which sign-in methods are available, and whether email can be sent', async () => {
+  const configured = await (await setup({ RATE_LIMIT_PEPPER: 'test-pepper' }).call('GET', '/api/me')).json();
+  assert.equal(configured.user, null);
+  assert.deepEqual(configured.providers, { github: true, email: true });
+  assert.equal(configured.emailSending, false, 'no SMTP mailbox configured here');
+  const unconfigured = setup({ GITHUB_CLIENT_ID: '', GITHUB_CLIENT_SECRET: undefined, RATE_LIMIT_PEPPER: undefined, ALLOW_UNPEPPERED_RATE_LIMITS: undefined });
+  assert.deepEqual((await (await unconfigured.call('GET', '/api/me')).json()).providers, { github: false, email: false }, 'email sign-in needs the pepper');
   assert.equal((await unconfigured.call('GET', '/api/auth/github/start')).status, 503);
 });
 
@@ -89,7 +92,7 @@ test('/api/me treats a database without the account tables as signed out', async
   const env: ApiEnv = { DB: { prepare: sql => statement(sql) }, GITHUB_CLIENT_ID: '' };
   const res = (await handleApi(new Request(`${ORIGIN}/api/me`, { headers: { Cookie: '__Host-session=stray' } }), env))!;
   assert.equal(res.status, 200);
-  assert.deepEqual(await res.json(), { user: null, providers: { github: false } });
+  assert.deepEqual(await res.json(), { user: null, providers: { github: false, email: false }, emailSending: false });
   assert.equal(cookieValue(res, '__Host-session'), '');
 
   // Any other database error is still an error
