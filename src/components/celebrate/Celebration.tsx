@@ -10,7 +10,7 @@ const LASTING_NOTE_MS = 15000;
  * The one polite live region for celebrations. It is always in the page (a region added at the
  * same time as its text is often not read), and the latest batch also shows as a one-line note.
  *
- * The note sits at the bottom (left on wide screens, above the phone nav), away from page actions.
+ * The note sits at the bottom (left on wide screens, above the phone nav and the lab's Continue bar), away from page actions.
  * With a mouse, the note itself takes the pointer (hovering it keeps it on screen) and the space
  * around it lets clicks through. On touch screens, where it can cover the terminal's key toolbar,
  * only the dismiss button takes taps; taps on the text reach whatever is underneath.
@@ -26,7 +26,7 @@ export const Celebration: React.FC<{ note: (Batch & { id: number }) | null; onDi
 
   return (
     <div
-      className="fixed z-40 inset-x-4 bottom-[calc(60px+env(safe-area-inset-bottom))] md:inset-x-auto md:left-6 md:bottom-6 md:w-[26rem] pointer-events-none"
+      className="fixed z-40 inset-x-4 bottom-[calc(60px+env(safe-area-inset-bottom))] md:inset-x-auto md:left-6 md:bottom-20 md:w-[26rem] pointer-events-none"
       onFocus={() => setPaused(true)}
       onBlur={() => setPaused(false)}
     >
@@ -43,9 +43,13 @@ export const Celebration: React.FC<{ note: (Batch & { id: number }) | null; onDi
         >
           <Check className="size-4 mt-2.5 shrink-0 text-ok" aria-hidden="true" />
           {/* The live region above reads this out; the visible copy is hidden from screen readers so it is not read twice */}
-          <p aria-hidden="true" className="flex-1 min-w-0 py-1.5 text-sm text-text">
-            {note.text}
-          </p>
+          <div aria-hidden="true" className="flex-1 min-w-0 py-1.5 space-y-0.5">
+            {note.lines.map((line, i) => (
+              <p key={i} className={i === 0 ? 'text-sm font-medium text-text' : 'text-sm text-muted'}>
+                {line}
+              </p>
+            ))}
+          </div>
           <button
             type="button"
             onClick={onDismiss}
