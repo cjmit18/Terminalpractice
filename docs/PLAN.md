@@ -23,7 +23,7 @@ disagree with this page, this page wins until they are updated.
 1. Foundation (done, #15)
 2. Email sign-up and sign-in (done, #17)
 3. Email verification over Purelymail (done, #22)
-4. Password reset, plus the open email-claim fixes (SV3-1 remainder, SV3-3, SV3-4, SV3-11)
+4. Password reset, plus the open email-claim fixes (SV3-1 remainder, SV3-3, SV3-4, SV3-11) (in review)
 5. Accounts and account pages: account menu, `#/account`, the `#/account/verify` page. `SMTP_PASSWORD` is set only after this ships.
 6. Google sign-in, with the router rewrite (absorbs round-3 PR 6: shared helpers, `APP_ORIGINS`)
 7. Security: the security page (sessions, linked sign-ins, delete account) and the security headers / CSP

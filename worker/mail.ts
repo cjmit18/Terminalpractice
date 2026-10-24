@@ -1,4 +1,4 @@
-// Account emails (verification, and password reset later): their wording, and sending them through the
+// Account emails (verification and password reset): their wording, and sending them through the
 // SMTP mailbox (worker/smtp.ts, Purelymail). Without SMTP_USER and SMTP_PASSWORD nothing is sent.
 import type { ApiDeps, ApiEnv, MailMessage } from './http';
 
@@ -37,6 +37,21 @@ export function verificationEmail(origin: string, to: string, token: string): Me
       'Confirm email',
       link,
       'If you did not create an account with this address, ignore this email and do not open the link.',
+    ),
+  };
+}
+
+export function resetEmail(origin: string, to: string, token: string): Message {
+  const link = `${origin}/#/account/reset?token=${encodeURIComponent(token)}`;
+  return {
+    to,
+    subject: 'Reset your Terminus CertSim password',
+    ...layout(
+      'Reset your password',
+      'Someone (hopefully you) asked to reset the password of your Terminus CertSim account. Open this link to choose a new one. It works once and expires in 1 hour. Resetting signs you out everywhere else.',
+      'Choose a new password',
+      link,
+      'If you did not ask for this, ignore this email: your password stays the same.',
     ),
   };
 }

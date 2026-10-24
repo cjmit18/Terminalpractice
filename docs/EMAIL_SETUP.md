@@ -1,6 +1,6 @@
 # Account emails (Purelymail)
 
-The app sends one kind of email today: the link that confirms a new account's address. Password reset links will follow. They go out from a Purelymail mailbox over SMTP, sent by the Worker (`worker/smtp.ts`, using the `worker-mailer` package pinned to 1.2.1).
+The app sends two kinds of email: the link that confirms a new account's address, and the password reset link (1 hour, single use; it also confirms the address). They go out from a Purelymail mailbox over SMTP, sent by the Worker (`worker/smtp.ts`, using the `worker-mailer` package pinned to 1.2.1).
 
 ## One-time setup
 
@@ -27,7 +27,7 @@ Preview builds have none of these, so they never send email.
 
 ## How it behaves
 
-- Emails are sent after the answer goes back to the browser, so sign-up stays fast. If the mail server is down, sign-up still succeeds, and the person can ask for a new link later (3 per hour).
+- Emails are sent after the answer goes back to the browser, so sign-up stays fast. If the mail server is down, sign-up still succeeds, and the person can ask for a new link later (3 per hour while signed in, within the first 24 hours). After 24 hours the way to confirm is Forgot password, whose link goes to the inbox. Sign-up and resend answer `emailSent: false` when SMTP is not configured, so the app can say no email is coming.
 - Links work once. A confirm link expires after 24 hours, and asking for a new one stops the old one working. Only a hash of each link's token is stored.
 - Opening a confirm link confirms the address but doesn't sign anyone in.
 - The Worker logs nothing about who an email went to.
