@@ -13,15 +13,15 @@ permissions:
   contents: write
   pull-requests: read
 
-# One rebuild at a time; a newer event replaces a queued one
-concurrency:
-  group: test-site
-  cancel-in-progress: true
-
 jobs:
   rebuild:
     # Pull requests from forks never touch the test site
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    # One rebuild at a time; a newer event replaces a queued one. Set on the job, after the fork check,
+    # so a skipped run from a fork never joins the group or cancels a real rebuild.
+    concurrency:
+      group: test-site
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
