@@ -148,6 +148,37 @@ test('reset then reconnect: an offline device cannot bring reset progress back, 
   assert.deepEqual(keys(await (await s.call('GET', '/api/progress', { cookie: u.cookie })).json()), ['objective|lab-b/t1']);
 });
 
+test('every reset with the expected epoch works, not just the first', async () => {
+  const s = setup();
+  const u = s.user();
+  for (let epoch = 0; epoch < 3; epoch++) {
+    await s.call('PUT', '/api/progress', { cookie: u.cookie, body: { items: [obj('lab-a/t1', epoch)] } });
+    assert.deepEqual(keys(await (await s.call('GET', '/api/progress', { cookie: u.cookie })).json()), ['objective|lab-a/t1']);
+    const reset = await (await s.call('POST', '/api/progress/reset', { cookie: u.cookie, body: { scope: 'lab:lab-a', epoch } })).json();
+    assert.deepEqual(reset.epochs, { 'lab:lab-a': epoch + 1 });
+    assert.deepEqual(keys(await (await s.call('GET', '/api/progress', { cookie: u.cookie })).json()), []);
+  }
+  // A stale epoch (a retry of the last reset) still does nothing
+  const stale = await (await s.call('POST', '/api/progress/reset', { cookie: u.cookie, body: { scope: 'lab:lab-a', epoch: 2 } })).json();
+  assert.deepEqual(stale.epochs, { 'lab:lab-a': 3 });
+});
+
+test('a sync request that renews the session sends the renewed cookie', async () => {
+  const s = setup();
+  // The test session expires in a day, so any use renews it
+  const u = s.user();
+  for (const [method, path, body] of [
+    ['GET', '/api/progress', undefined],
+    ['PUT', '/api/progress', { items: [obj('lab-a/t1')] }],
+    ['POST', '/api/progress/reset', { scope: 'lab:lab-a' }],
+  ] as const) {
+    s.db.raw.prepare('UPDATE sessions SET expires_at = ?').run(NOW + 86_400_000);
+    const res = await s.call(method, path, { cookie: u.cookie, body });
+    assert.equal(res.status, 200, `${method} ${path}`);
+    assert.match(res.headers.get('Set-Cookie') ?? '', /^__Host-session=token-user-1; Path=\/; Max-Age=2592000;/, `${method} ${path}`);
+  }
+});
+
 test('two accounts: each sees only its own progress, whatever the body says', async () => {
   const s = setup();
   const a = s.user('user-a');
