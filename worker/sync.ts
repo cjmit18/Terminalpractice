@@ -7,7 +7,7 @@
 // (requireSession), never from the body. Every key, scope and value is checked against the shapes the
 // app uses, so no free text is ever stored.
 import { SYNC_BODY_LIMIT, json, type Db, type DbStatement, type Route, type RouteContext } from './http';
-import { requireSession } from './session';
+import { requireSession, type Session } from './session';
 import {
   SETTING_FIELDS,
   SYNC_LIMITS,
@@ -41,18 +41,24 @@ const SETTINGS_RETRIES = 5;
 const syncDb = (c: RouteContext) => c.env.DB as SyncDb;
 
 async function getProgress(c: RouteContext): Promise<Response> {
-  const { userId } = await requireSession(c);
-  return json(await readState(syncDb(c), userId));
+  const session = await requireSession(c);
+  return withRenewal(session, json(await readState(syncDb(c), session.userId)));
 }
 
 async function putProgress(c: RouteContext): Promise<Response> {
-  const { userId } = await requireSession(c);
-  return put(syncDb(c), userId, await c.body(), c.deps.now());
+  const session = await requireSession(c);
+  return withRenewal(session, await put(syncDb(c), session.userId, await c.body(), c.deps.now()));
 }
 
 async function resetProgress(c: RouteContext): Promise<Response> {
-  const { userId } = await requireSession(c);
-  return reset(syncDb(c), userId, await c.body());
+  const session = await requireSession(c);
+  return withRenewal(session, await reset(syncDb(c), session.userId, await c.body()));
+}
+
+/** A session renewed by this request sends its new cookie, or the browser drops it before the server does */
+function withRenewal(session: Session, res: Response): Response {
+  if (session.renewedCookie) res.headers.append('Set-Cookie', session.renewedCookie);
+  return res;
 }
 
 export const syncRoutes: Route[] = [
@@ -167,14 +173,18 @@ async function reset(db: SyncDb, userId: string, body: Record<string, unknown>):
   const statements: DbStatement[] = [];
   for (const { scope, epoch } of resets) {
     // Raise by one; with an expected epoch only while the scope is still at it, so a repeated
-    // request (two tabs, a retry) does not reset twice (applyReset in syncRules.ts)
+    // request (two tabs, a retry) does not reset twice (applyReset in syncRules.ts). A scope with a
+    // row is raised by the UPDATE; the INSERT starts one that has none (epoch 0 has no row). They
+    // run in this order, so a scope is never raised twice by one reset.
     statements.push(
+      db
+        .prepare('UPDATE progress_epochs SET epoch = epoch + 1 WHERE user_id = ?1 AND scope = ?2 AND (?3 IS NULL OR epoch = ?3)')
+        .bind(userId, scope, epoch),
       db
         .prepare(
           `INSERT INTO progress_epochs (user_id, scope, epoch)
-           SELECT ?1, ?2, 1 WHERE ?3 IS NULL OR ?3 = 0
-           ON CONFLICT (user_id, scope) DO UPDATE SET epoch = progress_epochs.epoch + 1
-            WHERE ?3 IS NULL OR progress_epochs.epoch = ?3`,
+           SELECT ?1, ?2, 1 WHERE (?3 IS NULL OR ?3 = 0)
+              AND NOT EXISTS (SELECT 1 FROM progress_epochs WHERE user_id = ?1 AND scope = ?2)`,
         )
         .bind(userId, scope, epoch),
       // No item older than the scope's epoch survives
