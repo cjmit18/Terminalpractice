@@ -23,6 +23,7 @@ import {
   sanitizeItems,
   sanitizeSettings,
   scopeOf,
+  SYNC_LIMITS,
   type LocalItem,
   type ProgressState,
   type SyncItem,
@@ -251,6 +252,84 @@ test('engine: reset then reconnect across two devices', async () => {
   assert.deepEqual(server.keysOf('u1'), ['objective|lab-a/t1', 'objective|lab-a/t3', 'objective|lab-b/t1']);
   // The reset was sent once: a repeat from another tab would carry the old epoch and change nothing
   assert.equal(server.log.filter(l => l.path === 'progress/reset').length, 1);
+});
+
+test('engine: resetting one scope does not bring back progress another device reset', async () => {
+  const server = fakeServer();
+  const a = device(server);
+  const b = device(server);
+  a.c.user = b.c.user = 'u1';
+  const A = fakeApp();
+  const B = fakeApp();
+  a.engine.start('u1', A.adapter);
+  b.engine.start('u1', B.adapter);
+  A.app.earn('lab-a/t1', 'lab-b/t1');
+  await a.engine.syncNow();
+  await b.engine.syncNow();
+  assert.deepEqual(B.app.keys(), ['objective|lab-a/t1', 'objective|lab-b/t1']);
+
+  // A resets lab-a; B, not knowing yet, resets lab-b
+  A.app.resetLocal('lab:lab-a');
+  a.engine.reset(['lab:lab-a']);
+  await a.engine.syncNow();
+  B.app.resetLocal('lab:lab-b');
+  b.engine.reset(['lab:lab-b']);
+  await b.engine.syncNow();
+
+  // B's lab-a work from before A's reset stays gone, on the server and on B
+  assert.deepEqual(server.state('u1').epochs, { 'lab:lab-a': 1, 'lab:lab-b': 1 });
+  assert.deepEqual(server.keysOf('u1'), []);
+  assert.deepEqual(B.app.keys(), []);
+});
+
+test('engine: Auto save turned off during a sync stops it before anything is uploaded', async () => {
+  const server = fakeServer();
+  const d = device(server);
+  d.c.user = 'u1';
+  const { app, adapter } = fakeApp([{ kind: 'objective', key: 'lab-z/t1' }]);
+  app.earn('lab-a/t1');
+  let release!: () => void;
+  d.c.hold = new Promise(r => (release = r));
+  d.engine.start('u1', adapter);
+  const running = d.engine.syncNow();
+  await d.engine.setAutoSave(false);
+  release();
+  await running;
+  assert.deepEqual(server.log.map(l => l.method), ['GET'], 'the download in flight finishes; nothing goes up');
+  assert.deepEqual(server.keysOf('u1'), []);
+  assert.equal(app.imported, 0);
+  assert.equal(d.engine.getSnapshot().status, 'paused');
+});
+
+test('engine: a failed upload of several batches waits to retry instead of looping', async () => {
+  const server = fakeServer();
+  const store = memoryStore();
+  const { c, fetch } = server.client();
+  c.user = 'u1';
+  let puts = 0;
+  const engine = new SyncEngine({
+    fetch: async (url, init) => {
+      if (init.method === 'PUT') {
+        puts++;
+        return Response.json({ error: 'busy' }, { status: 503 });
+      }
+      return fetch(url, init);
+    },
+    store,
+    now: () => 1_000_000,
+    url: path => `https://app.test/api/${path}`,
+    setTimer: () => 0,
+    clearTimer: () => {},
+  });
+  const { app, adapter } = fakeApp();
+  for (let i = 0; i <= SYNC_LIMITS.itemsPerRequest; i++) app.earn(`lab-a/t${i}`);
+  engine.start('u1', adapter);
+  await engine.syncNow();
+  assert.equal(engine.getSnapshot().status, 'error');
+  // Each request to sync makes one try at the first batch, never a run of them
+  const before = puts;
+  await engine.syncNow();
+  assert.equal(puts, before + 1);
 });
 
 test('engine: two accounts in one browser never share progress', async () => {

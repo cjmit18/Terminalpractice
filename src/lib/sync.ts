@@ -297,6 +297,8 @@ export class SyncEngine {
   getSnapshot = (): SyncSnapshot => this.snapshot;
   private set(patch: Partial<SyncSnapshot>) {
     const next = { ...this.snapshot, ...patch };
+    // With Auto save off, an answer still on its way does not show the sync as running again
+    if (next.status !== 'off' && this.paused()) next.status = 'paused';
     if (next.status === this.snapshot.status && next.lastSyncedAt === this.snapshot.lastSyncedAt && next.importOffered === this.snapshot.importOffered) return;
     this.snapshot = next;
     for (const fn of this.listeners) fn();
@@ -432,7 +434,7 @@ export class SyncEngine {
 
   private importOffered(): boolean {
     const userId = this.gate.userId;
-    if (!userId || !this.adapter || this.asked().includes(tag(userId))) return false;
+    if (!userId || !this.adapter || this.paused() || this.asked().includes(tag(userId))) return false;
     return this.adapter.hasSignedOutProgress();
   }
 
@@ -502,14 +504,15 @@ export class SyncEngine {
       const sent = q.resets.slice(0, SYNC_LIMITS.resetsPerRequest);
       const body = await this.request(t, 'POST', 'progress/reset', { resets: sent });
       if (!body) return;
-      const server = sanitizeEpochs((body as { epochs?: unknown }).epochs);
       q = this.queue(userId);
       const done = new Set(sent.map(r => `${r.scope}|${r.epoch}`));
       const resets = q.resets.filter(r => !done.has(`${r.scope}|${r.epoch}`));
-      const epochs = { ...q.epochs, ...server };
-      for (const r of resets) epochs[r.scope] = Math.max(epochOf(epochs, r.scope), r.epoch + 1);
-      this.writeQueue(userId, { ...q, resets, epochs, items: q.items.filter(i => i.epoch >= epochOf(epochs, i.scope)) });
+      // The epochs known here stay as they are, even where the answer shows other scopes raised
+      // (reset on another device): local data there is still from the old epoch, so it must be
+      // cleared by applyResponse (staleScopes) before anything is stamped with the new one
+      this.writeQueue(userId, { ...q, resets });
       q = this.queue(userId);
+      pull = true;
       if (resets.length > 0) this.again = true;
     }
 
@@ -519,8 +522,9 @@ export class SyncEngine {
     let body: unknown = null;
     if (uploads.length > 0 || Object.keys(settings).length > 0) {
       const items = uploads.slice(0, SYNC_LIMITS.itemsPerRequest);
-      if (uploads.length > items.length) this.again = true;
       body = await this.request(t, 'PUT', 'progress', { items, epochs: q.epochs, settings });
+      // The next batch goes only after this one is stored; a failure waits for retryLater
+      if (body && uploads.length > items.length) this.again = true;
     } else if (pull) {
       body = await this.request(t, 'GET', 'progress');
     } else {
@@ -558,7 +562,8 @@ export class SyncEngine {
 
   private async request(t: { userId: string | null; gen: number }, method: string, path: string, body?: unknown): Promise<unknown> {
     const signal = this.controller?.signal;
-    if (!signal || !this.gate.isCurrent(t)) return null;
+    // Auto save turned off while a round was running: nothing more is sent
+    if (!signal || !this.gate.isCurrent(t) || this.paused()) return null;
     this.set({ status: 'syncing' });
     let res: Response;
     try {
