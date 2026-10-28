@@ -5,15 +5,15 @@
 //   `certsim:acct:<userId>:progress|journey|activity|queue`. Signing in switches the app to the
 //   account's keys (useSyncedStorage follows the key), filled from the server. Signing out removes
 //   them, so the next person on a shared computer starts from the signed-out data.
-// - Signed-out progress is never uploaded on its own: ImportPrompt asks once per account, and only
-//   "Add" copies it into the account.
+// - Auto save (the header button) is on for a signed-in account unless turned off in this browser. With it
+//   on, this browser's signed-out progress is added to the account once; turned off, nothing syncs.
 // - Changes save locally first, as always; the engine then uploads what the server does not have yet,
 //   after a short debounce. Offline, nothing is lost: what is missing on the server is worked out
 //   again from the local records on the next attempt.
 // - Every request carries the account it was started for and that account's AbortController; a
 //   response that arrives after a switch is dropped.
 // The merge and epoch rules themselves are in syncRules.ts, shared with the Worker.
-import { createElement, useEffect, useRef, useState, useSyncExternalStore, type Dispatch, type SetStateAction } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore, type Dispatch, type SetStateAction } from 'react';
 import { apiBase } from './apiBase';
 import { SIGNED_OUT_EVENT, announceSignedOut, type AccountState } from './account';
 import { readStorage, writeStorage } from './storage';
@@ -48,8 +48,10 @@ export { labScope, pathScope } from './syncRules';
 
 /** The account this browser is signed in to, so the app opens on its data before /api/me answers */
 export const ACCOUNT_KEY = 'certsim:account';
-/** Accounts already asked about importing this browser's progress (hashed ids) */
+/** Accounts whose signed-out progress in this browser was already added (hashed ids) */
 export const IMPORT_ASKED_KEY = 'certsim:import-asked:v1';
+/** Accounts that turned Auto save off in this browser (hashed ids); Auto save is on for every other account */
+export const AUTOSAVE_OFF_KEY = 'certsim:autosave-off:v1';
 
 const USER_ID = /^[A-Za-z0-9_-]{1,64}$/;
 export const isUserId = (v: unknown): v is string => typeof v === 'string' && USER_ID.test(v);
@@ -222,7 +224,8 @@ export function settingsDelta(local: LocalSettings, known: SyncSettings, now: nu
 
 // ---------- The engine ----------
 
-export type SyncStatus = 'off' | 'syncing' | 'synced' | 'offline' | 'error';
+/** 'off': signed out. 'paused': signed in with Auto save turned off */
+export type SyncStatus = 'off' | 'paused' | 'syncing' | 'synced' | 'offline' | 'error';
 
 /** What the engine needs from the app: its local data, and a way to put the server's into it */
 export interface SyncAdapter {
@@ -312,8 +315,43 @@ export class SyncEngine {
     this.gate.switchTo(userId);
     this.controller = new AbortController();
     const q = this.queue(userId);
+    if (this.paused()) {
+      this.set({ status: 'paused', lastSyncedAt: q.lastSyncedAt, importOffered: false });
+      return;
+    }
     this.set({ status: 'syncing', lastSyncedAt: q.lastSyncedAt, importOffered: this.importOffered() });
     void this.run(true);
+  }
+
+  /** Whether Auto save is on for the signed-in account (it is unless turned off in this browser) */
+  autoSave(): boolean {
+    return !!this.gate.userId && !this.paused();
+  }
+
+  /**
+   * Auto save on: sync again, and add this browser's signed-out progress to the account. Off: stop
+   * syncing; changes stay in this browser and go up when it is turned back on.
+   */
+  setAutoSave(on: boolean): Promise<void> {
+    const userId = this.gate.userId;
+    if (!userId) return Promise.resolve();
+    const off = this.listOf(AUTOSAVE_OFF_KEY).filter(t => t !== tag(userId));
+    this.deps.store.set(AUTOSAVE_OFF_KEY, JSON.stringify(on ? off : [...off, tag(userId)].slice(-50)));
+    if (!on) {
+      if (this.timer !== null) this.deps.clearTimer(this.timer);
+      this.timer = null;
+      this.set({ status: 'paused', importOffered: false });
+      return Promise.resolve();
+    }
+    this.set({ status: 'syncing' });
+    // Turning it on is the learner asking for this browser's progress to be saved too
+    if (this.adapter?.hasSignedOutProgress()) return this.importLocal();
+    return this.run(true);
+  }
+
+  private paused(): boolean {
+    const userId = this.gate.userId;
+    return !!userId && this.listOf(AUTOSAVE_OFF_KEY).includes(tag(userId));
   }
 
   /** Stop syncing (signed out): requests in flight are aborted and their answers ignored. */
@@ -366,7 +404,7 @@ export class SyncEngine {
     this.schedule(UPLOAD_DEBOUNCE_MS, false);
   }
 
-  /** "Add": copy this browser's signed-out progress into the account, then upload it */
+  /** Copy this browser's signed-out progress into the account, then upload it */
   importLocal(): Promise<void> {
     const userId = this.gate.userId;
     if (!userId || !this.adapter) return Promise.resolve();
@@ -377,17 +415,15 @@ export class SyncEngine {
     return this.run(false);
   }
 
-  /** "Not now": do not ask this account again in this browser */
-  dismissImport(): void {
-    const userId = this.gate.userId;
-    if (userId) this.markAsked(userId);
-  }
-
   // --- internals ---
 
   private asked(): string[] {
+    return this.listOf(IMPORT_ASKED_KEY);
+  }
+
+  private listOf(key: string): string[] {
     try {
-      const v = JSON.parse(this.deps.store.get(IMPORT_ASKED_KEY) ?? '[]');
+      const v = JSON.parse(this.deps.store.get(key) ?? '[]');
       return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
     } catch {
       return [];
@@ -415,6 +451,7 @@ export class SyncEngine {
   }
 
   private schedule(ms: number, pull: boolean) {
+    if (this.paused()) return;
     this.pullWanted ||= pull;
     if (this.timer !== null) {
       if (ms > 0) return;
@@ -427,6 +464,7 @@ export class SyncEngine {
   }
 
   private run(pull: boolean): Promise<void> {
+    if (this.paused()) return Promise.resolve();
     this.pullWanted ||= pull;
     if (this.running) {
       this.again = true;
@@ -512,7 +550,9 @@ export class SyncEngine {
     if (!this.adapter.apply({ stale, items, settings, theme })) return false;
     const lastSyncedAt = this.deps.now();
     this.writeQueue(t.userId, { ready: true, epochs, items, settings, resets: q.resets, lastSyncedAt });
-    this.set({ status: 'synced', lastSyncedAt, importOffered: this.importOffered() });
+    this.set({ status: 'synced', lastSyncedAt, importOffered: false });
+    // With Auto save on, this browser's earlier signed-out progress is added once per account
+    if (this.importOffered()) void this.importLocal();
     return true;
   }
 
@@ -757,57 +797,20 @@ export interface UseSync {
   lastSyncedAt: number | null;
   /** Sync now (download and upload); resolves when done */
   syncNow: () => Promise<void>;
-  /** Add this browser's signed-out progress to the account */
-  importLocal: () => Promise<void>;
+  /** Auto save is on (signed in and not turned off in this browser) */
+  autoSave: boolean;
+  setAutoSave: (on: boolean) => Promise<void>;
 }
 
 /** Sync status for the account pages: 'off' when signed out */
 export function useSync(): UseSync {
   const e = syncEngine();
   const snap = useSyncExternalStore(e.subscribe, e.getSnapshot, () => OFF);
-  return { status: snap.status, lastSyncedAt: snap.lastSyncedAt, syncNow: () => e.syncNow(), importLocal: () => e.importLocal() };
-}
-
-/**
- * "Add the progress saved in this browser to your account?" with Add / Not now. Shown once per
- * account, and only when this browser has signed-out progress; renders nothing otherwise.
- */
-export function ImportPrompt({ className = '' }: { className?: string }) {
-  const e = syncEngine();
-  const snap = useSyncExternalStore(e.subscribe, e.getSnapshot, () => OFF);
-  const [busy, setBusy] = useState(false);
-  if (!snap.importOffered) return null;
-  const button = 'inline-flex items-center justify-center min-h-11 sm:min-h-9 px-4 rounded-md text-sm font-medium';
-  return createElement(
-    'section',
-    { 'aria-labelledby': 'import-progress-heading', className: `rounded-md border border-line bg-surface px-4 sm:px-5 py-4 space-y-2 ${className}`.trim() },
-    createElement('h2', { id: 'import-progress-heading', className: 'text-base font-semibold text-text' }, 'Add the progress saved in this browser to your account?'),
-    createElement(
-      'p',
-      { className: 'text-[15px] text-muted max-w-prose' },
-      'This browser has progress from before you signed in. Add copies it into your account, so it appears on your other devices too. Not now keeps the two apart.',
-    ),
-    createElement(
-      'div',
-      { className: 'flex flex-wrap items-center gap-3 pt-2' },
-      createElement(
-        'button',
-        {
-          type: 'button',
-          disabled: busy,
-          onClick: () => {
-            setBusy(true);
-            void e.importLocal().finally(() => setBusy(false));
-          },
-          className: `${button} bg-accent text-accent-fg hover:opacity-90 disabled:opacity-60`,
-        },
-        'Add',
-      ),
-      createElement(
-        'button',
-        { type: 'button', onClick: () => e.dismissImport(), className: `${button} border border-line-strong text-text hover:bg-surface-2` },
-        'Not now',
-      ),
-    ),
-  );
+  return {
+    status: snap.status,
+    lastSyncedAt: snap.lastSyncedAt,
+    syncNow: () => e.syncNow(),
+    autoSave: snap.status !== 'off' && snap.status !== 'paused',
+    setAutoSave: on => e.setAutoSave(on),
+  };
 }

@@ -17,7 +17,7 @@ test.describe('sign-in not configured', () => {
   test('no sign-in control is shown', async ({ page }) => {
     await page.goto('#/learn');
     await expect(page.getByRole('heading', { level: 1, name: 'Learning paths' })).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Sign in' })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'Sign in', exact: true })).toHaveCount(0);
   });
 });
 
@@ -26,7 +26,7 @@ test.describe('signed out, GitHub sign-in available', () => {
 
   test('Sign in opens the account page, whose GitHub button returns to it', async ({ page }) => {
     await page.goto('#/reference');
-    await page.getByRole('link', { name: 'Sign in' }).click();
+    await page.getByRole('link', { name: 'Sign in', exact: true }).click();
     await expect(page.getByRole('heading', { level: 1, name: 'Sign in' })).toBeVisible();
     const href = new URL((await page.getByRole('link', { name: 'Continue with GitHub' }).getAttribute('href'))!);
     expect(href.pathname).toBe('/api/auth/github/start');
@@ -131,7 +131,7 @@ test.describe('signed in', () => {
     const logout = page.waitForRequest(req => req.url().endsWith('/api/logout') && req.method() === 'POST');
     await page.getByRole('button', { name: 'Sign out' }).click();
     await logout;
-    await expect(page.getByRole('link', { name: 'Sign in' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Sign in', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { level: 1, name: 'Sign in' })).toBeVisible();
   });
 

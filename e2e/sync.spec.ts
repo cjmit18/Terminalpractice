@@ -71,47 +71,62 @@ test.describe('signed in: progress syncs with the account', () => {
     expect(puts.length).toBeGreaterThanOrEqual(1);
   });
 
-  test('signed-out progress in this browser is not uploaded on its own', async ({ page, context }) => {
-    const seen: Item[] = [];
-    await context.route('**/api/progress', async route => {
-      const req = route.request();
-      if (req.method() === 'PUT') seen.push(...(req.postDataJSON() as { items: Item[] }).items);
-      await route.fulfill({ json: { items: [], epochs: {}, settings: {} } });
-    });
-    // Progress saved before signing in
-    await page.addInitScript(lab => {
-      if (!localStorage.getItem('certsim:progress:v1')) localStorage.setItem('certsim:progress:v1', JSON.stringify({ [lab]: ['hw-lspci'] }));
-    }, LAB);
-    await page.goto(HW_LAB);
-    await expect.poll(() => keysWith(page, 'certsim:acct:u1:')).toContain('certsim:acct:u1:queue');
-    // The account starts from its own (empty) progress
-    await expect(headerProgress(page)).toHaveText(done(0));
-    await page.waitForTimeout(1500);
-    expect(seen.filter(i => i.key.endsWith('hw-lspci'))).toEqual([]);
-    // The signed-out record is kept as it was
-    expect(JSON.parse((await page.evaluate(() => localStorage.getItem('certsim:progress:v1'))) ?? '{}')).toEqual({ [LAB]: ['hw-lspci'] });
-  });
-
-  test('the account page offers to add this browser’s earlier progress, and Add uploads it', async ({ page, context }) => {
+  test('signing in with Auto save on adds this browser’s earlier progress to the account, once', async ({ page, context }) => {
     const seen: Item[] = [];
     await context.route('**/api/progress', async route => {
       const req = route.request();
       if (req.method() === 'PUT') seen.push(...(req.postDataJSON() as { items: Item[] }).items);
       await route.fulfill({ json: { items: seen, epochs: {}, settings: {} } });
     });
+    // Progress saved before signing in
     await page.addInitScript(lab => {
       if (!localStorage.getItem('certsim:progress:v1')) localStorage.setItem('certsim:progress:v1', JSON.stringify({ [lab]: ['hw-lspci'] }));
     }, LAB);
-    await page.goto('#/account');
-    const prompt = page.getByRole('region', { name: 'Add the progress saved in this browser to your account?' });
-    await expect(prompt).toBeVisible();
-    await prompt.getByRole('button', { name: 'Add' }).click();
-    await expect(prompt).toHaveCount(0);
+    await page.goto(HW_LAB);
     await expect.poll(() => seen.map(i => i.key)).toContain(`${LAB}/hw-lspci`);
-    await expect(page.getByTestId('sync-status')).toContainText('Progress synced');
-    // Asked once per account: not again after a reload
+    await expect(headerProgress(page)).toHaveText(done(1));
+    // The signed-out record is kept as it was
+    expect(JSON.parse((await page.evaluate(() => localStorage.getItem('certsim:progress:v1'))) ?? '{}')).toEqual({ [LAB]: ['hw-lspci'] });
+    const uploads = seen.length;
     await page.reload();
-    await expect(page.getByRole('heading', { level: 1, name: 'Hello, Octo Learner' })).toBeVisible();
-    await expect(page.getByRole('region', { name: 'Add the progress saved in this browser to your account?' })).toHaveCount(0);
+    await expect(headerProgress(page)).toHaveText(done(1));
+    await page.waitForTimeout(1500);
+    expect(seen.length, 'not added a second time').toBe(uploads);
+  });
+
+  test('the Auto save button turns syncing off and back on', async ({ page, context }) => {
+    const puts: Item[][] = [];
+    await context.route('**/api/progress', async route => {
+      const req = route.request();
+      if (req.method() === 'PUT') puts.push((req.postDataJSON() as { items: Item[] }).items);
+      await route.fulfill({ json: { items: puts.flat(), epochs: {}, settings: {} } });
+    });
+    await page.goto(HW_LAB);
+    const button = page.getByRole('button', { name: /^Auto save: / });
+    await expect(button).toHaveAttribute('aria-pressed', 'true');
+    await button.click();
+    await expect(button).toHaveAccessibleName('Auto save: off');
+
+    // Off: a task finished here stays in this browser
+    await showTerminal(page);
+    await runCommand(page, 'lspci');
+    await expect(headerProgress(page)).toHaveText(done(1));
+    await page.waitForTimeout(1500);
+    expect(puts.flat()).toEqual([]);
+
+    // On again: it goes up
+    await button.click();
+    await expect(button).toHaveAccessibleName('Auto save: on');
+    await expect.poll(() => puts.flat().map(i => i.key)).toContain(`${LAB}/hw-lspci`);
+  });
+});
+
+test.describe('signed out, sign-in available', () => {
+  test.use({ me: { user: null, providers: { github: false, email: true } } });
+
+  test('Auto save leads to sign-in', async ({ page }) => {
+    await page.goto('#/learn');
+    await page.getByRole('link', { name: 'Auto save: sign in to save your progress to an account' }).click();
+    await expect(page.getByRole('heading', { level: 1, name: 'Sign in' })).toBeVisible();
   });
 });

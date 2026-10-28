@@ -304,9 +304,9 @@ for (const ignoreAbort of [false, true]) test(`engine: a late response after an 
   assert.ok(parseQueue(store.get(accountKeys('user-b').queue)).ready);
 });
 
-test('engine: signed-out progress is imported only after Add', async () => {
+test('engine: with Auto save on, signed-out progress is added once; with it off, nothing syncs until it is turned on', async () => {
   const server = fakeServer();
-  // The account had reset lab-a before: imported work must still be kept
+  // The account had reset lab-a before: added work must still be kept
   server.state('u1').epochs = { 'lab:lab-a': 2 };
   const store = memoryStore();
   const d = device(server, store);
@@ -314,32 +314,36 @@ test('engine: signed-out progress is imported only after Add', async () => {
   const signedOut: LocalItem[] = [{ kind: 'objective', key: 'lab-a/t1' }, { kind: 'lesson', key: 'p1/intro' }];
   const { app, adapter } = fakeApp(signedOut);
   d.engine.start('u1', adapter);
+  assert.equal(d.engine.autoSave(), true, 'Auto save is on by default');
   await d.engine.syncNow();
-  assert.equal(d.engine.getSnapshot().importOffered, true);
-  assert.deepEqual(server.keysOf('u1'), [], 'nothing is uploaded on its own');
-  assert.equal(app.imported, 0);
-
-  await d.engine.importLocal();
-  assert.equal(app.imported, 1);
+  assert.equal(app.imported, 1, "this browser's progress is added on the first sync");
   assert.deepEqual(server.keysOf('u1'), ['lesson|p1/intro', 'objective|lab-a/t1']);
   assert.equal(server.state('u1').items.find(i => i.key === 'lab-a/t1')?.epoch, 2, 'stamped with the account epoch');
-  assert.equal(d.engine.getSnapshot().importOffered, false);
+  // Once per account
+  d.engine.stop();
+  d.engine.start('u1', adapter);
+  await d.engine.syncNow();
+  assert.equal(app.imported, 1);
 
-  // Asked once per account: "Not now" on another account is remembered too
+  // Another account turns Auto save off before its first sync: nothing is added or uploaded
   const other = device(server, store);
   other.c.user = 'u2';
   const second = fakeApp(signedOut);
   other.engine.start('u2', second.adapter);
+  await other.engine.setAutoSave(false);
   await other.engine.syncNow();
-  assert.equal(other.engine.getSnapshot().importOffered, true);
-  other.engine.dismissImport();
-  assert.equal(other.engine.getSnapshot().importOffered, false);
+  assert.equal(other.engine.getSnapshot().status, 'paused');
   assert.deepEqual(server.keysOf('u2'), []);
+  assert.equal(second.app.imported, 0);
+  // Remembered for this account in this browser
   other.engine.stop();
   other.engine.start('u2', second.adapter);
-  await other.engine.syncNow();
-  assert.equal(other.engine.getSnapshot().importOffered, false);
-  assert.equal(second.app.imported, 0);
+  assert.equal(other.engine.autoSave(), false);
+  // Turned back on: the progress is added and goes up
+  await other.engine.setAutoSave(true);
+  assert.equal(second.app.imported, 1);
+  assert.deepEqual(server.keysOf('u2'), ['lesson|p1/intro', 'objective|lab-a/t1']);
+  assert.equal(other.engine.getSnapshot().status, 'synced');
 });
 
 test('engine: a 401 (session ended elsewhere) signs out instead of retrying', async () => {

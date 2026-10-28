@@ -1,8 +1,5 @@
-// Progress sync as the account pages show it: the status line under "Your progress", from useSync and
-// ImportPrompt in src/lib/sync.ts.
+// Progress sync as the account pages and the header's Auto save button show it, from useSync in src/lib/sync.ts.
 import { useSync, type UseSync } from '../../lib/sync';
-
-export { ImportPrompt } from '../../lib/sync';
 
 export type SyncState = UseSync;
 
@@ -15,6 +12,8 @@ export function syncStatusText(s: Pick<SyncState, 'status' | 'lastSyncedAt'>): s
   switch (s.status) {
     case 'off':
       return SYNCS_WHEN_SIGNED_IN;
+    case 'paused':
+      return 'Auto save is off. Your progress is saved in this browser only; turn Auto save on to save it to your account.';
     case 'syncing':
       return 'Syncing your progress…';
     case 'synced':

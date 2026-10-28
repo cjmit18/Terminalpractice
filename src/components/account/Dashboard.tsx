@@ -3,7 +3,7 @@ import { BadgeCheck, LogOut } from 'lucide-react';
 import { resendVerification, signOut, type AccountUser } from '../../lib/account';
 import { learnHref } from '../../lib/router';
 import { secondaryButton, textLink } from './forms';
-import { ImportPrompt, syncStatusText, useSyncState } from './syncAdapter';
+import { syncStatusText, useSyncState } from './syncAdapter';
 
 /** #/account when signed in: who you are, whether your email is confirmed, and signing out. */
 export const Dashboard: React.FC<{ user: AccountUser; emailSending: boolean }> = ({ user, emailSending }) => (
@@ -73,8 +73,7 @@ const EmailStatus: React.FC<{ user: AccountUser; emailSending: boolean }> = ({ u
   );
 };
 
-// The sync's state, a way to sync now, and the offer to add this browser's signed-out progress
-// (ImportPrompt renders nothing once answered)
+// The sync's state, and a way to sync now (or to turn Auto save back on)
 const SyncStatus: React.FC = () => {
   const sync = useSyncState();
   return (
@@ -86,16 +85,21 @@ const SyncStatus: React.FC = () => {
         {syncStatusText(sync)}
       </p>
       <div className="flex flex-wrap items-center gap-3">
-        {sync.status !== 'off' && (
+        {sync.autoSave ? (
           <button type="button" onClick={() => void sync.syncNow()} disabled={sync.status === 'syncing'} className={secondaryButton}>
             Sync now
           </button>
+        ) : (
+          sync.status === 'paused' && (
+            <button type="button" onClick={() => void sync.setAutoSave(true)} className={secondaryButton}>
+              Turn Auto save on
+            </button>
+          )
         )}
         <a href={learnHref()} className={`${textLink} text-sm`}>
           Back to the learning paths
         </a>
       </div>
-      <ImportPrompt className="mt-4" />
     </section>
   );
 };
