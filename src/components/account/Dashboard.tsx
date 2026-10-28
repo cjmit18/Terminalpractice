@@ -3,23 +3,13 @@ import { BadgeCheck, LogOut } from 'lucide-react';
 import { resendVerification, signOut, type AccountUser } from '../../lib/account';
 import { learnHref } from '../../lib/router';
 import { secondaryButton, textLink } from './forms';
+import { ImportPrompt, syncStatusText, useSyncState } from './syncAdapter';
 
 /** #/account when signed in: who you are, whether your email is confirmed, and signing out. */
 export const Dashboard: React.FC<{ user: AccountUser; emailSending: boolean }> = ({ user, emailSending }) => (
   <div className="space-y-10">
     <EmailStatus user={user} emailSending={emailSending} />
-    <section aria-labelledby="progress-heading" className="space-y-2 max-w-prose">
-      <h2 id="progress-heading" className="text-base font-semibold text-text">
-        Your progress
-      </h2>
-      <p className="text-[15px]">
-        Your progress is saved in this browser, as before. Syncing it to your account, so it follows you to other
-        devices, is the next step.{' '}
-        <a href={learnHref()} className={textLink}>
-          Back to the learning paths
-        </a>
-      </p>
-    </section>
+    <SyncStatus />
     <SignOut />
   </div>
 );
@@ -79,6 +69,33 @@ const EmailStatus: React.FC<{ user: AccountUser; emailSending: boolean }> = ({ u
           email yet, so there is nothing to do for now: you can sign in with your password as usual.
         </p>
       )}
+    </section>
+  );
+};
+
+// The sync's state, a way to sync now, and the offer to add this browser's signed-out progress
+// (ImportPrompt renders nothing once answered)
+const SyncStatus: React.FC = () => {
+  const sync = useSyncState();
+  return (
+    <section aria-labelledby="progress-heading" className="space-y-2 max-w-prose" data-testid="sync-status">
+      <h2 id="progress-heading" className="text-base font-semibold text-text">
+        Your progress
+      </h2>
+      <p className="text-[15px]" role="status">
+        {syncStatusText(sync)}
+      </p>
+      <div className="flex flex-wrap items-center gap-3">
+        {sync.status !== 'off' && (
+          <button type="button" onClick={() => void sync.syncNow()} disabled={sync.status === 'syncing'} className={secondaryButton}>
+            Sync now
+          </button>
+        )}
+        <a href={learnHref()} className={`${textLink} text-sm`}>
+          Back to the learning paths
+        </a>
+      </div>
+      <ImportPrompt className="mt-4" />
     </section>
   );
 };

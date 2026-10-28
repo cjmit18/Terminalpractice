@@ -23,38 +23,60 @@ export interface SyncedCodec<T> {
  * The third value is true while the latest change came from another tab (a `storage` event) and
  * false after this tab's own setter; a reader may set it back to false once it has looked.
  *
- * The codec must be stable (create it once, outside the component).
+ * The codec must be stable (create it once, outside the component). The key may change (signing in
+ * switches to the account's keys): the state is then read again from the new key, and nothing is
+ * written there until this tab changes something.
  */
 export function useSyncedStorage<T>(key: string, codec: SyncedCodec<T>): [T, Dispatch<SetStateAction<T>>, MutableRefObject<boolean>] {
-  const [state, setState] = useState<T>(() => codec.parse(readStorage(key)));
-  // The value read on load: saving it back would change nothing this tab did
-  const loaded = useRef(state);
+  // The key the state belongs to, the state, and the value read on load (saving that back would
+  // change nothing this tab did)
+  const [slot, setSlot] = useState(() => {
+    const value = codec.parse(readStorage(key));
+    return { key, value, loaded: value };
+  });
+  let active = slot;
+  if (slot.key !== key) {
+    const value = codec.parse(readStorage(key));
+    active = { key, value, loaded: value };
+    setSlot(active);
+  }
+  const state = active.value;
   const fromOtherTab = useRef(false);
-  const setLocal = useCallback<Dispatch<SetStateAction<T>>>(value => {
-    fromOtherTab.current = false;
-    setState(value);
+  const setState = useCallback((value: SetStateAction<T>) => {
+    setSlot(s => {
+      const next = typeof value === 'function' ? (value as (prev: T) => T)(s.value) : value;
+      return next === s.value ? s : { ...s, value: next };
+    });
   }, []);
+  const setLocal = useCallback<Dispatch<SetStateAction<T>>>(
+    value => {
+      fromOtherTab.current = false;
+      setState(value);
+    },
+    [setState],
+  );
 
   useEffect(() => {
-    if (state === loaded.current) return;
+    if (slot.key !== key || slot.value === slot.loaded) return;
     const storedText = readStorage(key);
-    const merged = codec.merge(codec.parse(storedText), state);
+    const merged = codec.merge(codec.parse(storedText), slot.value);
     const text = codec.serialize(merged);
     if (text !== storedText) writeStorage(key, text);
     // Another tab had saved data this one did not have yet: show it here too
-    if (text !== codec.serialize(state)) setState(merged);
-  }, [key, codec, state]);
+    if (text !== codec.serialize(slot.value)) setState(merged);
+  }, [key, codec, slot, setState]);
 
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
       // key null: another tab cleared all storage. Keep this tab's data; its next save restores it.
       if (e.key !== key) return;
       const stored = codec.parse(readStorage(key));
-      setState(prev => {
-        const merged = codec.merge(stored, prev);
-        if (codec.serialize(merged) === codec.serialize(prev)) return prev;
+      setSlot(s => {
+        if (s.key !== key) return s;
+        const merged = codec.merge(stored, s.value);
+        if (codec.serialize(merged) === codec.serialize(s.value)) return s;
         fromOtherTab.current = true;
-        return merged;
+        return { ...s, value: merged };
       });
     };
     window.addEventListener('storage', onStorage);

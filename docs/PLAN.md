@@ -27,7 +27,7 @@ disagree with this page, this page wins until they are updated.
 5. Accounts and account pages: account menu, `#/account` (sign in, create account, the account page), `#/account/forgot`, `#/account/verify`, `#/account/reset` (done, #50). `SMTP_PASSWORD` is set only after this ships.
 6. Google sign-in, with the router rewrite (absorbs round-3 PR 6: shared helpers, `APP_ORIGINS`)
 7. Security: the security page (sessions, linked sign-ins, delete account) and the security headers / CSP
-8. Progress sync (new migrations start at `0005`). 8a: the server (`/api/progress`, migration 0005) (in review); 8b: the app's sync engine and status
+8. Progress sync (new migrations start at `0005`). 8a: the server (`/api/progress`, migration 0005) (in review); 8b: the app's sync engine, per-account storage, the import prompt and the status on the account page (in review)
 9. Admin dashboard: admin allowlist managed by CJ, "view as" setting, admins excluded from tracking, opt-in most-missed totals for content
 
 Rules for parts 4-9: port from `portal/base` by hand, never copy whole files from it; keep `worker/smtp.ts` and Purelymail; no Resend.
