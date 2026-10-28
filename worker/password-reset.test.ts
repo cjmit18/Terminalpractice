@@ -94,6 +94,7 @@ test('SV3-1: the inbox owner takes a squatted address back with a reset, and the
   const squatter = sessionOf(await s.register({ password: PASSWORD }));
   const userId = (s.db.raw.prepare('SELECT id FROM users').get() as { id: string }).id;
   s.db.raw.prepare("INSERT INTO identities (provider, provider_id, user_id, login, linked_at) VALUES ('github', '42', ?, 'squatter', 0)").run(userId);
+  s.db.raw.prepare("INSERT INTO progress_items (user_id, kind, item_key, scope, epoch, earned_at) VALUES (?, 'objective', 'm/o', 'lab:m', 0, 1)").run(userId);
 
   s.sent.length = 0;
   await forgot(s, 'learner@example.com', { 'CF-Connecting-IP': '198.51.100.7' });
@@ -103,6 +104,7 @@ test('SV3-1: the inbox owner takes a squatted address back with a reset, and the
   assert.equal((await s.login()).status, 401, "the squatter's password no longer works");
   const left = s.db.raw.prepare('SELECT provider FROM identities WHERE user_id = ?').all(userId).map(r => (r as { provider: string }).provider);
   assert.deepEqual(left, ['email'], 'other sign-in methods the claimant attached are removed');
+  assert.equal(count(s.db, 'progress_items'), 0, "the claimant's synced progress is removed too");
 });
 
 test('a confirmed account keeps its other sign-in methods through a reset', async () => {

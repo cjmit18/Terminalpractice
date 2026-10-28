@@ -2,25 +2,42 @@
 // a fake clock, a fake mailer that records what it was asked to send, and request helpers.
 import { readFileSync, readdirSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
-import { handleApi, type ApiEnv, type Db, type DbStatement } from './api.ts';
+import { handleApi, type ApiEnv, type DbStatement } from './api.ts';
+import type { SyncDb } from './sync.ts';
 import type { ApiDeps, MailMessage } from './http.ts';
 
 export const ORIGIN = 'https://terminuscli.com';
 export const PASSWORD = 'correct horse battery staple';
 
-export function testDb(): Db & { raw: DatabaseSync } {
+export function testDb(): SyncDb & { raw: DatabaseSync } {
   const raw = new DatabaseSync(':memory:');
   raw.exec('PRAGMA foreign_keys = ON;');
   for (const name of readdirSync(new URL('../migrations/', import.meta.url)).filter(f => f.endsWith('.sql')).sort()) {
     raw.exec(readFileSync(new URL(`../migrations/${name}`, import.meta.url), 'utf8'));
   }
-  const statement = (sql: string, values: unknown[] = []): DbStatement => ({
+  const statement = (sql: string, values: unknown[] = []): DbStatement & { exec(): unknown } => ({
     bind: (...v) => statement(sql, v),
     first: async <T,>() => (raw.prepare(sql).get(...(values as never[])) as T | undefined) ?? null,
     all: async <T,>() => ({ results: raw.prepare(sql).all(...(values as never[])) as T[] }),
     run: async () => raw.prepare(sql).run(...(values as never[])),
+    exec: () => raw.prepare(sql).run(...(values as never[])),
   });
-  return { raw, prepare: sql => statement(sql) };
+  return {
+    raw,
+    prepare: sql => statement(sql),
+    // One transaction, as D1's batch is
+    batch: async stmts => {
+      raw.exec('BEGIN');
+      try {
+        const out = stmts.map(st => (st as ReturnType<typeof statement>).exec());
+        raw.exec('COMMIT');
+        return out;
+      } catch (err) {
+        raw.exec('ROLLBACK');
+        throw err;
+      }
+    },
+  };
 }
 
 export const MAIL_ENV: Partial<ApiEnv> = { SMTP_USER: 'noreply@terminuscli.com', SMTP_PASSWORD: 'test-only' };

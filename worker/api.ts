@@ -16,6 +16,7 @@ import {
   type RouteContext,
 } from './http';
 import { emailRoutes } from './auth/email';
+import { syncRoutes } from './sync';
 import { emailSendingEnabled } from './mail';
 import { currentSession, loadUser, toPublicUser } from './session';
 
@@ -52,7 +53,7 @@ export async function handleApi(request: Request, env: ApiEnv, deps: ApiDeps = d
   const url = new URL(request.url);
   if (!url.pathname.startsWith('/api/')) return null;
 
-  const routed = emailRoutes.filter(r => r.path === url.pathname);
+  const routed = [...emailRoutes, ...syncRoutes].filter(r => r.path === url.pathname);
   if (routed.length) return handleRoute(routed.find(r => r.method === request.method), request, url, env, deps);
 
   const route = `${request.method} ${url.pathname}`;

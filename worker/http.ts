@@ -74,6 +74,8 @@ export const defaultDeps: ApiDeps = {
 // --- Routes --------------------------------------------------------------------------------
 
 export const BODY_LIMIT = 64 * 1024;
+/** Progress uploads may be larger (up to SYNC_LIMITS.itemsPerRequest items at once) */
+export const SYNC_BODY_LIMIT = 512 * 1024;
 
 export interface RouteContext {
   request: Request;

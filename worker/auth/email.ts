@@ -4,6 +4,7 @@ import { emailSendingEnabled, resetEmail, sendEmail, verificationEmail } from '.
 import { hashPassword, passwordProblem, verifyAgainstDummy, verifyPassword } from '../password';
 import { LIMITS, countLimit, enforceLimit, rateLimited } from '../ratelimit';
 import { EMAIL_CLAIM_TTL, createPasswordSession, createSession, endAllSessions, endIncomingSession, loadUser, requireUser, sessionCookie, staleEmailClaim, toPublicUser } from '../session';
+import { SYNC_TABLES } from '../sync';
 import { consumeToken, issueToken, peekToken, revokeTokens, tokenFailure, type TokenPurpose } from '../tokens';
 
 const INVALID_CREDENTIALS = () => new HttpError(401, 'invalid_credentials', 'That email and password do not match an account.');
@@ -257,7 +258,9 @@ async function reset(c: RouteContext): Promise<Response> {
     .first<{ id: string }>();
   if (!changed) throw INVALID_TOKEN();
   if (current.email_verified_at === null) {
+    // The claimant's other sign-in methods and synced progress go; the inbox owner starts fresh
     await c.env.DB.prepare("DELETE FROM identities WHERE user_id = ? AND provider <> 'email'").bind(userId).run();
+    for (const table of SYNC_TABLES) await c.env.DB.prepare(`DELETE FROM ${table} WHERE user_id = ?`).bind(userId).run();
   }
   await revokeTokens(c.env.DB, userId, ['verify', 'reset'], now);
   await endAllSessions(c.env.DB, userId);
