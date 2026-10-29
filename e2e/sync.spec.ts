@@ -119,6 +119,33 @@ test.describe('signed in: progress syncs with the account', () => {
     await expect(button).toHaveAccessibleName('Auto save: on');
     await expect.poll(() => puts.flat().map(i => i.key)).toContain(`${LAB}/hw-lspci`);
   });
+
+  test('signing out in one tab signs out the others, even with Auto save off before any sync', async ({ page, context }) => {
+    // Auto save off for this account from the start, so it never syncs and has no sync queue
+    await context.addInitScript(id => {
+      let h = 0x811c9dc5;
+      for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 0x01000193) >>> 0;
+      localStorage.setItem('certsim:autosave-off:v1', JSON.stringify([h.toString(16).padStart(8, '0')]));
+    }, USER.id);
+    await page.goto(HW_LAB);
+    await expect(page.getByRole('button', { name: 'Auto save: off' })).toBeVisible();
+    await showTerminal(page);
+    await runCommand(page, 'lspci');
+    await expect(headerProgress(page)).toHaveText(done(1));
+    expect(await keysWith(page, 'certsim:acct:u1:queue')).toEqual([]);
+
+    const other = await context.newPage();
+    await other.goto(HW_LAB);
+    await expect(other.getByRole('button', { name: 'Account: Octo Learner' })).toBeVisible();
+    await expect(headerProgress(other)).toHaveText(done(1));
+
+    await page.getByRole('button', { name: 'Account: Octo Learner' }).click();
+    await page.getByRole('button', { name: 'Sign out' }).click();
+    await expect(page.getByRole('link', { name: 'Sign in', exact: true })).toBeVisible();
+    // The other tab no longer shows the account or its progress
+    await expect(other.getByRole('link', { name: 'Sign in', exact: true })).toBeVisible();
+    await expect(headerProgress(other)).toHaveText(done(0));
+  });
 });
 
 test.describe('signed out, sign-in available', () => {

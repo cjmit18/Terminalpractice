@@ -767,9 +767,14 @@ export function useAccountSync(o: AccountSyncOptions): number {
     const onVisible = () => {
       if (document.visibilityState === 'visible') sync.pull();
     };
-    // Another tab signed out (it removed this account's queue): sign out here too
+    // Another tab signed out (or signed in as someone else): stop showing this account here too.
+    // The account marker is what every sign-in and sign-out writes; the queue exists only once the
+    // account has synced, so with Auto save off from the start there may be none to watch.
     const onStorage = (e: StorageEvent) => {
-      if (e.key === keys.queue && e.newValue === null) announceSignedOut();
+      const markerGone = e.key === ACCOUNT_KEY && e.newValue !== userId;
+      const queueGone = e.key === keys.queue && e.newValue === null;
+      // localStorage.clear() in another tab reports key null
+      if (markerGone || queueGone || e.key === null) announceSignedOut();
     };
     window.addEventListener('online', pull);
     document.addEventListener('visibilitychange', onVisible);
