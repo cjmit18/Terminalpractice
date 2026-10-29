@@ -98,6 +98,38 @@ test('item count caps: per request and per account', async () => {
   assert.equal((await s.call('PUT', '/api/progress', { cookie: u.cookie, body: { items: over } })).status, 413);
 });
 
+test('at the item cap, held items still update and retries pass; only new items are refused', async () => {
+  const s = setup();
+  const u = s.user();
+  assert.equal((await s.call('PUT', '/api/progress', { cookie: u.cookie, body: { items: [quiz('p1/q', 1, 5), obj('lab-a/t1')] } })).status, 200);
+  const fill = s.db.raw.prepare("INSERT INTO progress_items (user_id, kind, item_key, scope, epoch, correct, total, earned_at) VALUES (?, 'objective', ?, 'lab:bulk', 0, NULL, NULL, ?)");
+  for (let i = 0; i < 4998; i++) fill.run(u.id, `bulk/t${i}`, NOW);
+  // A better score for a held quiz, and the same upload again, add no row
+  const better = await s.call('PUT', '/api/progress', { cookie: u.cookie, body: { items: [quiz('p1/q', 5, 5), obj('lab-a/t1')] } });
+  assert.equal(better.status, 200);
+  assert.equal((await better.json()).items.find((i: { kind: string }) => i.kind === 'quiz').correct, 5);
+  assert.equal((await s.call('PUT', '/api/progress', { cookie: u.cookie, body: { items: [quiz('p1/q', 5, 5)] } })).status, 200);
+  // A new item would be number 5,001
+  assert.equal((await s.call('PUT', '/api/progress', { cookie: u.cookie, body: { items: [obj('lab-a/t2')] } })).status, 413);
+});
+
+test('at the scope cap, held scopes still reset and retries pass; only new scopes are refused', async () => {
+  const s = setup();
+  const u = s.user();
+  await s.call('POST', '/api/progress/reset', { cookie: u.cookie, body: { scope: 'lab:lab-a', epoch: 0 } });
+  const fill = s.db.raw.prepare('INSERT INTO progress_epochs (user_id, scope, epoch) VALUES (?, ?, 1)');
+  for (let i = 0; i < 1999; i++) fill.run(u.id, `lab:bulk${i}`);
+  const epochOf = async () => (await (await s.call('GET', '/api/progress', { cookie: u.cookie })).json()).epochs['lab:lab-a'];
+  // Resetting a held scope at its current epoch raises it
+  assert.equal((await s.call('POST', '/api/progress/reset', { cookie: u.cookie, body: { scope: 'lab:lab-a', epoch: 1 } })).status, 200);
+  assert.equal(await epochOf(), 2);
+  // The same reset retried changes nothing, and is not refused
+  assert.equal((await s.call('POST', '/api/progress/reset', { cookie: u.cookie, body: { resets: [{ scope: 'lab:lab-a', epoch: 1 }, { scope: 'lab:lab-a', epoch: 1 }] } })).status, 200);
+  assert.equal(await epochOf(), 2);
+  // A new scope would be number 2,001
+  assert.equal((await s.call('POST', '/api/progress/reset', { cookie: u.cookie, body: { scope: 'lab:lab-b' } })).status, 413);
+});
+
 test('uploads merge: union of items, best quiz score, scope derived from the key', async () => {
   const s = setup();
   const u = s.user();
