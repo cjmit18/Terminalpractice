@@ -15,6 +15,7 @@ import {
   type SyncItem,
   type SyncSettings,
   isScope,
+  itemId,
   mergeSettings,
   sanitizeItems,
   sanitizeSettings,
@@ -78,8 +79,13 @@ async function put(db: SyncDb, userId: string, body: Record<string, unknown>, no
   // `epochs` is accepted for the record but never trusted: each item carries its own epoch
 
   if (items.length > 0) {
-    const stored = await db.prepare('SELECT COUNT(*) AS n FROM progress_items WHERE user_id = ?').bind(userId).first<{ n: number }>();
-    if ((stored?.n ?? 0) + items.length > SYNC_LIMITS.storedItems) {
+    // Only items the account does not hold yet count toward the cap: improving a quiz score or a
+    // retried upload adds no row. upsertItem repeats the check inside the batch, so uploads at once
+    // cannot pass it together.
+    const { results } = await db.prepare('SELECT kind, item_key FROM progress_items WHERE user_id = ?').bind(userId).all<{ kind: SyncItem['kind']; item_key: string }>();
+    const held = new Set(results.map(r => itemId({ kind: r.kind, key: r.item_key })));
+    const added = new Set(items.map(itemId).filter(id => !held.has(id))).size;
+    if (held.size + added > SYNC_LIMITS.storedItems) {
       return error(413, 'too_many_items', 'This account holds the most progress items allowed.');
     }
     await db.batch(items.map(item => upsertItem(db, userId, item)));
@@ -94,7 +100,9 @@ async function put(db: SyncDb, userId: string, body: Record<string, unknown>, no
 /**
  * Insert or merge one item, only while its epoch is its scope's current epoch. The epoch check is
  * part of the statement, so a reset running at the same time cannot let an old item back in.
- * Within an epoch the best quiz score and the earliest earnedAt are kept (as mergeItem does).
+ * A new row is added only while the account is under the stored-item cap; an existing one is
+ * always merged. Within an epoch the best quiz score and the earliest earnedAt are kept (as
+ * mergeItem does).
  */
 function upsertItem(db: SyncDb, userId: string, item: SyncItem): DbStatement {
   const better = `(excluded.correct * progress_items.total > progress_items.correct * excluded.total
@@ -104,13 +112,15 @@ function upsertItem(db: SyncDb, userId: string, item: SyncItem): DbStatement {
       `INSERT INTO progress_items (user_id, kind, item_key, scope, epoch, correct, total, earned_at)
        SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8
         WHERE ?5 = COALESCE((SELECT epoch FROM progress_epochs WHERE user_id = ?1 AND scope = ?4), 0)
+          AND (EXISTS (SELECT 1 FROM progress_items WHERE user_id = ?1 AND kind = ?2 AND item_key = ?3)
+               OR (SELECT COUNT(*) FROM progress_items WHERE user_id = ?1) < ?9)
        ON CONFLICT (user_id, kind, item_key) DO UPDATE SET
          correct = CASE WHEN ${better} THEN excluded.correct ELSE progress_items.correct END,
          total = CASE WHEN ${better} THEN excluded.total ELSE progress_items.total END,
          earned_at = CASE WHEN excluded.earned_at > 0 AND (progress_items.earned_at = 0 OR excluded.earned_at < progress_items.earned_at)
                           THEN excluded.earned_at ELSE progress_items.earned_at END`,
     )
-    .bind(userId, item.kind, item.key, item.scope, item.epoch, item.correct ?? null, item.total ?? null, item.earnedAt);
+    .bind(userId, item.kind, item.key, item.scope, item.epoch, item.correct ?? null, item.total ?? null, item.earnedAt, SYNC_LIMITS.storedItems);
 }
 
 /** Read-merge-write of the settings row, retried when another request changed it in between */
@@ -167,8 +177,11 @@ async function reset(db: SyncDb, userId: string, body: Record<string, unknown>):
     resets.push({ scope: x.scope, epoch: (epoch as number | undefined) ?? null });
   }
 
-  const count = await db.prepare('SELECT COUNT(*) AS n FROM progress_epochs WHERE user_id = ?').bind(userId).first<{ n: number }>();
-  if ((count?.n ?? 0) + resets.length > SYNC_LIMITS.scopes) return error(413, 'too_many_scopes', 'This account has reset too many scopes.');
+  // Only scopes reset for the first time count toward the cap: a scope already reset keeps its row
+  const { results } = await db.prepare('SELECT scope FROM progress_epochs WHERE user_id = ?').bind(userId).all<{ scope: string }>();
+  const held = new Set(results.map(r => r.scope));
+  const added = new Set(resets.map(r => r.scope).filter(scope => !held.has(scope))).size;
+  if (held.size + added > SYNC_LIMITS.scopes) return error(413, 'too_many_scopes', 'This account has reset too many scopes.');
 
   const statements: DbStatement[] = [];
   for (const { scope, epoch } of resets) {
@@ -184,9 +197,10 @@ async function reset(db: SyncDb, userId: string, body: Record<string, unknown>):
         .prepare(
           `INSERT INTO progress_epochs (user_id, scope, epoch)
            SELECT ?1, ?2, 1 WHERE (?3 IS NULL OR ?3 = 0)
-              AND NOT EXISTS (SELECT 1 FROM progress_epochs WHERE user_id = ?1 AND scope = ?2)`,
+              AND NOT EXISTS (SELECT 1 FROM progress_epochs WHERE user_id = ?1 AND scope = ?2)
+              AND (SELECT COUNT(*) FROM progress_epochs WHERE user_id = ?1) < ?4`,
         )
-        .bind(userId, scope, epoch),
+        .bind(userId, scope, epoch, SYNC_LIMITS.scopes),
       // No item older than the scope's epoch survives
       db
         .prepare(
