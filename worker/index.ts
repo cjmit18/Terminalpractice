@@ -1,9 +1,9 @@
 // Cloudflare Worker entry: /api/* is the account API, everything else is the static app.
 // wrangler.jsonc routes only /api/* here (run_worker_first), so static files never pay for this code.
-// The daily cron (triggers.crons in wrangler.jsonc) runs scheduled(): the sweep of expired rows.
+// The daily cron (triggers.crons in wrangler.jsonc) runs scheduled(): the sweep of expired rows and the pepper upgrades.
 import { handleApi, type ApiEnv } from './api';
 import { defaultDeps } from './http';
-import { sweepExpired } from './maintenance';
+import { dailyMaintenance } from './maintenance';
 import { smtpSend } from './smtp';
 
 interface Env extends ApiEnv {
@@ -18,6 +18,6 @@ export default {
     return (await handleApi(request, env, deps)) ?? env.ASSETS.fetch(request);
   },
   async scheduled(controller, env, ctx) {
-    ctx.waitUntil(sweepExpired(env.DB, controller.scheduledTime));
+    ctx.waitUntil(dailyMaintenance(env, controller.scheduledTime));
   },
 } satisfies ExportedHandler<Env>;
