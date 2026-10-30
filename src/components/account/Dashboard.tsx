@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { BadgeCheck, LogOut } from 'lucide-react';
 import { resendVerification, signOut, type AccountUser } from '../../lib/account';
-import { learnHref } from '../../lib/router';
+import { accountHref, learnHref } from '../../lib/router';
 import { secondaryButton, textLink } from './forms';
 import { syncStatusText, useSyncState } from './syncAdapter';
 
@@ -10,6 +10,15 @@ export const Dashboard: React.FC<{ user: AccountUser; emailSending: boolean }> =
   <div className="space-y-10">
     <EmailStatus user={user} emailSending={emailSending} />
     <SyncStatus />
+    <section aria-labelledby="security-link" className="space-y-2 max-w-prose">
+      <h2 id="security-link" className="text-base font-semibold text-text">
+        Security and data
+      </h2>
+      <p className="text-[15px] text-muted">Change your password, see where you’re signed in, download your data or delete your account.</p>
+      <a href={accountHref('security')} className={`${textLink} text-sm`}>
+        Open security and data
+      </a>
+    </section>
     <SignOut />
   </div>
 );

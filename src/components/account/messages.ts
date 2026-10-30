@@ -1,7 +1,7 @@
 // Plain-language messages for the account API's error codes. Pure, so it is unit tested without a browser.
 
 /** Which form field an error belongs to, so it can be shown next to that field */
-export type ErrorField = 'email' | 'password' | 'displayName' | 'age';
+export type ErrorField = 'email' | 'password' | 'currentPassword' | 'displayName' | 'age';
 
 interface Known {
   message: string;
@@ -31,6 +31,14 @@ const KNOWN: Record<string, Known> = {
   unauthorized: { message: 'You are signed out. Sign in again to continue.' },
   forbidden: { message: 'The request was blocked. Reload the page and try again.' },
   network: { message: 'Could not reach the server. Check your connection and try again.' },
+  wrong_password: { message: 'That isn’t your current password. Check it and try again.', field: 'currentPassword' },
+  current_password_required: { message: 'Enter your current password to confirm it is you.', field: 'currentPassword' },
+  reauth_required: { message: 'For your security, sign in again to continue.' },
+  last_method: { message: 'This is your only way to sign in, so it can’t be removed. Add another way first.' },
+  not_linked: { message: 'That way to sign in isn’t linked to your account.' },
+  session_not_found: { message: 'That session has already ended.' },
+  email_unverified: { message: 'Confirm your email address first: open the link in the email we sent you.' },
+  conflict: { message: 'Your account changed at the same time. Reload the page and try again.' },
 };
 
 /** The plain message for an error, and the field it belongs to when there is one. */

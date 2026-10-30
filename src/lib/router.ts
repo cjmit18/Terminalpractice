@@ -7,7 +7,7 @@ import { TEST_SITE } from './testSite';
  *   #/linux, #/linux/<moduleId>, #/windows, #/windows/<moduleId>,
  *   #/simulators, #/sandbox, #/sandbox/challenge, #/sandbox/challenge/<challengeId>, #/reference,
  *   #/badge/<badgeId>, #/testing (the test site only),
- *   #/account, #/account/forgot, #/account/verify?token=…, #/account/reset?token=…
+ *   #/account, #/account/security, #/account/forgot, #/account/verify?token=…, #/account/reset?token=…
  * Anything else falls back to #/learn.
  */
 
@@ -32,8 +32,8 @@ export type Route =
   | { section: 'account'; page: AccountPage };
 
 /** 'home' is #/account itself: sign in when signed out, the account page when signed in */
-export type AccountPage = 'home' | 'forgot' | 'verify' | 'reset';
-const ACCOUNT_PAGES: AccountPage[] = ['home', 'forgot', 'verify', 'reset'];
+export type AccountPage = 'home' | 'security' | 'forgot' | 'verify' | 'reset';
+const ACCOUNT_PAGES: AccountPage[] = ['home', 'security', 'forgot', 'verify', 'reset'];
 
 export function accountHref(page: AccountPage = 'home'): string {
   return routeHref({ section: 'account', page });
