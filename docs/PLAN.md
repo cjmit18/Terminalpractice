@@ -29,8 +29,9 @@ disagree with this page, this page wins until they are updated.
 7. Security: the security page (sessions, linked sign-ins, delete account) and the security headers / CSP
 8. Progress sync (new migrations start at `0005`). 8a: the server (`/api/progress`, migration 0005) (in review); 8b: the app's sync engine and status
 9. Admin dashboard: admin allowlist managed by CJ, "view as" setting, admins excluded from tracking, opt-in most-missed totals for content
+10. Stronger password hashing: passwords are PBKDF2-SHA256 at 100,000 iterations today (`worker/password.ts`), the most Workers allow for PBKDF2 and below OWASP's 600,000. Move new hashes to Argon2id (WebAssembly, tuned to the Worker's CPU limit), keep `verifyPassword` reading the old `pbkdf2$…` lines, and rehash each account on its next successful sign-in. Needs a CPU-time check on the live Worker first.
 
-Rules for parts 4-9: port from `portal/base` by hand, never copy whole files from it; keep `worker/smtp.ts` and Purelymail; no Resend.
+Rules for parts 4-10: port from `portal/base` by hand, never copy whole files from it; keep `worker/smtp.ts` and Purelymail; no Resend.
 
 Migrations: the test site shares the accounts database and applies migrations when it deploys, so a migration in an open pull request reaches the live database before the merge. Migrations must be additive, and a migration file is never edited once its pull request is open (its first version is recorded as applied); fix it with a new migration instead.
 
