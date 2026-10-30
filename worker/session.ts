@@ -91,7 +91,13 @@ export async function createSession(db: Db, userId: string, now: number): Promis
     .prepare('INSERT INTO sessions (token_hash, user_id, expires_at, created_at, authenticated_at) VALUES (?, ?, ?, ?, ?)')
     .bind(await sha256(token), userId, now + SESSION_TTL, now, now)
     .run();
+  await recordSignIn(db, userId, now);
   return token;
+}
+
+/** When the account last signed in (the admin dashboard's activity total); kept when sessions end */
+export async function recordSignIn(db: Db, userId: string, now: number): Promise<void> {
+  await db.prepare('UPDATE users SET last_sign_in_at = ? WHERE id = ?').bind(now, userId).run();
 }
 
 /**
@@ -113,6 +119,7 @@ export async function createPasswordSession(db: Db, userId: string, now: number,
     )
     .bind(await sha256(token), now + SESSION_TTL, now, now, userId, passwordHash)
     .first<{ token_hash: string }>();
+  if (made) await recordSignIn(db, userId, now);
   return made ? token : null;
 }
 

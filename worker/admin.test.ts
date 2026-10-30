@@ -95,3 +95,25 @@ test('only the owner lists, adds and removes admins, by email', async () => {
   assert.equal((await stats(s, helper)).status, 403);
   assert.equal((await s.call('DELETE', '/api/admin/admins', { email: 'helper@example.com' }, as(owner))).status, 404);
 });
+
+test('signed in during the last 7 days survives signing out and ended sessions', async () => {
+  const s = setup({ OWNER_EMAIL: OWNER });
+  const owner = await account(s, OWNER);
+  const learner = await account(s, 'learner@example.com');
+  const activity = async () => (await (await stats(s, owner)).json()).activity;
+  assert.deepEqual(await activity(), { signedInLast7Days: 1, liveSessions: 1 });
+
+  // Signing out deletes the session, not the sign-in
+  await s.call('POST', '/api/logout', {}, as(learner));
+  assert.deepEqual(await activity(), { signedInLast7Days: 1, liveSessions: 0 });
+  // Nor does ending every session
+  s.db.raw.prepare("DELETE FROM sessions WHERE user_id <> (SELECT id FROM users WHERE email = ?)").run(OWNER);
+  assert.equal((await activity()).signedInLast7Days, 1);
+
+  // A week later it no longer counts; signing in again does
+  s.advance(8 * 86_400_000);
+  const ownerAgain = sessionOf(await s.login(OWNER))!;
+  assert.equal((await (await stats(s, ownerAgain)).json()).activity.signedInLast7Days, 0, 'the owner signing in is never counted');
+  await s.login('learner@example.com');
+  assert.equal((await (await stats(s, ownerAgain)).json()).activity.signedInLast7Days, 1);
+});
