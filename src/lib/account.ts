@@ -176,12 +176,15 @@ function setSignedOut(): void {
   announceSignedOut();
 }
 
-/** Someone else announced the end of the session (the sync got a 401) */
+/**
+ * Someone else announced the end of the session (another tab signed out, or the sync got a 401). It counts
+ * even while this tab's first /api/me is still on its way: that answer is older news and must not bring the
+ * account back (#69 review). Without an account API here there is nothing to change.
+ */
 function onSignedOutElsewhere(): void {
-  if (snapshot.account.status === 'signed-in') {
-    authGeneration++;
-    update({ account: { status: 'signed-out' }, role: null });
-  }
+  authGeneration++;
+  const status = snapshot.account.status;
+  if (status === 'signed-in' || status === 'loading') update({ account: { status: 'signed-out' }, role: null });
 }
 
 /** The server set the session cookie: show signed in */

@@ -48,6 +48,39 @@ test.describe('signed in', () => {
   });
 });
 
+test.describe('two tabs, signed in', () => {
+  test.use({ me: { user: USER, providers: { github: false, email: true }, emailSending: true } });
+
+  test('a sign-out in another tab wins over this tab’s first answer, still on its way', async ({ page, context }) => {
+    await page.goto('#/learn');
+    await expect(page.getByRole('button', { name: 'Account: Casey' })).toBeVisible();
+
+    // The second tab's first /api/me is held while the first tab signs out
+    const other = await context.newPage();
+    let release!: () => void;
+    const gate = new Promise<void>(r => (release = r));
+    let reached!: () => void;
+    const atGate = new Promise<void>(r => (reached = r));
+    await other.route('**/api/me', async route => {
+      reached();
+      await gate;
+      await route.fulfill({ json: { user: USER, providers: { github: false, email: true }, emailSending: true } });
+    });
+    await other.goto('#/learn');
+    await atGate;
+
+    await page.getByRole('button', { name: 'Account: Casey' }).click();
+    await page.getByRole('button', { name: 'Sign out' }).click();
+    await expect(page.getByRole('link', { name: 'Sign in', exact: true })).toBeVisible();
+
+    release();
+    await other.waitForTimeout(300);
+    await expect(other.getByRole('button', { name: 'Account: Casey' })).toHaveCount(0);
+    expect(await other.evaluate(() => localStorage.getItem('certsim:account'))).not.toBe('u1');
+    await other.close();
+  });
+});
+
 test.describe('signed out', () => {
   test.use({ me: { user: null, providers: { github: false, email: true }, emailSending: true } });
 
