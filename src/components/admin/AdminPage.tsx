@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useId, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
-import { addAdmin, getAdminStats, listAdmins, removeAdmin, type AdminEntry, type AdminStats } from '../../lib/admin';
+import { addAdmin, getAdminStats, getMostMissed, listAdmins, removeAdmin, type AdminEntry, type AdminStats, type MostMissed } from '../../lib/admin';
+import { LEARNING_PATHS } from '../../data/paths';
 import { accountHref, learnHref } from '../../lib/router';
 import { setViewAs, useDisplayAccount, type ViewAs } from '../../lib/viewAs';
 import { Field, FormError, FormNote, secondaryButton, textLink } from '../account/forms';
@@ -33,6 +34,7 @@ export const AdminPage: React.FC = () => {
     body = (
       <div className="space-y-8 max-w-2xl">
         <Totals />
+        <MostMissedQuestions />
         {role === 'owner' && <Admins />}
         <ViewAsChooser />
       </div>
@@ -130,6 +132,61 @@ const Totals: React.FC = () => {
           </tbody>
         </table>
       ))}
+    </section>
+  );
+};
+
+/** "pathId/questionId" -> the question and where it is, for the most-missed list */
+const QUESTIONS = new Map<string, { prompt: string; where: string }>(
+  LEARNING_PATHS.flatMap(path =>
+    path.stages.flatMap(stage =>
+      stage.steps.flatMap(step =>
+        step.kind === 'quiz' ? step.questions.map(q => [`${path.id}/${q.id}`, { prompt: q.prompt, where: `${path.title} · ${step.title}` }] as const) : [],
+      ),
+    ),
+  ),
+);
+
+const percent = (n: number, of: number) => (of > 0 ? `${Math.round((100 * n) / of)}%` : '–');
+
+const MostMissedQuestions: React.FC = () => {
+  const [data, setData] = useState<MostMissed | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    void getMostMissed().then(r => (r.ok ? setData(r.data) : setError(r.message)));
+  }, []);
+  return (
+    <section aria-labelledby="missed-h" className={sectionClass}>
+      <h2 id="missed-h" className={headingClass}>
+        Most-missed questions
+      </h2>
+      <p className="text-sm text-muted">
+        From learners who chose to share their answers{data && ` (${data.learnersSharing.toLocaleString()} now)`}. Ranked by how
+        many of them missed each question. Totals only, never who missed what.
+      </p>
+      {error && (
+        <p role="alert" className="rounded-md bg-danger-soft px-3 py-2 text-sm text-danger">
+          {error}
+        </p>
+      )}
+      {data && data.questions.length === 0 && <p className="text-sm text-muted">No missed answers shared yet.</p>}
+      {data && data.questions.length > 0 && (
+        <ol className="divide-y divide-line border-y border-line" aria-label="Most-missed questions">
+          {data.questions.map(q => {
+            const question = QUESTIONS.get(q.key);
+            return (
+              <li key={q.key} className="py-3 space-y-1">
+                <p className="text-[15px] text-text">{question?.prompt ?? 'A question no longer in the app'}</p>
+                <p className="text-sm text-muted">
+                  {question?.where ?? q.key} · missed by {q.missedBy.toLocaleString()} of {q.learners.toLocaleString()}{' '}
+                  {q.learners === 1 ? 'learner' : 'learners'} · {percent(q.missed, q.answered)} of {q.answered.toLocaleString()}{' '}
+                  {q.answered === 1 ? 'answer' : 'answers'} wrong
+                </p>
+              </li>
+            );
+          })}
+        </ol>
+      )}
     </section>
   );
 };
