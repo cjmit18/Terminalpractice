@@ -8,13 +8,13 @@ import { PageHeader, ResetButton } from './lab/PageHeader';
 import { FolderTree, X } from 'lucide-react';
 import { useGameLayer } from './celebrate/GameLayer';
 import { sandboxFacts } from '../lib/activity';
-import { BANNER_TEXT, SandboxLook } from './settings/SandboxLook';
+import { BANNER_TEXT, SANDBOX_HOST, SANDBOX_USER, SandboxLook } from './settings/SandboxLook';
 import { clearSandboxTry, peekSandboxTry } from './fieldguide/tryInSandbox';
 
 const LINUX_STATE: SystemState = {
-  hostname: 'sandbox-linux',
-  currentUser: 'student',
-  currentGroup: 'student',
+  hostname: SANDBOX_HOST,
+  currentUser: SANDBOX_USER,
+  currentGroup: SANDBOX_USER,
   isRootOrAdmin: false,
   umask: 0o022,
   interfaces: [

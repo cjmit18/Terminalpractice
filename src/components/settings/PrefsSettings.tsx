@@ -18,7 +18,7 @@ interface Option<T> {
   detail?: string;
 }
 
-function RadioGroup<T extends string>({
+export function RadioGroup<T extends string>({
   legend,
   name,
   value,
@@ -56,30 +56,19 @@ function RadioGroup<T extends string>({
   );
 }
 
-/** Badges and celebrations settings: show or hide badges, how to celebrate, and clearing it all. */
-export const GameSettings: React.FC = () => {
-  const { prefs, setPrefs, clear } = useGameLayer();
+/** Settings (#/settings): show or hide badges, and how to celebrate. */
+export const BadgeSettings: React.FC = () => {
+  const { prefs, setPrefs } = useGameLayer();
   const id = useId();
-
-  const handleClear = () => {
-    const ok = window.confirm(
-      'Clear your badges and the record of what you have tried? Your lab and path progress stays, so badges for labs and paths you have finished come back.',
-    );
-    if (ok) clear();
-  };
-
   return (
-    <section aria-labelledby={`${id}-heading`} className="space-y-5 pt-2">
-      <h3 id={`${id}-heading`} className="text-sm font-semibold text-text">
-        Settings for badges, celebrations and your weekly goal
-      </h3>
+    <div className="space-y-5">
       <RadioGroup
         legend="Badges"
         name={`${id}-badges`}
         value={prefs.showBadges ? 'show' : 'hide'}
         options={[
-          { value: 'show', label: 'Show' },
-          { value: 'hide', label: 'Hide', detail: 'Hides this list and the notes about badges.' },
+          { value: 'show', label: 'Show', detail: 'Your badges are listed at the end of the Learn page.' },
+          { value: 'hide', label: 'Hide', detail: 'Hides the list and the notes about badges.' },
         ]}
         onChange={v => setPrefs({ showBadges: v === 'show' })}
       />
@@ -90,6 +79,16 @@ export const GameSettings: React.FC = () => {
         options={CELEBRATION_OPTIONS}
         onChange={v => setPrefs({ celebrations: v })}
       />
+    </div>
+  );
+};
+
+/** Settings (#/settings): story notes on labs and the weekly goal. */
+export const LearningSettings: React.FC = () => {
+  const { prefs, setPrefs } = useGameLayer();
+  const id = useId();
+  return (
+    <div className="space-y-5">
       <RadioGroup
         legend="Story notes"
         name={`${id}-story`}
@@ -126,19 +125,32 @@ export const GameSettings: React.FC = () => {
           ))}
         </select>
       </div>
-      <div className="space-y-2">
-        <button
-          type="button"
-          onClick={handleClear}
-          className="inline-flex items-center min-h-10 sm:min-h-9 px-3 rounded-md border border-line-strong bg-surface text-sm font-medium text-text hover:bg-surface-2"
-        >
-          Clear badges and activity
-        </button>
-        <p className="text-sm text-muted">
-          Everything here is saved only in this browser. It records which kinds of things you have tried, such as
-          opening a manual page or fixing a typo, never what you typed.
-        </p>
-      </div>
-    </section>
+    </div>
+  );
+};
+
+/** Settings (#/settings): clear badges and the record of what was tried. */
+export const ClearActivity: React.FC = () => {
+  const { clear } = useGameLayer();
+  const handleClear = () => {
+    const ok = window.confirm(
+      'Clear your badges and the record of what you have tried? Your lab and path progress stays, so badges for labs and paths you have finished come back.',
+    );
+    if (ok) clear();
+  };
+  return (
+    <div className="space-y-2">
+      <button
+        type="button"
+        onClick={handleClear}
+        className="inline-flex items-center min-h-10 sm:min-h-9 px-3 rounded-md border border-line-strong bg-surface text-sm font-medium text-text hover:bg-surface-2"
+      >
+        Clear badges and activity
+      </button>
+      <p className="text-sm text-muted">
+        Badges and the record of which kinds of things you have tried, such as opening a manual page or fixing a typo,
+        never what you typed. Your lab and path progress stays.
+      </p>
+    </div>
   );
 };

@@ -289,6 +289,13 @@ test('Sandbox looks: hostname and styles are validated', () => {
   assert.equal(bad.prefs, undefined);
 });
 
+test('Terminal text size: small, medium or large; anything else is dropped', () => {
+  const a = setPrefs(EMPTY_ACTIVITY, { terminalText: 'large' }, 1);
+  assert.deepEqual(parseActivity(serializeActivity(a)).prefs, { terminalText: 'large' });
+  const bad = parseActivity(JSON.stringify({ facts: [], days: [], badges: {}, prefs: { terminalText: 'huge' } }));
+  assert.equal(bad.prefs, undefined);
+});
+
 test('Privacy holds for the new records: first-seen days, the day recap and practice keep registry names only', () => {
   const bash = classifier('bash');
   let a = EMPTY_ACTIVITY;

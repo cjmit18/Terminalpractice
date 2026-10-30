@@ -156,6 +156,13 @@ test('settings: newest write per field wins; malformed or free-text values are r
   assert.deepEqual(sanitizeSettings({ prefs: { value: { weeklyGoal: 3, sandboxHost: 'My Secret Host' }, updatedAt: 1 } }, true), {
     prefs: { value: { weeklyGoal: 3 }, updatedAt: 1 },
   });
+  // The terminal text size syncs; an unknown size is dropped
+  assert.deepEqual(sanitizeSettings({ prefs: { value: { terminalText: 'large' }, updatedAt: 1 } }, true), {
+    prefs: { value: { terminalText: 'large' }, updatedAt: 1 },
+  });
+  assert.deepEqual(sanitizeSettings({ prefs: { value: { weeklyGoal: 1, terminalText: 'huge' }, updatedAt: 1 } }, true), {
+    prefs: { value: { weeklyGoal: 1 }, updatedAt: 1 },
+  });
   assert.deepEqual(sanitizeSettings({ practice: { value: ['2026-10-21', '2026-10-20', '2026-10-21'], updatedAt: 2 } }), {
     practice: { value: ['2026-10-20', '2026-10-21'], updatedAt: 2 },
   });

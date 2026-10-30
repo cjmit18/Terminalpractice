@@ -2,6 +2,15 @@ import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import { TerminalShell, HistoryItem, FileNode } from '../types/terminal';
 import { Copy, Check, Eraser, ArrowUp, ArrowDown } from 'lucide-react';
 import { completeFileAt, wordBefore } from '../terminal/complete';
+import { useGameLayer } from './celebrate/GameLayer';
+import type { TerminalText } from '../lib/activity';
+
+/** The terminal's text size, from Settings */
+const TEXT_SIZE: Record<TerminalText, string> = {
+  small: 'text-xs',
+  medium: 'text-[13px] sm:text-sm',
+  large: 'text-[15px] sm:text-base',
+};
 
 /** A history entry, plus what the prompt looked like when it was typed */
 export interface TerminalLine extends HistoryItem {
@@ -91,6 +100,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
   bannerLine,
   fs,
 }) => {
+  const terminalText = useGameLayer().prefs.terminalText;
   const [input, setInputValue] = useState('');
   // Names Tab could not choose between, shown under the line until the next change (bash lists them on a second Tab)
   const [tabNames, setTabNames] = useState<string[]>([]);
@@ -399,7 +409,8 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
       {/* Output and the active input line */}
       <div
         ref={scrollRef}
-        className="flex-1 min-h-0 overflow-y-auto terminal-scrollbar px-3 sm:px-4 py-3 font-mono text-[13px] sm:text-sm leading-relaxed"
+        className={`flex-1 min-h-0 overflow-y-auto terminal-scrollbar px-3 sm:px-4 py-3 font-mono ${TEXT_SIZE[terminalText]} leading-relaxed`}
+        data-text-size={terminalText}
         onClick={() => {
           // Clicking anywhere focuses the prompt, unless the user is selecting output to copy
           if (!window.getSelection()?.toString()) inputRef.current?.focus();

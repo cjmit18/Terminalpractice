@@ -2,10 +2,9 @@ import React from 'react';
 import { BadgeCheck, Circle } from 'lucide-react';
 import { Badge, BadgeFamily, FAMILY_LABEL } from '../../data/badges';
 import { useGameLayer } from '../celebrate/GameLayer';
-import { GameSettings } from '../settings/GameSettings';
 import { BadgeName } from './BadgeName';
 import { ProgressSummary } from './ProgressSummary';
-import { badgeHref } from '../../lib/router';
+import { SETTINGS_HREF, badgeHref } from '../../lib/router';
 
 const FAMILIES: BadgeFamily[] = ['curiosity', 'resilience', 'milestone'];
 
@@ -20,7 +19,7 @@ const earnedDate = (t: number) => {
 /**
  * "Your badges" on the Learn page: earned badges first with what they mean, then the ones still
  * to earn with how, in muted text. Hidden badges only appear once earned. No totals: badges are
- * feedback, not a checklist. The settings for the whole game layer sit at the end.
+ * feedback, not a checklist. A link at the end leads to their settings (#/settings).
  */
 export const BadgesSection: React.FC = () => {
   const { activity, badges, prefs } = useGameLayer();
@@ -31,9 +30,14 @@ export const BadgesSection: React.FC = () => {
         <h2 id="badges-heading" className="text-base font-semibold text-text">
           Badges and celebrations
         </h2>
-        <p className="text-sm text-muted">Badges are hidden. You can show them again here.</p>
+        <p className="text-sm text-muted">
+          Badges are hidden. You can show them again in{' '}
+          <a href={SETTINGS_HREF} className="text-accent underline-offset-2 hover:underline rounded-sm">
+            Settings
+          </a>
+          .
+        </p>
         <ProgressSummary />
-        <GameSettings />
       </section>
     );
   }
@@ -98,7 +102,11 @@ export const BadgesSection: React.FC = () => {
       )}
 
       <ProgressSummary />
-      <GameSettings />
+      <p className="text-sm">
+        <a href={SETTINGS_HREF} className="text-accent underline-offset-2 hover:underline rounded-sm">
+          Settings for badges, celebrations and your weekly goal
+        </a>
+      </p>
     </section>
   );
 };

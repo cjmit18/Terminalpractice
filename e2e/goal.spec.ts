@@ -6,6 +6,12 @@ const storedActivity = async (page: Page) => JSON.parse((await page.evaluate(k =
 const weekly = (page: Page) => page.getByTestId('weekly-goal');
 const recap = (page: Page) => page.getByTestId('today-recap');
 const goalSelect = (page: Page) => page.getByRole('combobox', { name: 'Weekly goal' });
+/** Sets the weekly goal in Settings, then comes back to the Learn page */
+async function setGoal(page: Page, days: string) {
+  await page.goto('#/settings');
+  await goalSelect(page).selectOption(days);
+  await page.goto('#/learn');
+}
 
 /** Today as the app stores it: local YYYY-MM-DD */
 const today = (page: Page) =>
@@ -16,12 +22,13 @@ const today = (page: Page) =>
   });
 
 test('weekly goal: off by default; three Sandbox commands make a day; today is recapped', async ({ page }) => {
-  await page.goto('#/learn');
+  await page.goto('#/settings');
   await expect(goalSelect(page)).toHaveValue('0');
+  await page.goto('#/learn');
   await expect(weekly(page)).toHaveCount(0);
   await expect(recap(page)).toHaveCount(0);
 
-  await goalSelect(page).selectOption('3');
+  await setGoal(page, '3');
   await expect(weekly(page)).toBeVisible();
   await expect(weekly(page).getByRole('list', { name: 'Days this week' }).getByRole('listitem')).toHaveCount(7);
   await expect(weekly(page)).toContainText('Your goal: practise on 3 days this week. Rest days are fine.');
@@ -56,17 +63,16 @@ test('weekly goal: a met week says so and is counted once; the count stays when 
   await expect.poll(async () => (await storedActivity(page)).goalWeeks?.length).toBe(1);
 
   // Raising the goal does not take the week away
-  await goalSelect(page).selectOption('5');
+  await setGoal(page, '5');
   await expect(weekly(page)).toContainText('1 of 5 days so far.');
   await expect(weekly(page)).toContainText('Weeks you met your goal: 1');
   // Turning it off hides it all, and nothing negative is shown anywhere
-  await goalSelect(page).selectOption('0');
+  await setGoal(page, '0');
   await expect(weekly(page)).toHaveCount(0);
 });
 
 test('a lesson read counts toward the goal and shows in the recap', async ({ page }) => {
-  await page.goto('#/learn');
-  await goalSelect(page).selectOption('2');
+  await setGoal(page, '2');
   await page.goto('#/learn/lpic1-101/how-linux-sees-hardware');
   await page.getByRole('button', { name: 'Mark as read' }).click();
   await page.goto('#/learn');

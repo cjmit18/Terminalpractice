@@ -2,6 +2,10 @@ import React, { useId, useState } from 'react';
 import { BannerLine, HOSTNAME, PromptStyle } from '../../lib/activity';
 import { useGameLayer } from '../celebrate/GameLayer';
 
+/** The Sandbox's Linux machine: its default name and the learner's user name */
+export const SANDBOX_HOST = 'sandbox-linux';
+export const SANDBOX_USER = 'student';
+
 /** The extra login banner lines a learner can pick once they finish a path */
 export const BANNER_TEXT: Record<BannerLine, string> = {
   none: '',
@@ -62,8 +66,8 @@ export const SandboxLook: React.FC<{ defaultHost: string; user: string; host: st
   return (
     <div className="space-y-6">
       <p className="text-sm text-muted">
-        Small touches for this practice machine, earned as you go. They only change how it looks. The theme is always
-        yours to change in the header.
+        Small touches for this practice machine, earned as you go. They only change how it looks. The theme and the text
+        size are always yours to change in Settings.
       </p>
 
       <section aria-labelledby={`${id}-host`} className="space-y-2">

@@ -6,7 +6,7 @@ import { TEST_SITE } from './testSite';
  *   #/learn, #/learn/<pathId>, #/learn/<pathId>/<stepId>, #/learn/review,
  *   #/linux, #/linux/<moduleId>, #/windows, #/windows/<moduleId>,
  *   #/simulators, #/sandbox, #/sandbox/challenge, #/sandbox/challenge/<challengeId>, #/reference,
- *   #/badge/<badgeId>, #/testing (the test site only),
+ *   #/badge/<badgeId>, #/settings, #/testing (the test site only),
  *   #/account, #/account/security, #/account/forgot, #/account/verify?token=…, #/account/reset?token=…
  * Anything else falls back to #/learn.
  */
@@ -28,6 +28,8 @@ export type Route =
   | { section: 'testing' }
   /** #/admin: the admin dashboard (the page itself checks the account's role) */
   | { section: 'admin' }
+  /** #/settings: appearance, learning, badges, the Sandbox machine, saving and your data */
+  | { section: 'settings' }
   /** #/account[/<page>]: sign in or create an account, the account page, and the pages emailed links open */
   | { section: 'account'; page: AccountPage };
 
@@ -44,8 +46,10 @@ export type RouteSection = Route['section'];
 
 /** The nav section a page belongs to (a badge page sits with the badges on Learn) */
 export function navSection(section: RouteSection): Section {
-  return section === 'badge' || section === 'testing' || section === 'account' || section === 'admin' ? 'learn' : section;
+  return section === 'badge' || section === 'testing' || section === 'account' || section === 'admin' || section === 'settings' ? 'learn' : section;
 }
+
+export const SETTINGS_HREF = '#/settings';
 
 export function badgeHref(badgeId: string): string {
   return routeHref({ section: 'badge', badgeId });
@@ -84,6 +88,7 @@ export function parseHash(hash: string): Route | null {
   if (parts[0] === 'badge') return parts.length === 2 ? { section: 'badge', badgeId: parts[1] } : null;
   if (parts[0] === 'testing') return parts.length === 1 && TEST_SITE ? { section: 'testing' } : null;
   if (parts[0] === 'admin') return parts.length === 1 ? { section: 'admin' } : null;
+  if (parts[0] === 'settings') return parts.length === 1 ? { section: 'settings' } : null;
   const section = parts[0] as Section;
   if (!SECTIONS.includes(section)) return null;
   if (section === 'learn') {

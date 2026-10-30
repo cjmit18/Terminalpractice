@@ -283,6 +283,9 @@ test('Router: learning path routes', () => {
   assert.deepEqual(parseHash('#/learn/p'), { section: 'learn', pathId: 'p', stepId: null });
   assert.deepEqual(parseHash('#/learn/p/l1'), { section: 'learn', pathId: 'p', stepId: 'l1' });
   assert.equal(parseHash('#/learn/p/l1/x'), null);
+  assert.deepEqual(parseHash('#/settings'), { section: 'settings' });
+  assert.equal(parseHash('#/settings/x'), null);
+  assert.equal(routeHref({ section: 'settings' }), '#/settings');
   assert.equal(parseHash(''), null);
   assert.deepEqual(parseHash('#/linux/abc'), { section: 'linux', moduleId: 'abc' });
   assert.deepEqual(parseHash('#/sandbox'), { section: 'sandbox' });

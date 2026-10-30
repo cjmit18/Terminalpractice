@@ -1,10 +1,10 @@
 import React from 'react';
-import { BookOpen, GraduationCap, Layers, Monitor, Moon, SquareTerminal, Sun, Terminal } from 'lucide-react';
+import { BookOpen, GraduationCap, Layers, Settings, SquareTerminal, Terminal } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { Section } from '../lib/router';
-import { ThemeChoice } from '../lib/theme';
+import { SETTINGS_HREF, Section } from '../lib/router';
 import { AccountMenu } from './AccountMenu';
-import { AutoSaveButton } from './AutoSaveButton';
+import { useDisplayAccount } from '../lib/viewAs';
+import { useSyncState } from './account/syncAdapter';
 
 /** Desktop navigation, one row. */
 export const NAV_ITEMS: { section: Section; label: string }[] = [
@@ -30,22 +30,17 @@ const PHONE_NAV_ITEMS: { key: PhoneNavKey; label: string; icon: LucideIcon }[] =
 ];
 const phoneKey = (section: Section): PhoneNavKey => (section === 'linux' || section === 'windows' ? 'labs' : section);
 
-const THEME_OPTIONS: { value: ThemeChoice; label: string; icon: LucideIcon }[] = [
-  { value: 'system', label: 'Match system theme', icon: Monitor },
-  { value: 'light', label: 'Light theme', icon: Sun },
-  { value: 'dark', label: 'Dark theme', icon: Moon },
-];
-
 interface HeaderProps {
-  current: Section;
+  /** The nav item to mark as the current page; null on pages outside the nav (Settings) */
+  current: Section | null;
   hrefs: Record<Section, string>;
   tasksDone: number;
   tasksTotal: number;
-  theme: ThemeChoice;
-  onThemeChange: (theme: ThemeChoice) => void;
+  /** On #/settings, the Settings link is marked as the current page */
+  onSettings: boolean;
 }
 
-export const Header: React.FC<HeaderProps> = ({ current, hrefs, tasksDone, tasksTotal, theme, onThemeChange }) => {
+export const Header: React.FC<HeaderProps> = ({ current, hrefs, tasksDone, tasksTotal, onSettings }) => {
   return (
     <header className="shrink-0 bg-surface border-b border-line">
       <div className="flex items-center gap-4 lg:gap-8 h-14 px-4 lg:px-6">
@@ -82,9 +77,7 @@ export const Header: React.FC<HeaderProps> = ({ current, hrefs, tasksDone, tasks
             {tasksDone} of {tasksTotal}
             <span className="hidden xl:inline"> lab tasks</span> done
           </p>
-          <ThemeSwitch theme={theme} onChange={onThemeChange} />
-          <ThemeCycleButton theme={theme} onChange={onThemeChange} />
-          <AutoSaveButton />
+          <SettingsLink current={onSettings} />
           <AccountMenu />
         </div>
       </div>
@@ -92,50 +85,32 @@ export const Header: React.FC<HeaderProps> = ({ current, hrefs, tasksDone, tasks
   );
 };
 
-const ThemeSwitch: React.FC<{ theme: ThemeChoice; onChange: (t: ThemeChoice) => void }> = ({ theme, onChange }) => (
-  <div role="radiogroup" aria-label="Color theme" className="hidden md:flex items-center rounded-md border border-line p-0.5">
-    {THEME_OPTIONS.map(({ value, label, icon: Icon }) => {
-      const selected = theme === value;
-      return (
-        <button
-          key={value}
-          type="button"
-          role="radio"
-          aria-checked={selected}
-          aria-label={label}
-          title={label}
-          onClick={() => onChange(value)}
-          className={`flex items-center justify-center w-7 h-7 rounded-sm transition-colors ${
-            selected ? 'bg-accent-soft text-accent' : 'text-muted hover:text-text'
-          }`}
-        >
-          <Icon className="w-4 h-4" aria-hidden="true" />
-        </button>
-      );
-    })}
-  </div>
-);
-
-/** Phones: one 40px button that steps through System, Light and Dark. */
-const ThemeCycleButton: React.FC<{ theme: ThemeChoice; onChange: (t: ThemeChoice) => void }> = ({ theme, onChange }) => {
-  const index = THEME_OPTIONS.findIndex(o => o.value === theme);
-  const current = THEME_OPTIONS[index] ?? THEME_OPTIONS[0];
-  const next = THEME_OPTIONS[(index + 1) % THEME_OPTIONS.length];
-  const Icon = current.icon;
+/**
+ * The way to Settings (theme, text size, learning, badges, Auto save, your data). A red dot shows when
+ * Auto save is on and the last sync did not finish, so a saving problem is still visible from every page.
+ */
+const SettingsLink: React.FC<{ current: boolean }> = ({ current }) => {
+  const { account } = useDisplayAccount();
+  const sync = useSyncState();
+  const problem = account.status === 'signed-in' && (sync.status === 'offline' || sync.status === 'error');
   return (
-    <button
-      type="button"
-      onClick={() => onChange(next.value)}
-      aria-label={`${current.label}. Switch to ${next.label.toLowerCase()}`}
-      className="md:hidden flex items-center justify-center w-10 h-10 -mr-2 rounded-md text-muted hover:text-text hover:bg-surface-2"
+    <a
+      href={SETTINGS_HREF}
+      aria-current={current ? 'page' : undefined}
+      aria-label={problem ? 'Settings: saving to your account needs attention' : 'Settings'}
+      title="Settings"
+      className={`relative flex items-center justify-center w-10 h-10 md:w-9 md:h-9 rounded-md hover:bg-surface-2 ${
+        current ? 'text-accent' : 'text-muted hover:text-text'
+      }`}
     >
-      <Icon className="w-5 h-5" aria-hidden="true" />
-    </button>
+      <Settings className="size-5 md:size-[18px]" aria-hidden="true" />
+      {problem && <span aria-hidden="true" className="absolute top-1.5 right-1.5 size-2 rounded-full bg-danger" />}
+    </a>
   );
 };
 
 /** Phone-only navigation pinned to the bottom of the screen. */
-export const BottomNav: React.FC<{ current: Section; hrefs: Record<Section, string>; labsHref: string }> = ({
+export const BottomNav: React.FC<{ current: Section | null; hrefs: Record<Section, string>; labsHref: string }> = ({
   current,
   hrefs,
   labsHref,
@@ -147,7 +122,7 @@ export const BottomNav: React.FC<{ current: Section; hrefs: Record<Section, stri
   >
     <ul className="grid grid-cols-5">
       {PHONE_NAV_ITEMS.map(({ key, label, icon: Icon }) => {
-        const active = key === phoneKey(current);
+        const active = current !== null && key === phoneKey(current);
         return (
           <li key={key}>
             <a
