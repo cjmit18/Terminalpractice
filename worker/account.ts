@@ -2,7 +2,7 @@
 // sessions signed in to it, re-authentication, the password, unlinking a sign-in method, export and delete.
 // Ported from portal/base by hand; email changes and Google arrive with their own parts.
 import { HttpError, json, noContent, optStr, secureHeaders, str, type Db, type Route, type RouteContext } from './http';
-import { hashPassword, verifyPassword } from './password';
+import { hashPassword, pepperStoredHash, verifyPassword } from './password';
 import { LIMITS, enforceLimit, forgetLimits } from './ratelimit';
 import {
   REAUTH_WINDOW,
@@ -58,7 +58,7 @@ async function confirmPassword(c: RouteContext, user: UserRow, given: string | u
   if (given === undefined) throw new HttpError(400, 'current_password_required', 'Enter your current password.');
   await enforceLimit(c.env, LIMITS.passwordCheck, user.id, c.deps.now());
   // 403, not 401: the session is fine, only the password is wrong
-  if (!(await verifyPassword(given, user.password_hash))) throw new HttpError(403, 'wrong_password', 'Your current password is not correct.');
+  if (!(await verifyPassword(given, user.password_hash, c.env))) throw new HttpError(403, 'wrong_password', 'Your current password is not correct.');
 }
 
 /** The OAuth providers linked to the user: where an account without a password signs in again */
@@ -182,9 +182,13 @@ async function changePassword(c: RouteContext): Promise<Response> {
   await requireRecentAuth(c, user, session, optStr(body, 'currentPassword', 1024));
   requireStrongPassword(newPassword, user.email, user.display_name);
 
-  const newHash = await hashPassword(newPassword);
-  const changed = await c.env.DB.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ? AND password_hash IS ? RETURNING id')
-    .bind(newHash, now, user.id, user.password_hash)
+  const newHash = await hashPassword(newPassword, c.env);
+  // The checked hash, or its peppered form if the pepper upgrade (password.ts) landed meanwhile
+  const upgraded = user.password_hash ? await pepperStoredHash(user.password_hash, c.env) : null;
+  const changed = await c.env.DB.prepare(
+    'UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ? AND (password_hash IS ? OR password_hash IS ?) RETURNING id',
+  )
+    .bind(newHash, now, user.id, user.password_hash, upgraded ?? user.password_hash)
     .first<{ id: string }>();
   if (!changed) throw new HttpError(409, 'conflict', 'Your password changed at the same time. Sign in again and retry.');
   await revokeTokens(c.env.DB, user.id, ['reset'], now);
