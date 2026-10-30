@@ -96,18 +96,26 @@ export async function refreshAccount(): Promise<void> {
 
 export type ApiResult<T> =
   | { ok: true; status: number; data: T }
-  | { ok: false; status: number; code: string; message: string; field?: ErrorField };
+  | {
+      ok: false;
+      status: number;
+      code: string;
+      message: string;
+      field?: ErrorField;
+      /** On 403 reauth_required: the providers to sign in again with */
+      providers?: string[];
+    };
 
-async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<ApiResult<T>> {
-  const sendsBody = method !== 'GET';
+async function request<T>(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<ApiResult<T>> {
+  const sendsBody = method !== 'GET' && body !== undefined;
   let res: Response;
   try {
     res = await fetch(apiUrl(path), {
       method,
       credentials: 'same-origin',
       headers: sendsBody ? { Accept: 'application/json', 'Content-Type': 'application/json' } : { Accept: 'application/json' },
-      // State-changing requests always carry a JSON body (the server accepts JSON only)
-      body: sendsBody ? JSON.stringify(body ?? {}) : undefined,
+      // The server accepts JSON bodies only; a DELETE without one sends none
+      body: sendsBody ? JSON.stringify(body) : undefined,
     });
   } catch {
     return { ok: false, status: 0, code: 'network', ...describeError('network', 0) };
@@ -121,11 +129,12 @@ async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown):
     }
   }
   if (res.ok) return { ok: true, status: res.status, data: json as T };
-  const err = (json && typeof json === 'object' ? json : {}) as { error?: unknown; message?: unknown };
+  const err = (json && typeof json === 'object' ? json : {}) as { error?: unknown; message?: unknown; providers?: unknown };
   const code = typeof err.error === 'string' ? err.error : `http_${res.status}`;
   const retryAfter = Number(res.headers.get('Retry-After')) || undefined;
   const { message, field } = describeError(code, res.status, typeof err.message === 'string' ? err.message : undefined, retryAfter);
-  return { ok: false, status: res.status, code, message, field };
+  const providers = Array.isArray(err.providers) ? err.providers.filter((p): p is string => typeof p === 'string') : undefined;
+  return { ok: false, status: res.status, code, message, field, ...(providers ? { providers } : {}) };
 }
 
 /** The session ended: show signed out, and tell the sync to remove the account's data from this browser */
@@ -169,7 +178,7 @@ export async function verifyEmail(token: string) {
   return r;
 }
 
-export const resendVerification = () => request<{ ok: true; emailSent?: boolean }>('POST', 'auth/email/resend-verification');
+export const resendVerification = () => request<{ ok: true; emailSent?: boolean }>('POST', 'auth/email/resend-verification', {});
 
 /** Always 202 from the server, whether or not the email has an account */
 export const forgotPassword = (email: string) => request<{ ok: true }>('POST', 'auth/password/forgot', { email });
@@ -188,10 +197,82 @@ export function githubSignInHref(returnTo: string = window.location.hash): strin
 
 /** Resolves true when the server ended the session; on failure (offline) the learner stays signed in. */
 export async function signOut(): Promise<boolean> {
-  const r = await request<unknown>('POST', 'logout');
+  const r = await request<unknown>('POST', 'logout', {});
   if (!r.ok) return false;
   setSignedOut();
   return true;
+}
+
+// ---- Account settings (#/account/security) ----
+
+export interface AccountDetails {
+  user: AccountUser;
+  identities: { provider: string; label: string; linkedAt: number | null }[];
+  /** The ways this account can sign in: 'github', 'email' */
+  signInMethods: string[];
+  hasPassword: boolean;
+  createdAt: number;
+}
+
+export interface AccountSession {
+  id: string;
+  createdAt: number;
+  expiresAt: number;
+  signedInAt: number;
+  /** This browser's session */
+  current: boolean;
+}
+
+export const getAccount = () => request<AccountDetails>('GET', 'account');
+
+export async function updateDisplayName(displayName: string) {
+  const r = await request<{ user: AccountUser }>('PATCH', 'account', { displayName });
+  return signedIn(r);
+}
+
+export const listSessions = () => request<{ sessions: AccountSession[] }>('GET', 'account/sessions');
+
+/** Ends one session; ending this browser's own signs out here */
+export async function endSession(session: AccountSession) {
+  const r = await request<unknown>('DELETE', `account/sessions/${encodeURIComponent(session.id)}`);
+  if (r.ok && session.current) setSignedOut();
+  return r;
+}
+
+/** Signs out every other session; this one stays */
+export const endOtherSessions = () => request<{ ended: number }>('DELETE', 'account/sessions', {});
+
+/** Sets or changes the password. Every other session ends; this browser gets a fresh one. */
+export const changePassword = (input: { currentPassword?: string; newPassword: string }) => request<{ ok: true }>('POST', 'account/password', input);
+
+export const unlinkIdentity = (provider: string, currentPassword?: string) =>
+  request<unknown>('DELETE', `account/identities/${encodeURIComponent(provider)}`, currentPassword === undefined ? {} : { currentPassword });
+
+/** Deletes the account; on success this browser is signed out and the account's data here removed */
+export async function deleteAccount(currentPassword?: string) {
+  const r = await request<unknown>('DELETE', 'account', currentPassword === undefined ? { confirm: 'delete' } : { confirm: 'delete', currentPassword });
+  if (r.ok) setSignedOut();
+  return r;
+}
+
+/** Downloads the account's data as a JSON file */
+export async function downloadExport(): Promise<ApiResult<null>> {
+  let res: Response;
+  try {
+    res = await fetch(apiUrl('account/export'), { credentials: 'same-origin' });
+  } catch {
+    return { ok: false, status: 0, code: 'network', ...describeError('network', 0) };
+  }
+  if (!res.ok) return { ok: false, status: res.status, code: `http_${res.status}`, ...describeError(`http_${res.status}`, res.status) };
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'terminus-account.json';
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  return { ok: true, status: res.status, data: null };
 }
 
 // ---- Hook ----
