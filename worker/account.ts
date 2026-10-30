@@ -7,7 +7,7 @@ import { LIMITS, enforceLimit, forgetLimits } from './ratelimit';
 import {
   REAUTH_WINDOW,
   clearSessionCookie,
-  createSession,
+  createPasswordSession,
   emailUnverified,
   loadUser,
   markAuthenticated,
@@ -182,13 +182,19 @@ async function changePassword(c: RouteContext): Promise<Response> {
   await requireRecentAuth(c, user, session, optStr(body, 'currentPassword', 1024));
   requireStrongPassword(newPassword, user.email, user.display_name);
 
+  const newHash = await hashPassword(newPassword);
   const changed = await c.env.DB.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ? AND password_hash IS ? RETURNING id')
-    .bind(await hashPassword(newPassword), now, user.id, user.password_hash)
+    .bind(newHash, now, user.id, user.password_hash)
     .first<{ id: string }>();
   if (!changed) throw new HttpError(409, 'conflict', 'Your password changed at the same time. Sign in again and retry.');
   await revokeTokens(c.env.DB, user.id, ['reset'], now);
   await c.env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(user.id).run();
-  const token = await createSession(c.env.DB, user.id, now);
+  // The new session exists only while the password is still the one set here: a reset landing in
+  // between (which ends every session) is not undone by this slower request
+  const token = await createPasswordSession(c.env.DB, user.id, now, newHash);
+  if (!token) {
+    throw new HttpError(409, 'conflict', 'Your password was changed again elsewhere. Sign in with the newest one.', { 'Set-Cookie': clearSessionCookie() });
+  }
   return json({ ok: true }, 200, { 'Set-Cookie': sessionCookie(token) });
 }
 
@@ -208,13 +214,28 @@ async function unlinkIdentity(c: RouteContext): Promise<Response> {
   }
   await requireRecentAuth(c, user, session, optStr(body, 'currentPassword', 1024));
 
+  // The check above read a snapshot; each removal below also requires, in the same statement, that
+  // another way to sign in still exists. Two unlinks at once (GitHub and email) cannot both pass.
   const now = c.deps.now();
-  await c.env.DB.prepare('DELETE FROM identities WHERE user_id = ? AND provider = ?').bind(user.id, provider).run();
+  const lastMethod = () => new HttpError(409, 'last_method', 'This is the only way to sign in to your account. Add another method before removing it.');
   if (provider === 'email') {
-    await c.env.DB.prepare('UPDATE users SET email = NULL, email_verified_at = NULL, email_set_at = NULL, password_hash = NULL, updated_at = ? WHERE id = ?')
+    const cleared = await c.env.DB.prepare(
+      `UPDATE users SET email = NULL, email_verified_at = NULL, email_set_at = NULL, password_hash = NULL, updated_at = ?1
+        WHERE id = ?2 AND EXISTS (SELECT 1 FROM identities WHERE user_id = ?2 AND provider = 'github') RETURNING id`,
+    )
       .bind(now, user.id)
-      .run();
+      .first<{ id: string }>();
+    if (!cleared) throw lastMethod();
+    await c.env.DB.prepare("DELETE FROM identities WHERE user_id = ? AND provider = 'email'").bind(user.id).run();
     await revokeTokens(c.env.DB, user.id, ['verify', 'reset'], now);
+  } else {
+    const removed = await c.env.DB.prepare(
+      `DELETE FROM identities WHERE user_id = ?1 AND provider = ?2
+          AND EXISTS (SELECT 1 FROM users WHERE id = ?1 AND email IS NOT NULL AND password_hash IS NOT NULL) RETURNING provider`,
+    )
+      .bind(user.id, provider)
+      .first<{ provider: string }>();
+    if (!removed) throw lastMethod();
   }
   return noContent();
 }
