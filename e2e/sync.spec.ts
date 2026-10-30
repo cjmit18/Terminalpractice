@@ -94,20 +94,21 @@ test.describe('signed in: progress syncs with the account', () => {
     expect(seen.length, 'not added a second time').toBe(uploads);
   });
 
-  test('the Auto save button turns syncing off and back on', async ({ page, context }) => {
+  test('Auto save in Settings turns syncing off and back on', async ({ page, context }) => {
     const puts: Item[][] = [];
     await context.route('**/api/progress', async route => {
       const req = route.request();
       if (req.method() === 'PUT') puts.push((req.postDataJSON() as { items: Item[] }).items);
       await route.fulfill({ json: { items: puts.flat(), epochs: {}, settings: {} } });
     });
-    await page.goto(HW_LAB);
-    const button = page.getByRole('button', { name: /^Auto save: / });
-    await expect(button).toHaveAttribute('aria-pressed', 'true');
-    await button.click();
-    await expect(button).toHaveAccessibleName('Auto save: off');
+    await page.goto('#/settings');
+    const box = page.getByRole('checkbox', { name: /^Auto save/ });
+    await expect(box).toBeChecked();
+    await box.uncheck();
+    await expect(page.getByText('Auto save is off.')).toBeVisible();
 
     // Off: a task finished here stays in this browser
+    await page.goto(HW_LAB);
     await showTerminal(page);
     await runCommand(page, 'lspci');
     await expect(headerProgress(page)).toHaveText(done(1));
@@ -115,8 +116,9 @@ test.describe('signed in: progress syncs with the account', () => {
     expect(puts.flat()).toEqual([]);
 
     // On again: it goes up
-    await button.click();
-    await expect(button).toHaveAccessibleName('Auto save: on');
+    await page.goto('#/settings');
+    await box.check();
+    await expect(box).toBeChecked();
     await expect.poll(() => puts.flat().map(i => i.key)).toContain(`${LAB}/hw-lspci`);
   });
 
@@ -127,8 +129,9 @@ test.describe('signed in: progress syncs with the account', () => {
       for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 0x01000193) >>> 0;
       localStorage.setItem('certsim:autosave-off:v1', JSON.stringify([h.toString(16).padStart(8, '0')]));
     }, USER.id);
+    await page.goto('#/settings');
+    await expect(page.getByRole('checkbox', { name: /^Auto save/ })).not.toBeChecked();
     await page.goto(HW_LAB);
-    await expect(page.getByRole('button', { name: 'Auto save: off' })).toBeVisible();
     await showTerminal(page);
     await runCommand(page, 'lspci');
     await expect(headerProgress(page)).toHaveText(done(1));
@@ -151,9 +154,10 @@ test.describe('signed in: progress syncs with the account', () => {
 test.describe('signed out, sign-in available', () => {
   test.use({ me: { user: null, providers: { github: false, email: true } } });
 
-  test('Auto save leads to sign-in', async ({ page }) => {
+  test('Settings leads to sign-in for saving to an account', async ({ page }) => {
     await page.goto('#/learn');
-    await page.getByRole('link', { name: 'Auto save: sign in to save your progress to an account' }).click();
+    await page.getByRole('link', { name: 'Settings', exact: true }).click();
+    await page.getByRole('link', { name: 'Sign in or create an account' }).click();
     await expect(page.getByRole('heading', { level: 1, name: 'Sign in' })).toBeVisible();
   });
 });

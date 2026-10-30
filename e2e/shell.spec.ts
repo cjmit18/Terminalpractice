@@ -3,21 +3,15 @@ import { test, expect } from './fixtures';
 test.describe('theme', () => {
   test.use({ colorScheme: 'light' });
 
-  test('choosing Dark sets data-theme on <html> and survives a reload', async ({ page, isMobile }) => {
+  test('choosing Dark in Settings sets data-theme on <html> and survives a reload', async ({ page }) => {
     await page.goto('#/linux');
     const html = page.locator('html');
     await expect(html).not.toHaveAttribute('data-theme');
 
-    if (isMobile) {
-      // Phones get one button that steps System -> Light -> Dark
-      await page.getByRole('button', { name: /Switch to light theme/ }).click();
-      await page.getByRole('button', { name: /Switch to dark theme/ }).click();
-      await expect(page.getByRole('button', { name: /^Dark theme\./ })).toBeVisible();
-    } else {
-      const dark = page.getByRole('radiogroup', { name: 'Color theme' }).getByRole('radio', { name: 'Dark theme' });
-      await dark.click();
-      await expect(dark).toHaveAttribute('aria-checked', 'true');
-    }
+    await page.getByRole('link', { name: 'Settings', exact: true }).click();
+    const dark = page.getByRole('group', { name: 'Theme' }).getByRole('radio', { name: /^Dark/ });
+    await dark.check();
+    await expect(dark).toBeChecked();
     await expect(html).toHaveAttribute('data-theme', 'dark');
     await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(17, 19, 23)');
 

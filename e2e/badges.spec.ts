@@ -51,7 +51,7 @@ test('two tabs: clearing badges in one is quiet in the other', async ({ page, co
   await page.reload();
   await expect(earnedList(page)).toContainText('First lab');
   const other = await context.newPage();
-  await other.goto('#/learn');
+  await other.goto('#/settings');
   other.once('dialog', d => d.accept());
   await other.getByRole('button', { name: 'Clear badges and activity' }).click();
   await expect.poll(async () => (await storedActivity(page)).clearedAt).toBeTruthy();
@@ -89,9 +89,13 @@ test('settings: hide badges, turn celebrations off, clear badges and activity', 
   await runCommand(page, 'whoami');
   await expect(celebrations(page)).toContainText('whoami');
 
+  // The Learn page links to Settings
   await page.goto('#/learn');
+  await page.getByRole('link', { name: 'Settings for badges, celebrations and your weekly goal' }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Settings' })).toBeVisible();
   await page.getByRole('group', { name: 'Celebrations' }).getByRole('radio', { name: /^Off/ }).check();
   await page.getByRole('group', { name: 'Badges' }).getByRole('radio', { name: /^Hide/ }).check();
+  await page.goto('#/learn');
   await expect(page.getByRole('heading', { name: 'Badges and celebrations', exact: true })).toBeVisible();
   await expect(page.getByText('Badges are hidden.')).toBeVisible();
   await expect(earnedList(page)).toHaveCount(0);
@@ -102,11 +106,14 @@ test('settings: hide badges, turn celebrations off, clear badges and activity', 
   await runCommand(page, 'ls --help');
   await expect(celebrations(page)).toHaveText('');
 
-  await page.goto('#/learn');
+  await page.goto('#/settings');
   await page.getByRole('group', { name: 'Badges' }).getByRole('radio', { name: /^Show/ }).check();
+  await page.goto('#/learn');
   await expect(earnedList(page)).toContainText('--help');
+  await page.goto('#/settings');
   page.once('dialog', d => d.accept());
   await page.getByRole('button', { name: 'Clear badges and activity' }).click();
+  await page.goto('#/learn');
   await expect(page.getByText('No badges yet.')).toBeVisible();
   const after = await storedActivity(page);
   expect(after.facts).toEqual([]);

@@ -289,6 +289,7 @@ export interface PrefsSetting {
   promptStyle?: 'standard' | 'bracket' | 'short' | 'host-first';
   bannerLine?: 'none' | 'calm' | 'tip' | 'loopback';
   storyNotes?: boolean;
+  terminalText?: 'small' | 'medium' | 'large';
 }
 
 export interface SettingField<T> {
@@ -330,6 +331,7 @@ function sanitizePrefsSetting(raw: unknown): PrefsSetting | null {
     p.promptStyle = r.promptStyle;
   if (r.bannerLine === 'none' || r.bannerLine === 'calm' || r.bannerLine === 'tip' || r.bannerLine === 'loopback') p.bannerLine = r.bannerLine;
   if (typeof r.storyNotes === 'boolean') p.storyNotes = r.storyNotes;
+  if (r.terminalText === 'small' || r.terminalText === 'medium' || r.terminalText === 'large') p.terminalText = r.terminalText;
   return p;
 }
 

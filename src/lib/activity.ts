@@ -43,6 +43,10 @@ export const PROMPT_STYLES: PromptStyle[] = ['standard', 'bracket', 'short', 'ho
 export type BannerLine = 'none' | 'calm' | 'tip' | 'loopback';
 export const BANNER_LINES: BannerLine[] = ['none', 'calm', 'tip', 'loopback'];
 
+/** Text size in the terminals (labs, Sandbox, simulators) */
+export type TerminalText = 'small' | 'medium' | 'large';
+export const TERMINAL_TEXT_SIZES: TerminalText[] = ['small', 'medium', 'large'];
+
 export interface ActivityPrefs {
   celebrations?: CelebrationMode;
   showBadges?: boolean;
@@ -54,6 +58,8 @@ export interface ActivityPrefs {
   bannerLine?: BannerLine;
   /** Story framing on labs (help-desk tickets); anything but false is on */
   storyNotes?: boolean;
+  /** Terminal text size; medium is the default */
+  terminalText?: TerminalText;
 }
 
 export interface Activity {
@@ -92,6 +98,7 @@ export const DEFAULT_PREFS: Required<ActivityPrefs> = {
   promptStyle: 'standard',
   bannerLine: 'none',
   storyNotes: true,
+  terminalText: 'medium',
 };
 
 export const prefsOf = (a: Activity): Required<ActivityPrefs> => ({ ...DEFAULT_PREFS, ...a.prefs });
@@ -148,6 +155,7 @@ function sanitizePrefs(raw: unknown): ActivityPrefs | undefined {
   if (PROMPT_STYLES.includes(r.promptStyle as PromptStyle)) prefs.promptStyle = r.promptStyle as PromptStyle;
   if (BANNER_LINES.includes(r.bannerLine as BannerLine)) prefs.bannerLine = r.bannerLine as BannerLine;
   if (typeof r.storyNotes === 'boolean') prefs.storyNotes = r.storyNotes;
+  if (TERMINAL_TEXT_SIZES.includes(r.terminalText as TerminalText)) prefs.terminalText = r.terminalText as TerminalText;
   return Object.keys(prefs).length ? prefs : undefined;
 }
 

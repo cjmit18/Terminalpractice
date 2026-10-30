@@ -2,6 +2,7 @@ import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { BottomNav, Header } from './components/Header';
 import { ViewAsBanner } from './components/admin/ViewAsBanner';
+import { SettingsPage } from './components/settings/SettingsPage';
 import { ModuleSelector } from './components/ModuleSelector';
 import { ModuleRunner } from './components/ModuleRunner';
 import { ExamModule } from './types/modules';
@@ -302,7 +303,7 @@ export default function App() {
       challengeTitle,
       challengeRoute ? 'Challenges' : null,
       reviewOpen ? 'Review' : null,
-      route.section === 'badge' ? 'Badge' : route.section === 'testing' ? 'Testing' : route.section === 'account' ? 'Account' : route.section === 'admin' ? 'Admin' : PAGE_TITLES[route.section],
+      route.section === 'badge' ? 'Badge' : route.section === 'testing' ? 'Testing' : route.section === 'account' ? 'Account' : route.section === 'admin' ? 'Admin' : route.section === 'settings' ? 'Settings' : PAGE_TITLES[route.section],
       'Terminus CertSim',
     ];
     document.title = parts.filter(Boolean).join(' · ');
@@ -406,12 +407,11 @@ export default function App() {
       <ViewAsBanner />
 
       <Header
-        current={navSection(route.section)}
+        current={route.section === 'settings' ? null : navSection(route.section)}
         hrefs={hrefs}
         tasksDone={tasksDone}
         tasksTotal={tasksTotal}
-        theme={theme}
-        onThemeChange={setTheme}
+        onSettings={route.section === 'settings'}
       />
 
       <main id="main" ref={mainRef} tabIndex={-1} className="flex-1 min-h-0 overflow-y-auto focus:outline-none">
@@ -516,10 +516,12 @@ export default function App() {
             <AdminPage />
           </Suspense>
         )}
+
+        {route.section === 'settings' && <SettingsPage theme={theme} onThemeChange={setTheme} />}
         </PageErrorBoundary>
       </main>
 
-      <BottomNav current={navSection(route.section)} hrefs={hrefs} labsHref={hrefs[lastTrack]} />
+      <BottomNav current={route.section === 'settings' ? null : navSection(route.section)} hrefs={hrefs} labsHref={hrefs[lastTrack]} />
     </div>
     </GameLayerProvider>
   );

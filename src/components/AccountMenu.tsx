@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { LogIn, LogOut } from 'lucide-react';
 import { useDisplayAccount } from '../lib/viewAs';
-import { accountHref, routeHref } from '../lib/router';
+import { accountHref, routeHref, SETTINGS_HREF } from '../lib/router';
 
 /** Header control for optional sign-in. Renders nothing where sign-in is not offered. */
 export const AccountMenu: React.FC = () => {
@@ -79,10 +79,13 @@ export const AccountMenu: React.FC = () => {
             user.login && <p className="text-muted truncate">Signed in with GitHub as {user.login}</p>
           )}
           <p className="mt-3 text-muted">
-            Your progress syncs to your account while you are signed in.
+            Your progress syncs to your account while Auto save is on.
           </p>
           <a href={accountHref()} className="mt-3 flex items-center min-h-10 px-2 -mx-2 rounded-sm text-text hover:bg-surface-2">
             Your account
+          </a>
+          <a href={SETTINGS_HREF} className="flex items-center min-h-10 px-2 -mx-2 rounded-sm text-text hover:bg-surface-2">
+            Settings
           </a>
           {role && (
             <a href={routeHref({ section: 'admin' })} className="flex items-center min-h-10 px-2 -mx-2 rounded-sm text-text hover:bg-surface-2">
