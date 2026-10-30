@@ -14,7 +14,7 @@ export interface Limit {
   windowMs: number;
 }
 
-/** The sign-in and sign-up limits, plus a few for signed-in actions that send email or check a password */
+/** The sign-in and sign-up limits, plus a few for signed-in actions that send email, check a password or store answers */
 export const LIMITS = {
   /** Soft: a correct password still gets through while the per-IP limit holds (the email sign-in route applies this) */
   loginEmail: { name: 'login-email', max: 10, windowMs: 15 * MINUTE },
@@ -27,6 +27,8 @@ export const LIMITS = {
   resendVerification: { name: 'resend-user', max: 3, windowMs: HOUR },
   changeEmail: { name: 'email-user', max: 5, windowMs: HOUR },
   passwordCheck: { name: 'password-user', max: 10, windowMs: 15 * MINUTE },
+  /** Shared answers (worker/answers.ts): the app sends small batches, far fewer than this */
+  answerReports: { name: 'answers-user', max: 120, windowMs: HOUR },
 } satisfies Record<string, Limit>;
 
 /** The longest window of any limit: a row whose window started longer ago than this is dead */
@@ -34,7 +36,7 @@ export const MAX_WINDOW = Math.max(...Object.values(LIMITS).map(l => l.windowMs)
 
 /** Limits keyed by a normalized email address, and those keyed by a user id (for clean-up on account delete) */
 export const EMAIL_LIMITS: Limit[] = [LIMITS.loginEmail, LIMITS.loginEmailHour, LIMITS.forgotEmail];
-export const USER_LIMITS: Limit[] = [LIMITS.resendVerification, LIMITS.changeEmail, LIMITS.passwordCheck];
+export const USER_LIMITS: Limit[] = [LIMITS.resendVerification, LIMITS.changeEmail, LIMITS.passwordCheck, LIMITS.answerReports];
 
 /** The settings that decide how rate-limit subjects are hashed */
 export type PepperEnv = Pick<ApiEnv, 'RATE_LIMIT_PEPPER' | 'ALLOW_UNPEPPERED_RATE_LIMITS'>;
