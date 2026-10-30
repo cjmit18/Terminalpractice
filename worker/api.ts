@@ -19,6 +19,7 @@ import { emailRoutes } from './auth/email';
 import { syncRoutes } from './sync';
 import { accountRoutes } from './account';
 import { adminRoutes, roleOf } from './admin';
+import { answerRoutes } from './answers';
 import { emailSendingEnabled } from './mail';
 import { currentSession, loadUser, recordSignIn, toPublicUser } from './session';
 
@@ -55,7 +56,7 @@ export async function handleApi(request: Request, env: ApiEnv, deps: ApiDeps = d
   const url = new URL(request.url);
   if (!url.pathname.startsWith('/api/')) return null;
 
-  const routed = [...emailRoutes, ...syncRoutes, ...accountRoutes, ...adminRoutes]
+  const routed = [...emailRoutes, ...syncRoutes, ...accountRoutes, ...adminRoutes, ...answerRoutes]
     .map(route => ({ route, params: matchPath(route.path, url.pathname) }))
     .filter((m): m is { route: Route; params: Record<string, string> } => m.params !== null);
   if (routed.length) {
