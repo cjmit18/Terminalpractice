@@ -159,7 +159,7 @@ export const ResetPage: React.FC = () => {
 /** #/account/verify?token=…: confirms the email as soon as the page opens. */
 export const VerifyPage: React.FC = () => {
   const token = useHashToken();
-  const [state, setState] = useState<{ kind: 'working' } | { kind: 'done' } | { kind: 'failed'; message: string }>(
+  const [state, setState] = useState<{ kind: 'working' } | { kind: 'done' } | { kind: 'failed'; message: string; code?: string }>(
     token ? { kind: 'working' } : { kind: 'failed', message: 'This link is missing its code. Open the link from the email again.' },
   );
   const sent = useRef(false);
@@ -167,7 +167,7 @@ export const VerifyPage: React.FC = () => {
   useEffect(() => {
     if (!token || sent.current) return;
     sent.current = true;
-    void verifyEmail(token).then(r => setState(r.ok ? { kind: 'done' } : { kind: 'failed', message: r.message }));
+    void verifyEmail(token).then(r => setState(r.ok ? { kind: 'done' } : { kind: 'failed', message: r.message, code: r.code }));
   }, [token]);
 
   return (
@@ -179,13 +179,22 @@ export const VerifyPage: React.FC = () => {
           {state.message}
         </p>
       )}
-      {state.kind !== 'working' && (
+      {state.kind === 'failed' && state.code === 'email_claim_lapsed' ? (
+        // A new confirm link is not sent for a lapsed claim; a reset link to the inbox confirms the address
         <p className="text-sm">
-          <a href={accountHref()} className={textLink}>
-            Go to your account
+          <a href={accountHref('forgot')} className={textLink}>
+            Reset your password to confirm this address
           </a>
-          {state.kind === 'failed' && <span className="text-muted"> to send a new link.</span>}
         </p>
+      ) : (
+        state.kind !== 'working' && (
+          <p className="text-sm">
+            <a href={accountHref()} className={textLink}>
+              Go to your account
+            </a>
+            {state.kind === 'failed' && <span className="text-muted"> to send a new link.</span>}
+          </p>
+        )
       )}
     </div>
   );
