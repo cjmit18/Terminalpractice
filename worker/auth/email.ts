@@ -253,13 +253,16 @@ async function reset(c: RouteContext): Promise<Response> {
     .first<{ id: string; email_verified_at: number | null }>();
   if (!current) throw INVALID_TOKEN();
   // The same check again inside the write: the address may have been released to a new sign-up since.
-  // Nothing changes unless this account still holds the address the link was sent to.
+  // Nothing changes unless this account still holds the address the link was sent to, and no newer reset
+  // link has been issued since this one: a newer reset, even one that finished first, always wins (#51, 2)
   const changed = await c.env.DB.prepare(
-    `UPDATE users SET password_hash = ?, email_verified_at = COALESCE(email_verified_at, ?), updated_at = ?
-      WHERE id = ? AND email IS NOT NULL AND email = (SELECT email FROM auth_tokens WHERE token_hash = ?)
+    `UPDATE users SET password_hash = ?1, email_verified_at = COALESCE(email_verified_at, ?2), updated_at = ?2
+      WHERE id = ?3 AND email IS NOT NULL AND email = (SELECT email FROM auth_tokens WHERE token_hash = ?4)
+        AND NOT EXISTS (SELECT 1 FROM auth_tokens WHERE user_id = ?3 AND purpose = 'reset'
+                          AND rowid > (SELECT rowid FROM auth_tokens WHERE token_hash = ?4))
       RETURNING id`,
   )
-    .bind(hash, now, now, userId, tokenHash)
+    .bind(hash, now, userId, tokenHash)
     .first<{ id: string }>();
   if (!changed) throw INVALID_TOKEN();
   if (current.email_verified_at === null) {

@@ -245,3 +245,25 @@ test('#51-1: a reset that is about to sign in gets no session if a newer reset f
   assert.equal(count(s.db, 'sessions'), 1, "only the newer reset's session exists");
   assert.equal((await s.login('learner@example.com', 'violet harbor lantern quiz')).status, 200, 'the newer password works');
 });
+
+test('#51-2: an older reset that resumes after a newer one finished changes nothing', async () => {
+  const s = setup();
+  await s.register();
+  await forgot(s);
+  const older = tokenIn(s.sent.at(-1)!);
+  // The older reset has used up its link and waits just before writing its password
+  const hold = holdNext(s, 'UPDATE users SET password_hash');
+  const slowReset = reset(s, older);
+  await hold.atGate;
+  await forgot(s);
+  const newer = await reset(s, tokenIn(s.sent.at(-1)!), 'violet harbor lantern quiz');
+  assert.equal(newer.status, 200);
+  const newerSession = sessionOf(newer);
+  hold.release();
+  const late = await slowReset;
+  assert.equal(late.status, 400);
+  assert.equal((await late.json()).error, 'invalid_token');
+  assert.equal((await s.login('learner@example.com', NEW_PASSWORD)).status, 401, "the older reset's password was never set");
+  assert.notEqual(await me(s, newerSession), null, "the newer reset's session is still signed in");
+  assert.equal((await s.login('learner@example.com', 'violet harbor lantern quiz')).status, 200);
+});
