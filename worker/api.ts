@@ -20,7 +20,7 @@ import { syncRoutes } from './sync';
 import { accountRoutes } from './account';
 import { adminRoutes, roleOf } from './admin';
 import { emailSendingEnabled } from './mail';
-import { REAUTH_WINDOW, currentSession, emailUnverified, loadUser, recordSignIn, toPublicUser } from './session';
+import { REAUTH_WINDOW, SESSION_MAX_AGE, currentSession, emailUnverified, loadUser, recordSignIn, toPublicUser } from './session';
 
 export type { ApiDeps, ApiEnv, Db, DbStatement } from './http';
 
@@ -228,7 +228,7 @@ async function githubCallback(request: Request, url: URL, env: ApiEnv, deps: Api
     // Only for the session that started the link: not after a sign-out, or with another account signed in
     const session = await currentSession({ request, env, deps });
     if (!session || session.tokenHash !== linkSession) return back(undefined, 'session_changed');
-    const result = await linkGithub(env.DB, session.userId, github, deps.now());
+    const result = await linkGithub(env.DB, session.userId, session.tokenHash, github, deps.now());
     return back(undefined, result === 'ok' ? undefined : result);
   }
   const userId = await upsertGithubUser(env.DB, deps.now(), github);
@@ -282,41 +282,46 @@ async function upsertGithubUser(
 
 /**
  * Links a GitHub account to a user (portal part 7d). Never moves an identity that belongs to another
- * account, and never gives one account two GitHub identities: the insert checks both in the same
- * statement, so two links finishing at once cannot both land.
+ * account, and never gives one account two GitHub identities. The insert checks both, and that the
+ * session which started the link is still alive, in the same statement: two links finishing at once
+ * cannot both land, and a sign-out or password change that lands after the callback's own session check
+ * still stops the link.
  */
 async function linkGithub(
   db: Db,
   userId: string,
+  sessionHash: string,
   p: { providerId: string; login: string; avatarUrl: string | null },
   now: number,
-): Promise<'ok' | 'identity_in_use' | 'provider_already_linked'> {
-  const owner = await db
-    .prepare('SELECT user_id FROM identities WHERE provider = ? AND provider_id = ?')
-    .bind('github', p.providerId)
-    .first<{ user_id: string }>();
+): Promise<'ok' | 'identity_in_use' | 'provider_already_linked' | 'session_changed'> {
+  const ownerOf = () =>
+    db
+      .prepare('SELECT user_id FROM identities WHERE provider = ? AND provider_id = ?')
+      .bind('github', p.providerId)
+      .first<{ user_id: string }>();
+  const owner = await ownerOf();
   if (owner) return owner.user_id === userId ? 'ok' : 'identity_in_use';
   const linked = await db
     .prepare(
       `INSERT INTO identities (provider, provider_id, user_id, login, linked_at)
          SELECT 'github', ?2, id, ?3, ?4 FROM users
-         WHERE id = ?1 AND NOT EXISTS (SELECT 1 FROM identities WHERE user_id = ?1 AND provider = 'github')
+         WHERE id = ?1
+           AND NOT EXISTS (SELECT 1 FROM identities WHERE user_id = ?1 AND provider = 'github')
+           AND EXISTS (SELECT 1 FROM sessions WHERE token_hash = ?5 AND user_id = ?1 AND expires_at > ?4 AND created_at > ?6)
        ON CONFLICT (provider, provider_id) DO NOTHING
        RETURNING user_id`,
     )
-    .bind(userId, p.providerId, p.login, now)
+    .bind(userId, p.providerId, p.login, now, sessionHash, now - SESSION_MAX_AGE)
     .first<{ user_id: string }>();
   if (linked) {
     // The GitHub picture fills an account that has none; the display name stays the learner's own
     await db.prepare('UPDATE users SET avatar_url = COALESCE(avatar_url, ?) WHERE id = ?').bind(p.avatarUrl, userId).run();
     return 'ok';
   }
-  const winner = await db
-    .prepare('SELECT user_id FROM identities WHERE provider = ? AND provider_id = ?')
-    .bind('github', p.providerId)
-    .first<{ user_id: string }>();
-  if (winner && winner.user_id !== userId) return 'identity_in_use';
-  return winner ? 'ok' : 'provider_already_linked';
+  const winner = await ownerOf();
+  if (winner) return winner.user_id === userId ? 'ok' : 'identity_in_use';
+  const alive = await db.prepare('SELECT 1 AS x FROM sessions WHERE token_hash = ? AND user_id = ?').bind(sessionHash, userId).first();
+  return alive ? 'provider_already_linked' : 'session_changed';
 }
 
 // --- Sessions ------------------------------------------------------------------------------

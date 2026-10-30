@@ -223,18 +223,24 @@ async function addEmail(c: RouteContext): Promise<Response> {
   const hash = await hashPassword(password);
   let added: { id: string } | null;
   try {
-    // Only while the account still has no email: two adds at once cannot both land
+    // Only while the account still has no email (two adds at once cannot both land), and only while this
+    // session is still signed in: a sign-out landing during the request does not end with a new way in
     added = await c.env.DB.prepare(
-      `UPDATE users SET email = ?, email_verified_at = NULL, email_set_at = ?, password_hash = ?, updated_at = ?
-         WHERE id = ? AND email IS NULL RETURNING id`,
+      `UPDATE users SET email = ?1, email_verified_at = NULL, email_set_at = ?2, password_hash = ?3, updated_at = ?2
+         WHERE id = ?4 AND email IS NULL AND EXISTS (SELECT 1 FROM sessions WHERE token_hash = ?5 AND user_id = ?4)
+         RETURNING id`,
     )
-      .bind(email, now, hash, now, user.id)
+      .bind(email, now, hash, user.id, session.tokenHash)
       .first<{ id: string }>();
   } catch (err) {
     if (isUniqueViolation(err)) throw taken();
     throw err;
   }
-  if (!added) throw new HttpError(409, 'has_email', 'This account already has an email address.');
+  if (!added) {
+    const signedIn = await c.env.DB.prepare('SELECT 1 AS x FROM sessions WHERE token_hash = ?').bind(session.tokenHash).first();
+    if (!signedIn) throw new HttpError(401, 'not_signed_in', 'Sign in to continue.');
+    throw new HttpError(409, 'has_email', 'This account already has an email address.');
+  }
   await c.env.DB.prepare('INSERT INTO identities (provider, provider_id, user_id, login, linked_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING')
     .bind('email', email, user.id, email, now)
     .run();
