@@ -20,6 +20,8 @@ export const test = base.extend<{ allowConsoleErrors: boolean; consoleErrors: st
     async ({ context, me }, use) => {
       await context.route('**/api/me', route => route.fulfill({ json: me }));
       await context.route('**/api/logout', route => route.fulfill({ json: { ok: true } }));
+      // Signed in, the app syncs progress; an account with none yet, unless a test routes it itself
+      await context.route('**/api/progress', route => route.fulfill({ json: { items: [], epochs: {}, settings: {} } }));
       await use();
     },
     { auto: true },

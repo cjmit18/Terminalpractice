@@ -232,10 +232,12 @@ export const PrivacyNote: React.FC = () => (
     </h2>
     <p>
       You don’t need an account. Everything in the app works without one, and your progress is saved in this browser.
+      Signed in, it also syncs to your account.
     </p>
     <p>
       An account stores your display name, your email, a scrambled form of your password (never the password itself) and
-      the sign-in methods you use. Never what you type in a terminal. Syncing your progress to the account comes next.
+      the sign-in methods you use, and your progress so it can follow you to other devices: tasks done, lessons read,
+      quiz scores, badges and settings. Never what you type in a terminal.
     </p>
     <p>It is never sold or shared for advertising. Accounts are for people 13 or older.</p>
   </section>

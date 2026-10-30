@@ -43,6 +43,14 @@ export const ACCOUNTS_ENABLED = import.meta.env?.VITE_ACCOUNTS !== 'off';
 
 const NO_PROVIDERS: Providers = { github: false, email: false };
 
+/**
+ * Sent on window when the session ended: a sign-out here, a password reset that ended every session, or
+ * the server no longer knowing the session (a 401 to the progress sync). The sync (src/lib/sync.ts) stops
+ * and removes the account's data from this browser; the account store below shows signed out.
+ */
+export const SIGNED_OUT_EVENT = 'certsim:signed-out';
+export const announceSignedOut = () => window.dispatchEvent(new Event(SIGNED_OUT_EVENT));
+
 const apiUrl = (path: string) =>
   new URL(`api/${path}`, apiBase(import.meta.env.BASE_URL, window.location.origin, document.baseURI)).toString();
 
@@ -120,6 +128,17 @@ async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown):
   return { ok: false, status: res.status, code, message, field };
 }
 
+/** The session ended: show signed out, and tell the sync to remove the account's data from this browser */
+function setSignedOut(): void {
+  update({ account: { status: 'signed-out' } });
+  announceSignedOut();
+}
+
+/** Someone else announced the end of the session (the sync got a 401) */
+function onSignedOutElsewhere(): void {
+  if (snapshot.account.status === 'signed-in') update({ account: { status: 'signed-out' } });
+}
+
 /** The server set the session cookie: show signed in */
 function signedIn<T extends { user: AccountUser }>(r: ApiResult<T>): ApiResult<T> {
   if (r.ok && r.data?.user) update({ account: { status: 'signed-in', user: r.data.user } });
@@ -155,9 +174,12 @@ export const resendVerification = () => request<{ ok: true; emailSent?: boolean 
 /** Always 202 from the server, whether or not the email has an account */
 export const forgotPassword = (email: string) => request<{ ok: true }>('POST', 'auth/password/forgot', { email });
 
-/** A reset ends every session of that account and signs this browser in afresh */
-export const resetPassword = async (token: string, password: string) =>
-  signedIn(await request<{ user: AccountUser }>('POST', 'auth/password/reset', { token, password }));
+/** A reset ends every session of that account, this browser's included, and signs in afresh */
+export async function resetPassword(token: string, password: string) {
+  const r = await request<{ user: AccountUser }>('POST', 'auth/password/reset', { token, password });
+  if (r.ok && snapshot.account.status === 'signed-in') setSignedOut();
+  return signedIn(r);
+}
 
 /** "Continue with GitHub": GitHub sends the learner back to the page they were on (or `returnTo`). */
 export function githubSignInHref(returnTo: string = window.location.hash): string {
@@ -168,7 +190,7 @@ export function githubSignInHref(returnTo: string = window.location.hash): strin
 export async function signOut(): Promise<boolean> {
   const r = await request<unknown>('POST', 'logout');
   if (!r.ok) return false;
-  update({ account: { status: 'signed-out' } });
+  setSignedOut();
   return true;
 }
 
@@ -179,6 +201,7 @@ export function useAccount(): Snapshot & { signOut: () => Promise<boolean>; refr
   useEffect(() => {
     if (started || !ACCOUNTS_ENABLED) return;
     started = true;
+    window.addEventListener(SIGNED_OUT_EVENT, onSignedOutElsewhere);
     void refreshAccount();
   }, []);
   const doSignOut = useCallback(() => signOut(), []);

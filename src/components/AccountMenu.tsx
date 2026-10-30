@@ -79,7 +79,7 @@ export const AccountMenu: React.FC = () => {
             user.login && <p className="text-muted truncate">Signed in with GitHub as {user.login}</p>
           )}
           <p className="mt-3 text-muted">
-            Your progress is saved in this browser. Syncing it between your devices is the next step.
+            Your progress syncs to your account while you are signed in.
           </p>
           <a href={accountHref()} className="mt-3 flex items-center min-h-10 px-2 -mx-2 rounded-sm text-text hover:bg-surface-2">
             Your account
