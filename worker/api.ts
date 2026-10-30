@@ -18,8 +18,9 @@ import {
 import { emailRoutes } from './auth/email';
 import { syncRoutes } from './sync';
 import { accountRoutes } from './account';
+import { adminRoutes, roleOf } from './admin';
 import { emailSendingEnabled } from './mail';
-import { currentSession, loadUser, toPublicUser } from './session';
+import { currentSession, loadUser, recordSignIn, toPublicUser } from './session';
 
 export type { ApiDeps, ApiEnv, Db, DbStatement } from './http';
 
@@ -54,7 +55,7 @@ export async function handleApi(request: Request, env: ApiEnv, deps: ApiDeps = d
   const url = new URL(request.url);
   if (!url.pathname.startsWith('/api/')) return null;
 
-  const routed = [...emailRoutes, ...syncRoutes, ...accountRoutes]
+  const routed = [...emailRoutes, ...syncRoutes, ...accountRoutes, ...adminRoutes]
     .map(route => ({ route, params: matchPath(route.path, url.pathname) }))
     .filter((m): m is { route: Route; params: Record<string, string> } => m.params !== null);
   if (routed.length) {
@@ -255,6 +256,7 @@ async function createSession(db: Db, userId: string, now: number): Promise<strin
     .prepare('INSERT INTO sessions (token_hash, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)')
     .bind(await sha256(token), userId, now + SESSION_TTL, now)
     .run();
+  await recordSignIn(db, userId, now);
   return token;
 }
 
@@ -281,7 +283,9 @@ async function me(request: Request, env: ApiEnv, deps: ApiDeps): Promise<Respons
       return signedOut();
     }
     const user: PublicUser = toPublicUser(row);
-    return json({ user, providers, emailSending }, 200, session.renewedCookie ? { 'Set-Cookie': session.renewedCookie } : {});
+    // 'owner' or 'admin' opens the admin dashboard; null for everyone else
+    const role = await roleOf(env, row);
+    return json({ user, role, providers, emailSending }, 200, session.renewedCookie ? { 'Set-Cookie': session.renewedCookie } : {});
   } catch (err) {
     // A database without the account tables (a preview build's empty D1, where sign-in is off) has
     // no sessions, so a stray cookie means signed out rather than a 500

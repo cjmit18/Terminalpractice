@@ -26,9 +26,9 @@ disagree with this page, this page wins until they are updated.
 4. Password reset, plus the open email-claim fixes (SV3-1 remainder, SV3-3, SV3-4, SV3-11) (done, #49)
 5. Accounts and account pages: account menu, `#/account` (sign in, create account, the account page), `#/account/forgot`, `#/account/verify`, `#/account/reset` (done, #50). `SMTP_PASSWORD` is set only after this ships.
 6. Google sign-in, with the router rewrite (absorbs round-3 PR 6: shared helpers, `APP_ORIGINS`)
-7. Security: the security page (sessions, linked sign-ins, delete account) and the security headers / CSP. 7a: the account API (`/api/account`, sessions, password, unlink, export, delete) (in review); 7b: the security page; 7c: security headers / CSP for the whole site
+7. Security: the security page (sessions, linked sign-ins, delete account) and the security headers / CSP. 7a: the account API (`/api/account`, sessions, password, unlink, export, delete) (done, #56); 7b: the security page; 7c: security headers / CSP for the whole site
 8. Progress sync: 8a the server (done, #53), 8b the app's sync engine and the Auto save button (done, #54)
-9. Admin dashboard: admin allowlist managed by CJ, "view as" setting, admins excluded from tracking, opt-in most-missed totals for content
+9. Admin dashboard: admin allowlist managed by CJ, "view as" setting, admins excluded from tracking, opt-in most-missed totals for content. 9a: the admin API (owner from the `OWNER_EMAIL` secret, admins table in migration 0006, last sign-in time in 0007, `/api/admin/stats`, `/api/admin/admins`) (in review); 9b: the `#/admin` page and "view as"; 9c: opt-in most-missed questions
 10. Stronger password hashing: passwords are PBKDF2-SHA256 at 100,000 iterations today (`worker/password.ts`), the most Workers allow for PBKDF2 and below OWASP's 600,000. Move new hashes to Argon2id (WebAssembly, tuned to the Worker's CPU limit), keep `verifyPassword` reading the old `pbkdf2$…` lines, and rehash each account on its next successful sign-in. Needs a CPU-time check on the live Worker first.
 
 Rules for parts 4-10: port from `portal/base` by hand, never copy whole files from it; keep `worker/smtp.ts` and Purelymail; no Resend.

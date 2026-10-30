@@ -47,6 +47,11 @@ export interface ApiEnv {
    * tests and previews (whose databases hold no real accounts); production must set the pepper instead.
    */
   ALLOW_UNPEPPERED_RATE_LIMITS?: string;
+  /**
+   * The site owner's email (set as a secret: `wrangler secret put OWNER_EMAIL`, so it stays out of the repo).
+   * The account with this confirmed address is the owner: it sees the admin dashboard and adds admins.
+   */
+  OWNER_EMAIL?: string;
 }
 
 export interface ApiDeps {
