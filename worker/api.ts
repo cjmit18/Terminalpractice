@@ -17,6 +17,7 @@ import {
 } from './http';
 import { emailRoutes } from './auth/email';
 import { syncRoutes } from './sync';
+import { adminRoutes, roleOf } from './admin';
 import { emailSendingEnabled } from './mail';
 import { currentSession, loadUser, toPublicUser } from './session';
 
@@ -53,7 +54,7 @@ export async function handleApi(request: Request, env: ApiEnv, deps: ApiDeps = d
   const url = new URL(request.url);
   if (!url.pathname.startsWith('/api/')) return null;
 
-  const routed = [...emailRoutes, ...syncRoutes].filter(r => r.path === url.pathname);
+  const routed = [...emailRoutes, ...syncRoutes, ...adminRoutes].filter(r => r.path === url.pathname);
   if (routed.length) return handleRoute(routed.find(r => r.method === request.method), request, url, env, deps);
 
   const route = `${request.method} ${url.pathname}`;
@@ -261,7 +262,9 @@ async function me(request: Request, env: ApiEnv, deps: ApiDeps): Promise<Respons
       return signedOut();
     }
     const user: PublicUser = toPublicUser(row);
-    return json({ user, providers, emailSending }, 200, session.renewedCookie ? { 'Set-Cookie': session.renewedCookie } : {});
+    // 'owner' or 'admin' opens the admin dashboard; null for everyone else
+    const role = await roleOf(env, row);
+    return json({ user, role, providers, emailSending }, 200, session.renewedCookie ? { 'Set-Cookie': session.renewedCookie } : {});
   } catch (err) {
     // A database without the account tables (a preview build's empty D1, where sign-in is off) has
     // no sessions, so a stray cookie means signed out rather than a 500
