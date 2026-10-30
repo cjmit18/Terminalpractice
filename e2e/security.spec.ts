@@ -64,6 +64,15 @@ async function accountApi(context: BrowserContext, opts: { hasPassword: boolean;
       stub.sessions = [{ id: 'dddddddddddddddd', createdAt: now, expiresAt: now + 30 * DAY, signedInAt: now, current: true }];
       return route.fulfill({ json: { ok: true } });
     }
+    if (path === '/api/account/reauth') {
+      return (body as { currentPassword?: string }).currentPassword === 'violet harbor lantern quiz'
+        ? route.fulfill({ json: { ok: true, authenticatedAt: now } })
+        : route.fulfill({ status: 403, json: { error: 'wrong_password', message: 'Your current password is not correct.' } });
+    }
+    if (path === '/api/account/email') {
+      const b = body as { email: string };
+      return route.fulfill({ status: 201, json: { user: { ...user, email: b.email, emailVerified: false } } });
+    }
     return route.fulfill({ status: 404, json: { error: 'not_found', message: 'Not found' } });
   });
   return stub;
@@ -142,6 +151,30 @@ test.describe('signed in with a password', () => {
   });
 });
 
+test.describe('adding a way to sign in, with a password', () => {
+  test.use({ me: { user: USER, providers: { github: true, email: true }, emailSending: true } });
+
+  test('Link GitHub checks the password, then goes to GitHub; a refusal on the way back is explained', async ({ page, context }) => {
+    const stub = await accountApi(context, { hasPassword: true });
+    // GitHub (stubbed) sends the learner back: this GitHub account already has its own Terminus account
+    let started: URL | null = null;
+    await context.route('**/api/auth/github/start*', route => {
+      started = new URL(route.request().url());
+      return route.fulfill({ status: 302, headers: { Location: '/#/account/security?error=identity_in_use' } });
+    });
+    await page.goto('#/account/security');
+    const add = page.getByRole('heading', { name: 'Add a way to sign in' }).locator('..');
+    await add.getByRole('textbox', { name: 'Current password' }).fill('violet harbor lantern quiz');
+    await page.getByRole('button', { name: 'Link GitHub' }).click();
+    await expect(page.getByText('That GitHub account already has its own Terminus account')).toBeVisible();
+    expect(stub.sent.find(s => s.path === '/api/account/reauth')?.body).toEqual({ currentPassword: 'violet harbor lantern quiz' });
+    expect(started!.searchParams.get('link')).toBe('1');
+    expect(started!.searchParams.get('return')).toBe('#/account/security');
+    // The reason is read once: the address no longer carries it
+    await expect(page).toHaveURL(/#\/account\/security$/);
+  });
+});
+
 test.describe('signed in with GitHub only', () => {
   test.use({ me: { user: GITHUB_USER, providers: { github: true } } });
   // The browser logs the stubbed 403 as a console error
@@ -163,6 +196,17 @@ test.describe('signed in with GitHub only', () => {
     const href = new URL((await again.getAttribute('href'))!);
     expect(href.pathname).toBe('/api/auth/github/start');
     expect(href.searchParams.get('return')).toBe('#/account/security');
+  });
+
+  test('adding email and a password: sent lowercased, then the confirmation note', async ({ page, context }) => {
+    const stub = await accountApi(context, { hasPassword: false, github: true, user: GITHUB_USER });
+    await page.goto('#/account/security');
+    await expect(page.getByRole('button', { name: 'Link GitHub' })).toHaveCount(0);
+    await page.getByLabel('Email', { exact: true }).fill('Octo@Example.com ');
+    await page.getByLabel('New password', { exact: true }).last().fill('a brand new long passphrase');
+    await page.getByRole('button', { name: 'Add email and password' }).click();
+    await expect(page.getByText('Added. We sent a link to octo@example.com: open it to confirm the address.')).toBeVisible();
+    expect(stub.sent.find(s => s.path === '/api/account/email')?.body).toEqual({ email: 'octo@example.com', newPassword: 'a brand new long passphrase' });
   });
 });
 

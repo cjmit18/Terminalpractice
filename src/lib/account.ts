@@ -220,6 +220,19 @@ export function githubSignInHref(returnTo: string = window.location.hash): strin
   return `${apiUrl('auth/github/start')}?return=${encodeURIComponent(returnTo || '#/learn')}`;
 }
 
+/** "Link GitHub" (portal part 7d): needs a password check or sign-in within the last 10 minutes; GitHub returns to `returnTo` */
+export function githubLinkHref(returnTo: string): string {
+  return `${apiUrl('auth/github/start')}?link=1&return=${encodeURIComponent(returnTo)}`;
+}
+
+/** Proves the password again, so a sensitive step that follows (linking GitHub) is allowed */
+export const reauthenticate = (currentPassword: string) => request<{ ok: true }>('POST', 'account/reauth', { currentPassword });
+
+/** Adds email and password sign-in to an account made with GitHub; a confirmation link is sent to the address */
+export async function addEmailSignIn(input: { email: string; newPassword: string }) {
+  return signedIn(await request<{ user: AccountUser }>('POST', 'account/email', input));
+}
+
 /** Resolves true when the server ended the session; on failure (offline) the learner stays signed in. */
 export async function signOut(): Promise<boolean> {
   const r = await request<unknown>('POST', 'logout', {});
