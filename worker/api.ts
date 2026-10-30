@@ -17,6 +17,7 @@ import {
 } from './http';
 import { emailRoutes } from './auth/email';
 import { syncRoutes } from './sync';
+import { accountRoutes } from './account';
 import { adminRoutes, roleOf } from './admin';
 import { emailSendingEnabled } from './mail';
 import { currentSession, loadUser, recordSignIn, toPublicUser } from './session';
@@ -54,8 +55,13 @@ export async function handleApi(request: Request, env: ApiEnv, deps: ApiDeps = d
   const url = new URL(request.url);
   if (!url.pathname.startsWith('/api/')) return null;
 
-  const routed = [...emailRoutes, ...syncRoutes, ...adminRoutes].filter(r => r.path === url.pathname);
-  if (routed.length) return handleRoute(routed.find(r => r.method === request.method), request, url, env, deps);
+  const routed = [...emailRoutes, ...syncRoutes, ...accountRoutes, ...adminRoutes]
+    .map(route => ({ route, params: matchPath(route.path, url.pathname) }))
+    .filter((m): m is { route: Route; params: Record<string, string> } => m.params !== null);
+  if (routed.length) {
+    const hit = routed.find(m => m.route.method === request.method);
+    return handleRoute(hit?.route, hit?.params ?? {}, request, url, env, deps);
+  }
 
   const route = `${request.method} ${url.pathname}`;
   switch (route) {
@@ -74,11 +80,25 @@ export async function handleApi(request: Request, env: ApiEnv, deps: ApiDeps = d
   return known.includes(url.pathname) ? json({ error: 'Method not allowed' }, 405) : json({ error: 'Not found' }, 404);
 }
 
+/** The route's named parameters when `pathname` matches it (an exact path, or a pattern with named groups), else null */
+function matchPath(path: string | RegExp, pathname: string): Record<string, string> | null {
+  if (typeof path === 'string') return path === pathname ? {} : null;
+  const m = path.exec(pathname);
+  return m ? { ...m.groups } : null;
+}
+
 /**
- * Runs a route from the route modules (auth/email.ts): state-changing requests must come from the app's
+ * Runs a route from the route modules (auth/email.ts, sync.ts, account.ts): state-changing requests must come from the app's
  * own pages, bodies are size-capped JSON, and errors answer as JSON with a stable `error` code.
  */
-async function handleRoute(route: Route | undefined, request: Request, url: URL, env: ApiEnv, deps: ApiDeps): Promise<Response> {
+async function handleRoute(
+  route: Route | undefined,
+  params: Record<string, string>,
+  request: Request,
+  url: URL,
+  env: ApiEnv,
+  deps: ApiDeps,
+): Promise<Response> {
   if (!route) return json({ error: 'method_not_allowed', message: 'This method is not allowed here.' }, 405);
   const limit = route.bodyLimit ?? BODY_LIMIT;
   try {
@@ -86,7 +106,7 @@ async function handleRoute(route: Route | undefined, request: Request, url: URL,
       if (!originAllowed(env, url, request.headers.get('Origin'))) throw new HttpError(403, 'forbidden_origin', 'This request must come from the app itself.');
       if (Number(request.headers.get('Content-Length') ?? '0') > limit) throw new HttpError(413, 'payload_too_large', 'This request is too large.');
     }
-    const c: RouteContext = { request, url, env, deps, params: {}, body: () => readJsonObject(request, limit) };
+    const c: RouteContext = { request, url, env, deps, params, body: () => readJsonObject(request, limit) };
     return await route.handler(c);
   } catch (err) {
     if (err instanceof HttpError) return errorResponse(err);
