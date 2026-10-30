@@ -3,7 +3,7 @@ import { HttpError, appOrigin, inBackground, ipSubject, isUniqueViolation, json,
 import { emailSendingEnabled, resetEmail, sendEmail, verificationEmail } from '../mail';
 import { hashPassword, passwordProblem, verifyAgainstDummy, verifyPassword } from '../password';
 import { LIMITS, countLimit, enforceLimit, rateLimited } from '../ratelimit';
-import { EMAIL_CLAIM_TTL, createPasswordSession, createSession, endAllSessions, endIncomingSession, loadUser, requireUser, sessionCookie, staleEmailClaim, toPublicUser } from '../session';
+import { EMAIL_CLAIM_TTL, createPasswordSession, endAllSessions, endIncomingSession, loadUser, requireUser, sessionCookie, staleEmailClaim, toPublicUser } from '../session';
 import { SYNC_TABLES } from '../sync';
 import { consumeToken, issueToken, peekToken, revokeTokens, tokenFailure, type TokenPurpose } from '../tokens';
 
@@ -108,7 +108,12 @@ async function register(c: RouteContext): Promise<Response> {
 
   // A sign-up replaces whatever session this browser had
   await endIncomingSession(c);
-  const session = await createSession(c.env.DB, id, now);
+  // Only while the account still has the password set here: if the inbox owner reset it meanwhile (taking
+  // the address back), this sign-up gets no session (#51, 1)
+  const session = await createPasswordSession(c.env.DB, id, now, hash);
+  if (!session) {
+    throw new HttpError(409, 'email_taken', 'The owner of this email address took it back while the account was being made. Sign in, or reset the password.');
+  }
   await sendVerification(c, id, email);
   const user = await loadUser(c.env.DB, id);
   // emailSent false: this site cannot send email yet, so no confirmation link is on its way
@@ -265,7 +270,9 @@ async function reset(c: RouteContext): Promise<Response> {
   await revokeTokens(c.env.DB, userId, ['verify', 'reset'], now);
   await endAllSessions(c.env.DB, userId);
   await endIncomingSession(c);
-  const session = await createSession(c.env.DB, userId, now);
+  // Only while the password is still the one set here: a newer reset or change that finished meanwhile wins
+  const session = await createPasswordSession(c.env.DB, userId, now, hash);
+  if (!session) throw new HttpError(409, 'conflict', 'Your password was changed again elsewhere. Sign in with the newest one.');
   const user = await loadUser(c.env.DB, userId);
   return json({ user: toPublicUser(user!) }, 200, { 'Set-Cookie': sessionCookie(session) });
 }

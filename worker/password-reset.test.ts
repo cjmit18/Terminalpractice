@@ -206,3 +206,42 @@ test('a reset whose address was released to a new sign-up meanwhile changes noth
   assert.equal((await s.login('learner@example.com', NEW_PASSWORD)).status, 401);
   assert.equal((await s.login('learner@example.com', 'violet harbor lantern quiz')).status, 200, 'the new owner keeps the address');
 });
+
+test('#51-1: a sign-up still in flight gets no session once the inbox owner has reset the password', async () => {
+  const s = setup();
+  // Someone signs up with an address that is not theirs; the sign-up waits just before making its session
+  const hold = holdNext(s, 'INSERT INTO sessions');
+  const slowSignUp = s.register();
+  await hold.atGate;
+  // Meanwhile the inbox owner takes the address back with a reset
+  await forgot(s);
+  const done = await reset(s, tokenIn(s.sent.at(-1)!));
+  assert.equal(done.status, 200);
+  const owner = sessionOf(done);
+  hold.release();
+  const late = await slowSignUp;
+  assert.equal(late.status, 409);
+  assert.equal(sessionOf(late), null, 'the claimant keeps no way in');
+  assert.equal(count(s.db, 'sessions'), 1, "only the owner's session exists");
+  assert.equal((await me(s, owner)).emailVerified, true);
+});
+
+test('#51-1: a reset that is about to sign in gets no session if a newer reset finished meanwhile', async () => {
+  const s = setup();
+  await s.register();
+  await forgot(s);
+  const first = tokenIn(s.sent.at(-1)!);
+  // The first reset has written its password and waits just before making its session
+  const hold = holdNext(s, 'INSERT INTO sessions');
+  const slowReset = reset(s, first);
+  await hold.atGate;
+  await forgot(s);
+  const newer = await reset(s, tokenIn(s.sent.at(-1)!), 'violet harbor lantern quiz');
+  assert.equal(newer.status, 200);
+  hold.release();
+  const late = await slowReset;
+  assert.equal(late.status, 409);
+  assert.equal(sessionOf(late), null);
+  assert.equal(count(s.db, 'sessions'), 1, "only the newer reset's session exists");
+  assert.equal((await s.login('learner@example.com', 'violet harbor lantern quiz')).status, 200, 'the newer password works');
+});
