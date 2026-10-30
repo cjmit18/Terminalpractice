@@ -30,8 +30,12 @@ export type AccountState =
   | { status: 'signed-out' }
   | { status: 'signed-in'; user: AccountUser };
 
+/** 'owner' or 'admin' opens the admin dashboard (#/admin) */
+export type Role = 'owner' | 'admin' | null;
+
 interface Snapshot {
   account: AccountState;
+  role: Role;
   providers: Providers;
   /** Whether the server can send confirmation and reset emails */
   emailSending: boolean;
@@ -58,6 +62,7 @@ const apiUrl = (path: string) =>
 
 let snapshot: Snapshot = {
   account: ACCOUNTS_ENABLED ? { status: 'loading' } : { status: 'unavailable' },
+  role: null,
   providers: NO_PROVIDERS,
   emailSending: false,
 };
@@ -83,12 +88,29 @@ export async function refreshAccount(): Promise<void> {
     const p = body?.providers ?? {};
     const providers: Providers = { github: p.github === true, email: p.email === true };
     const emailSending = body?.emailSending === true;
-    if (body?.user) update({ account: { status: 'signed-in', user: body.user as AccountUser }, providers, emailSending });
-    else if (providers.github || providers.email) update({ account: { status: 'signed-out' }, providers, emailSending });
-    else update({ account: { status: 'unavailable' }, providers, emailSending });
+    const role: Role = body?.role === 'owner' || body?.role === 'admin' ? body.role : null;
+    if (body?.user) update({ account: { status: 'signed-in', user: body.user as AccountUser }, role, providers, emailSending });
+    else if (providers.github || providers.email) update({ account: { status: 'signed-out' }, role: null, providers, emailSending });
+    else update({ account: { status: 'unavailable' }, role: null, providers, emailSending });
   } catch {
     // Offline: keep what we knew, otherwise say nothing about accounts
     if (snapshot.account.status === 'loading') update({ account: { status: 'unavailable' } });
+  }
+}
+
+/**
+ * The role (admin or not) after a sign-in, from /api/me. Only the role is taken, and only while the same
+ * user is still signed in here: the sign-in's own answer stays the source of who is signed in.
+ */
+async function refreshRole(userId: string): Promise<void> {
+  try {
+    const res = await fetch(apiUrl('me'), { credentials: 'same-origin', headers: { Accept: 'application/json' } });
+    const body = res.ok ? await res.json() : null;
+    const role: Role = body?.role === 'owner' || body?.role === 'admin' ? body.role : null;
+    const now = snapshot.account;
+    if (body?.user?.id === userId && now.status === 'signed-in' && now.user.id === userId) update({ role });
+  } catch {
+    // Offline: no admin link until the next page load
   }
 }
 
@@ -130,18 +152,21 @@ async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown):
 
 /** The session ended: show signed out, and tell the sync to remove the account's data from this browser */
 function setSignedOut(): void {
-  update({ account: { status: 'signed-out' } });
+  update({ account: { status: 'signed-out' }, role: null });
   announceSignedOut();
 }
 
 /** Someone else announced the end of the session (the sync got a 401) */
 function onSignedOutElsewhere(): void {
-  if (snapshot.account.status === 'signed-in') update({ account: { status: 'signed-out' } });
+  if (snapshot.account.status === 'signed-in') update({ account: { status: 'signed-out' }, role: null });
 }
 
 /** The server set the session cookie: show signed in */
 function signedIn<T extends { user: AccountUser }>(r: ApiResult<T>): ApiResult<T> {
-  if (r.ok && r.data?.user) update({ account: { status: 'signed-in', user: r.data.user } });
+  if (r.ok && r.data?.user) {
+    update({ account: { status: 'signed-in', user: r.data.user }, role: null });
+    void refreshRole(r.data.user.id);
+  }
   return r;
 }
 

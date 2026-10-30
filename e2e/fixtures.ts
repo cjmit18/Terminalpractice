@@ -10,6 +10,7 @@ export type MeResponse = {
   user: { id: string; name: string; login: string | null; avatarUrl: string | null; email?: string | null; emailVerified?: boolean } | null;
   providers: { github: boolean; email?: boolean };
   emailSending?: boolean;
+  role?: 'owner' | 'admin' | null;
 };
 
 export const test = base.extend<{ allowConsoleErrors: boolean; consoleErrors: string[]; me: MeResponse; accountApi: void }>({

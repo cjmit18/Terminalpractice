@@ -1,11 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { LogIn, LogOut } from 'lucide-react';
-import { useAccount } from '../lib/account';
-import { accountHref } from '../lib/router';
+import { useDisplayAccount } from '../lib/viewAs';
+import { accountHref, routeHref } from '../lib/router';
 
 /** Header control for optional sign-in. Renders nothing where sign-in is not offered. */
 export const AccountMenu: React.FC = () => {
-  const { account, signOut } = useAccount();
+  const { account, role, signOut } = useDisplayAccount();
   const [open, setOpen] = useState(false);
   const [error, setError] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
@@ -84,6 +84,11 @@ export const AccountMenu: React.FC = () => {
           <a href={accountHref()} className="mt-3 flex items-center min-h-10 px-2 -mx-2 rounded-sm text-text hover:bg-surface-2">
             Your account
           </a>
+          {role && (
+            <a href={routeHref({ section: 'admin' })} className="flex items-center min-h-10 px-2 -mx-2 rounded-sm text-text hover:bg-surface-2">
+              Admin dashboard
+            </a>
+          )}
           <button
             type="button"
             onClick={async () => {

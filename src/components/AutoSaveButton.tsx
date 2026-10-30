@@ -1,6 +1,6 @@
 import React from 'react';
 import { Cloud, CloudOff, RefreshCw } from 'lucide-react';
-import { useAccount } from '../lib/account';
+import { useDisplayAccount } from '../lib/viewAs';
 import { accountHref } from '../lib/router';
 import { syncStatusText, useSyncState } from './account/syncAdapter';
 
@@ -13,7 +13,7 @@ const base =
  * accounts are not offered.
  */
 export const AutoSaveButton: React.FC = () => {
-  const { account } = useAccount();
+  const { account } = useDisplayAccount();
   const sync = useSyncState();
   if (account.status === 'loading' || account.status === 'unavailable') return null;
 

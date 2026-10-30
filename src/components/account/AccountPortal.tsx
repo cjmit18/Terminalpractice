@@ -1,5 +1,5 @@
 import React from 'react';
-import { useAccount } from '../../lib/account';
+import { useDisplayAccount } from '../../lib/viewAs';
 import { learnHref, type AccountPage } from '../../lib/router';
 import { Dashboard } from './Dashboard';
 import { ForgotPage, ResetPage, VerifyPage } from './EmailLinkPages';
@@ -15,7 +15,7 @@ const TITLES: Record<AccountPage, string> = {
 
 /** #/account and the pages emailed links open. #/account itself follows the account state. */
 export const AccountPortal: React.FC<{ page: AccountPage }> = ({ page }) => {
-  const { account, providers, emailSending } = useAccount();
+  const { account, providers, emailSending } = useDisplayAccount();
 
   let title = TITLES[page];
   if (page === 'home') title = account.status === 'signed-in' ? `Hello, ${account.user.name}` : account.status === 'signed-out' ? 'Sign in' : 'Account';

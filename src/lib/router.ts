@@ -26,6 +26,8 @@ export type Route =
   | { section: 'badge'; badgeId: string }
   /** #/testing: what to try on the private test site. Not a route anywhere else */
   | { section: 'testing' }
+  /** #/admin: the admin dashboard (the page itself checks the account's role) */
+  | { section: 'admin' }
   /** #/account[/<page>]: sign in or create an account, the account page, and the pages emailed links open */
   | { section: 'account'; page: AccountPage };
 
@@ -42,7 +44,7 @@ export type RouteSection = Route['section'];
 
 /** The nav section a page belongs to (a badge page sits with the badges on Learn) */
 export function navSection(section: RouteSection): Section {
-  return section === 'badge' || section === 'testing' || section === 'account' ? 'learn' : section;
+  return section === 'badge' || section === 'testing' || section === 'account' || section === 'admin' ? 'learn' : section;
 }
 
 export function badgeHref(badgeId: string): string {
@@ -81,6 +83,7 @@ export function parseHash(hash: string): Route | null {
   if (parts.length === 0) return null;
   if (parts[0] === 'badge') return parts.length === 2 ? { section: 'badge', badgeId: parts[1] } : null;
   if (parts[0] === 'testing') return parts.length === 1 && TEST_SITE ? { section: 'testing' } : null;
+  if (parts[0] === 'admin') return parts.length === 1 ? { section: 'admin' } : null;
   const section = parts[0] as Section;
   if (!SECTIONS.includes(section)) return null;
   if (section === 'learn') {
