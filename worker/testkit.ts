@@ -42,13 +42,13 @@ export function testDb(): SyncDb & { raw: DatabaseSync } {
 
 export const MAIL_ENV: Partial<ApiEnv> = { SMTP_USER: 'noreply@terminuscli.com', SMTP_PASSWORD: 'test-only' };
 
-export function setup(overrides: Partial<ApiEnv> = {}, opts: { failMail?: boolean } = {}) {
+export function setup(overrides: Partial<ApiEnv> = {}, opts: { failMail?: boolean; fetch?: ApiDeps['fetch'] } = {}) {
   let now = Date.UTC(2026, 9, 23);
   const db = testDb();
   const env: ApiEnv = { DB: db, RATE_LIMIT_PEPPER: 'test-pepper', ...MAIL_ENV, ...overrides };
   const sent: MailMessage[] = [];
   const deps: ApiDeps = {
-    fetch: async () => new Response('unexpected', { status: 500 }),
+    fetch: opts.fetch ?? (async () => new Response('unexpected', { status: 500 })),
     now: () => now,
     sendMail: async (_env, message) => {
       if (opts.failMail) throw new Error('SMTP down');

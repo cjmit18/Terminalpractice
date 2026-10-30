@@ -1,16 +1,22 @@
 import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Github, Mail, Monitor } from 'lucide-react';
 import {
+  addEmailSignIn,
   changePassword,
+  clearHashQuery,
   deleteAccount,
   downloadExport,
   endOtherSessions,
   endSession,
   getAccount,
+  githubLinkHref,
   githubSignInHref,
   listSessions,
+  readHashParam,
+  reauthenticate,
   unlinkIdentity,
   updateDisplayName,
+  useAccount,
   type AccountDetails,
   type AccountSession,
   type AccountUser,
@@ -18,7 +24,7 @@ import {
 } from '../../lib/account';
 import { accountHref } from '../../lib/router';
 import { Field, FormError, FormNote, PasswordField, dangerButton, secondaryButton, textLink, useFocusFirstError } from './forms';
-import { displayNameError, newPasswordError, type ErrorField } from './messages';
+import { describeError, displayNameError, emailError, newPasswordError, normalizeEmail, type ErrorField } from './messages';
 
 const PROVIDER_NAME: Record<string, string> = { github: 'GitHub', email: 'Email and password' };
 const RETURN_HERE = '#/account/security';
@@ -160,7 +166,7 @@ const PasswordForm: React.FC<{ details: AccountDetails; onDone: () => void }> = 
         <h2 id="pw-h" className={headingClass}>
           Password
         </h2>
-        <p className="text-sm text-muted">You sign in with GitHub, so this account has no password.</p>
+        <p className="text-sm text-muted">You sign in with GitHub, so this account has no password. Add an email address under Ways to sign in to set one.</p>
       </section>
     );
   }
@@ -306,7 +312,132 @@ const SignInMethods: React.FC<{ details: AccountDetails; onChange: () => void }>
       )}
       <ReauthNotice providers={reauth} />
       <FormNote message={note} />
+      <AddSignIn details={details} onChange={onChange} />
     </section>
+  );
+};
+
+/** Ways to add: GitHub for an account with a password, email and a password for an account made with GitHub */
+const AddSignIn: React.FC<{ details: AccountDetails; onChange: () => void }> = ({ details, onChange }) => {
+  const { providers } = useAccount();
+  // Back from GitHub with ?error=…: why the link did not happen (read once, then removed from the address)
+  const [linkError] = useState(() => {
+    const code = readHashParam('error');
+    return code ? describeError(code, 400).message : null;
+  });
+  useEffect(() => {
+    if (linkError) clearHashQuery();
+  }, [linkError]);
+  const canLinkGithub = providers.github && details.hasPassword && !details.identities.some(i => i.provider === 'github');
+  const canAddEmail = !details.user.email;
+  if (!canLinkGithub && !canAddEmail && !linkError) return null;
+  return (
+    <div className="space-y-4 pt-2">
+      <h3 className="text-[15px] font-semibold text-text">Add a way to sign in</h3>
+      {linkError && (
+        <p role="alert" className="rounded-md bg-danger-soft px-3 py-2 text-sm text-danger">
+          {linkError}
+        </p>
+      )}
+      {canLinkGithub && <LinkGithub />}
+      {canAddEmail && <AddEmail onDone={onChange} />}
+    </div>
+  );
+};
+
+const LinkGithub: React.FC = () => {
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const { formRef, focusErrors } = useFocusFirstError();
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!password) {
+      setError('Enter your current password to confirm it is you.');
+      return focusErrors();
+    }
+    setBusy(true);
+    const r = await reauthenticate(password);
+    setPassword('');
+    if (!r.ok) {
+      setBusy(false);
+      setError(r.message);
+      return focusErrors();
+    }
+    // Off to GitHub; it sends you back here with GitHub linked
+    window.location.assign(githubLinkHref(RETURN_HERE));
+  };
+  return (
+    <form ref={formRef} onSubmit={submit} noValidate className="space-y-3">
+      <p className="text-sm text-muted">Link your GitHub account to sign in with it as well. You’ll go to GitHub and come back here.</p>
+      <PasswordField
+        label="Current password"
+        name="link-password"
+        value={password}
+        onChange={v => {
+          setPassword(v);
+          setError(null);
+        }}
+        autoComplete="current-password"
+        error={error ?? undefined}
+      />
+      <button type="submit" disabled={busy} className={secondaryButton}>
+        <Github className="size-4" aria-hidden="true" />
+        Link GitHub
+      </button>
+    </form>
+  );
+};
+
+const AddEmail: React.FC<{ onDone: () => void }> = ({ onDone }) => {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [errors, setErrors] = useState<Errors>({});
+  const [formError, setFormError] = useState<string | null>(null);
+  const [reauth, setReauth] = useState<string[] | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const { formRef, errorRef, focusErrors } = useFocusFirstError();
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setFormError(null);
+    setReauth(null);
+    setNote(null);
+    const errs: Errors = {};
+    const emailProblem = emailError(email);
+    if (emailProblem) errs.email = emailProblem;
+    const pwProblem = newPasswordError(password);
+    if (pwProblem) errs.password = pwProblem;
+    setErrors(errs);
+    if (Object.keys(errs).length) return focusErrors();
+    const address = normalizeEmail(email).toLowerCase();
+    setBusy(true);
+    const r = await addEmailSignIn({ email: address, newPassword: password });
+    setBusy(false);
+    if (!r.ok) {
+      const providers = reauthProviders(r);
+      if (providers) return setReauth(providers);
+      if (r.field === 'email' || r.field === 'password') setErrors({ [r.field]: r.message });
+      else setFormError(r.message);
+      return focusErrors();
+    }
+    setPassword('');
+    setNote(`Added. We sent a link to ${address}: open it to confirm the address.`);
+    onDone();
+  };
+  return (
+    <form ref={formRef} onSubmit={submit} noValidate className="space-y-3">
+      <p className="text-sm text-muted">Add an email address and a password to sign in without GitHub.</p>
+      <FormError ref={errorRef} message={formError} />
+      <Field label="Email" type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} error={errors.email} />
+      <PasswordField label="New password" value={password} onChange={setPassword} autoComplete="new-password" error={errors.password} showLengthHint />
+      <button type="submit" disabled={busy} className={secondaryButton}>
+        <Mail className="size-4" aria-hidden="true" />
+        Add email and password
+      </button>
+      <ReauthNotice providers={reauth} />
+      <FormNote message={note} />
+    </form>
   );
 };
 

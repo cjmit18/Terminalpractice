@@ -1,7 +1,7 @@
 // Account settings for the signed-in user (portal part 7): the account and its sign-in methods, the
 // sessions signed in to it, re-authentication, the password, unlinking a sign-in method, export and delete.
 // Ported from portal/base by hand; email changes and Google arrive with their own parts.
-import { HttpError, json, noContent, optStr, secureHeaders, str, type Db, type Route, type RouteContext } from './http';
+import { HttpError, isUniqueViolation, json, noContent, optStr, secureHeaders, str, type Db, type Route, type RouteContext } from './http';
 import { hashPassword, verifyPassword } from './password';
 import { LIMITS, enforceLimit, forgetLimits } from './ratelimit';
 import {
@@ -19,7 +19,7 @@ import {
 } from './session';
 import { revokeTokens } from './tokens';
 import { SYNC_TABLES, readState } from './sync';
-import { requireDisplayName, requireStrongPassword } from './auth/email';
+import { releaseStaleClaim, requireDisplayName, requireEmail, requireStrongPassword, sendVerification } from './auth/email';
 
 const PROVIDERS = ['github', 'email'] as const;
 type Provider = (typeof PROVIDERS)[number];
@@ -200,6 +200,48 @@ async function changePassword(c: RouteContext): Promise<Response> {
   return json({ ok: true }, 200, { 'Set-Cookie': sessionCookie(token) });
 }
 
+/**
+ * POST /api/account/email { email, newPassword }: adds email and password sign-in to an account that has
+ * no email yet (one made with GitHub). Like a sign-up, the address is a claim until confirmed by the link
+ * we send; an unconfirmed claim lapses after 24 hours. Needs a recent sign-in (GitHub again after 10 minutes).
+ */
+async function addEmail(c: RouteContext): Promise<Response> {
+  const { session, user } = await requireUser(c);
+  const now = c.deps.now();
+  const body = await c.body();
+  if (user.email) throw new HttpError(409, 'has_email', 'This account already has an email address.');
+  await requireRecentAuth(c, user, session, undefined);
+  const email = requireEmail(str(body, 'email', 320));
+  const password = str(body, 'newPassword', 1024);
+  requireStrongPassword(password, email, user.display_name);
+  // Each try sends an email: the same limit as resending a confirmation link
+  await enforceLimit(c.env, LIMITS.changeEmail, user.id, now);
+
+  const taken = () => new HttpError(409, 'email_taken', 'Another account already uses this email address.');
+  // A lapsed unconfirmed claim by another account gives way
+  if (!(await releaseStaleClaim(c.env.DB, email, now, user.id))) throw taken();
+  const hash = await hashPassword(password);
+  let added: { id: string } | null;
+  try {
+    // Only while the account still has no email: two adds at once cannot both land
+    added = await c.env.DB.prepare(
+      `UPDATE users SET email = ?, email_verified_at = NULL, email_set_at = ?, password_hash = ?, updated_at = ?
+         WHERE id = ? AND email IS NULL RETURNING id`,
+    )
+      .bind(email, now, hash, now, user.id)
+      .first<{ id: string }>();
+  } catch (err) {
+    if (isUniqueViolation(err)) throw taken();
+    throw err;
+  }
+  if (!added) throw new HttpError(409, 'has_email', 'This account already has an email address.');
+  await c.env.DB.prepare('INSERT INTO identities (provider, provider_id, user_id, login, linked_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING')
+    .bind('email', email, user.id, email, now)
+    .run();
+  await sendVerification(c, user.id, email);
+  return json({ user: toPublicUser((await loadUser(c.env.DB, user.id))!) }, 201);
+}
+
 /** DELETE /api/account/identities/:provider: removes a sign-in method, never the last one */
 async function unlinkIdentity(c: RouteContext): Promise<Response> {
   const { session, user } = await requireUser(c);
@@ -302,6 +344,7 @@ export const accountRoutes: Route[] = [
   { method: 'DELETE', path: '/api/account/sessions', handler: endOtherSessions },
   { method: 'DELETE', path: /^\/api\/account\/sessions\/(?<id>[0-9a-f]{16})$/, handler: endSession },
   { method: 'POST', path: '/api/account/password', handler: changePassword },
+  { method: 'POST', path: '/api/account/email', handler: addEmail },
   { method: 'DELETE', path: /^\/api\/account\/identities\/(?<provider>[a-z]+)$/, handler: unlinkIdentity },
   { method: 'GET', path: '/api/account/export', handler: exportAccount },
 ];

@@ -39,6 +39,12 @@ const KNOWN: Record<string, Known> = {
   session_not_found: { message: 'That session has already ended.' },
   email_unverified: { message: 'Confirm your email address first: open the link in the email we sent you.' },
   conflict: { message: 'Your account changed at the same time. Reload the page and try again.' },
+  identity_in_use: {
+    message: 'That GitHub account already has its own Terminus account, so it can’t be linked here. Sign in with GitHub to use that account instead.',
+  },
+  provider_already_linked: { message: 'This account already has a GitHub account linked. Unlink it first to link a different one.' },
+  session_changed: { message: 'You signed out or in while GitHub was open, so nothing was linked. Try again.' },
+  has_email: { message: 'This account already has an email address.' },
 };
 
 /** The plain message for an error, and the field it belongs to when there is one. */

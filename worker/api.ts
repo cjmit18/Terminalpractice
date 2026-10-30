@@ -20,7 +20,7 @@ import { syncRoutes } from './sync';
 import { accountRoutes } from './account';
 import { adminRoutes, roleOf } from './admin';
 import { emailSendingEnabled } from './mail';
-import { currentSession, loadUser, recordSignIn, toPublicUser } from './session';
+import { REAUTH_WINDOW, currentSession, emailUnverified, loadUser, recordSignIn, toPublicUser } from './session';
 
 export type { ApiDeps, ApiEnv, Db, DbStatement } from './http';
 
@@ -70,7 +70,7 @@ export async function handleApi(request: Request, env: ApiEnv, deps: ApiDeps = d
     case 'GET /api/me':
       return me(request, env, deps);
     case 'GET /api/auth/github/start':
-      return githubStart(url, env);
+      return githubStart(request, url, env, deps);
     case 'GET /api/auth/github/callback':
       return githubCallback(request, url, env, deps);
     case 'POST /api/logout':
@@ -118,12 +118,30 @@ async function handleRoute(
 
 // --- Sign-in with GitHub -------------------------------------------------------------------
 
-function githubStart(url: URL, env: ApiEnv): Response {
+/**
+ * Starts a GitHub sign-in, or with `?link=1` links GitHub to the signed-in account (portal part 7d).
+ * Linking needs a session, a confirmed email when the account has one, and a sign-in or password check
+ * within the last 10 minutes (POST /api/account/reauth); otherwise it goes back to the app with `?error=`.
+ * The flow is tied to this session: the callback links only for the same one.
+ */
+async function githubStart(request: Request, url: URL, env: ApiEnv, deps: ApiDeps): Promise<Response> {
   if (!env.GITHUB_CLIENT_ID || !env.GITHUB_CLIENT_SECRET) {
     return text('Sign-in with GitHub is not set up on this server yet.', 503);
   }
   const state = randomToken();
   const returnTo = safeReturn(url.searchParams.get('return'));
+  let link = '';
+  if (url.searchParams.get('link') === '1') {
+    // A page on another site must not start a link for the signed-in visitor (a missing header is an older browser)
+    const site = request.headers.get('Sec-Fetch-Site');
+    if (site !== null && site !== 'same-origin' && site !== 'none') return text('Linking has to start from the app itself.', 403);
+    const session = await currentSession({ request, env, deps });
+    const user = session && (await loadUser(env.DB, session.userId));
+    if (!session || !user) return text('Sign in first, then link GitHub from your account’s security page.', 401);
+    if (emailUnverified(user)) return backTo(url, returnTo, 'email_unverified');
+    if (deps.now() - session.authenticatedAt > REAUTH_WINDOW) return backTo(url, returnTo, 'reauth_required');
+    link = `|link|${session.tokenHash}`;
+  }
   const authorize = new URL(GITHUB_AUTHORIZE);
   authorize.searchParams.set('client_id', env.GITHUB_CLIENT_ID);
   // Derived from the request, so the same code works on workers.dev, localhost and a custom domain
@@ -131,8 +149,13 @@ function githubStart(url: URL, env: ApiEnv): Response {
   authorize.searchParams.set('state', state);
 
   const headers = new Headers({ Location: authorize.toString(), 'Cache-Control': 'no-store' });
-  headers.append('Set-Cookie', cookie(STATE_COOKIE, encodeURIComponent(`${state}|${returnTo}`), STATE_TTL_SECONDS));
+  headers.append('Set-Cookie', cookie(STATE_COOKIE, encodeURIComponent(`${state}|${returnTo}${link}`), STATE_TTL_SECONDS));
   return new Response(null, { status: 302, headers });
+}
+
+/** A redirect into the app with `?error=<code>` for the page to explain; the state cookie is left alone */
+function backTo(url: URL, returnTo: string, error: string): Response {
+  return new Response(null, { status: 302, headers: { Location: `${url.origin}/${returnTo}?error=${error}`, 'Cache-Control': 'no-store' } });
 }
 
 async function githubCallback(request: Request, url: URL, env: ApiEnv, deps: ApiDeps): Promise<Response> {
@@ -142,10 +165,10 @@ async function githubCallback(request: Request, url: URL, env: ApiEnv, deps: Api
   } catch {
     // A malformed cookie (bad %-escape) is no saved state: the check below answers 400
   }
-  const [savedState, savedReturn] = saved.split('|');
+  const [savedState, savedReturn, mode, linkSession] = saved.split('|');
   const returnTo = safeReturn(savedReturn ?? null);
-  const back = (extra?: (h: Headers) => void) => {
-    const headers = new Headers({ Location: `${url.origin}/${returnTo}`, 'Cache-Control': 'no-store' });
+  const back = (extra?: (h: Headers) => void, error?: string) => {
+    const headers = new Headers({ Location: `${url.origin}/${returnTo}${error ? `?error=${error}` : ''}`, 'Cache-Control': 'no-store' });
     headers.append('Set-Cookie', clearCookie(STATE_COOKIE));
     extra?.(headers);
     return new Response(null, { status: 302, headers });
@@ -195,12 +218,20 @@ async function githubCallback(request: Request, url: URL, env: ApiEnv, deps: Api
     return text('Could not read your GitHub profile. Go back to the app and try again.', 502, { 'Set-Cookie': clearCookie(STATE_COOKIE) });
   }
 
-  const userId = await upsertGithubUser(env.DB, deps.now(), {
+  const github = {
     providerId: String(profile.id),
     login: profile.login,
     name: profile.name || profile.login,
     avatarUrl: profile.avatar_url ?? null,
-  });
+  };
+  if (mode === 'link') {
+    // Only for the session that started the link: not after a sign-out, or with another account signed in
+    const session = await currentSession({ request, env, deps });
+    if (!session || session.tokenHash !== linkSession) return back(undefined, 'session_changed');
+    const result = await linkGithub(env.DB, session.userId, github, deps.now());
+    return back(undefined, result === 'ok' ? undefined : result);
+  }
+  const userId = await upsertGithubUser(env.DB, deps.now(), github);
   const sessionToken = await createSession(env.DB, userId, deps.now());
   return back(h => h.append('Set-Cookie', cookie(SESSION_COOKIE, sessionToken, SESSION_TTL / 1000)));
 }
@@ -222,8 +253,9 @@ async function upsertGithubUser(
       .bind('github', p.providerId)
       .first<{ user_id: string }>();
   const refresh = async (userId: string) => {
-    // Keep the name, username and picture current with GitHub
-    await db.prepare('UPDATE users SET display_name = ?, avatar_url = ? WHERE id = ?').bind(p.name, p.avatarUrl, userId).run();
+    // Keep the username and picture current with GitHub. Not the display name: it is the learner's own to
+    // change on the security page, and an account that linked GitHub chose its name itself
+    await db.prepare('UPDATE users SET avatar_url = ? WHERE id = ?').bind(p.avatarUrl, userId).run();
     await db.prepare('UPDATE identities SET login = ? WHERE provider = ? AND provider_id = ?').bind(p.login, 'github', p.providerId).run();
   };
 
@@ -246,6 +278,45 @@ async function upsertGithubUser(
     await refresh(winner.user_id);
   }
   return winner.user_id;
+}
+
+/**
+ * Links a GitHub account to a user (portal part 7d). Never moves an identity that belongs to another
+ * account, and never gives one account two GitHub identities: the insert checks both in the same
+ * statement, so two links finishing at once cannot both land.
+ */
+async function linkGithub(
+  db: Db,
+  userId: string,
+  p: { providerId: string; login: string; avatarUrl: string | null },
+  now: number,
+): Promise<'ok' | 'identity_in_use' | 'provider_already_linked'> {
+  const owner = await db
+    .prepare('SELECT user_id FROM identities WHERE provider = ? AND provider_id = ?')
+    .bind('github', p.providerId)
+    .first<{ user_id: string }>();
+  if (owner) return owner.user_id === userId ? 'ok' : 'identity_in_use';
+  const linked = await db
+    .prepare(
+      `INSERT INTO identities (provider, provider_id, user_id, login, linked_at)
+         SELECT 'github', ?2, id, ?3, ?4 FROM users
+         WHERE id = ?1 AND NOT EXISTS (SELECT 1 FROM identities WHERE user_id = ?1 AND provider = 'github')
+       ON CONFLICT (provider, provider_id) DO NOTHING
+       RETURNING user_id`,
+    )
+    .bind(userId, p.providerId, p.login, now)
+    .first<{ user_id: string }>();
+  if (linked) {
+    // The GitHub picture fills an account that has none; the display name stays the learner's own
+    await db.prepare('UPDATE users SET avatar_url = COALESCE(avatar_url, ?) WHERE id = ?').bind(p.avatarUrl, userId).run();
+    return 'ok';
+  }
+  const winner = await db
+    .prepare('SELECT user_id FROM identities WHERE provider = ? AND provider_id = ?')
+    .bind('github', p.providerId)
+    .first<{ user_id: string }>();
+  if (winner && winner.user_id !== userId) return 'identity_in_use';
+  return winner ? 'ok' : 'provider_already_linked';
 }
 
 // --- Sessions ------------------------------------------------------------------------------
