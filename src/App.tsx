@@ -10,6 +10,7 @@ import { Route, Section, TrackSection, isTrackSection, navSection, replaceRoute,
 import { completeObjective, countDone, progressCodec, PROGRESS_KEY, resetModules, sanitizeProgress } from './lib/progress';
 import { useSyncedStorage } from './lib/syncedStorage';
 import { useAccount } from './lib/account';
+import { reportAnswer, useAnswerSharingFor } from './lib/answers';
 import { labScope, pathScope, queueReset, storageKeys, useAccountSync, useSyncUser } from './lib/sync';
 import { useTheme } from './lib/theme';
 import { ALL_MODULES, TRACK_MODULES, TRACK_NAMES, topicLabel } from './lib/modules';
@@ -85,6 +86,8 @@ export default function App() {
   const { account } = useAccount();
   const userId = useSyncUser(account);
   const keys = storageKeys(userId);
+  // Whether this account shares its answers for the most-missed questions (off unless turned on)
+  useAnswerSharingFor(account.status === 'signed-in' ? account.user.id : null);
   // moduleId -> completed objective ids (plus reset tombstones), saved in localStorage and kept in
   // step with other open tabs: saves merge with what is stored, other tabs' saves merge in here
   const [progressRecord, setProgressRecord, progressFromOtherTab] = useSyncedStorage(keys.progress, PROGRESS_CODEC);
@@ -324,9 +327,11 @@ export default function App() {
     // Any quiz attempt counts toward the weekly goal
     setActivity(a => addPractice(a, missed ? [quizMissFact(pathId, stepId)] : []));
   };
-  // Each checkpoint or review answer, for the review queue
-  const handleAnswer = (pathId: string, questionId: string, right: boolean) =>
+  // Each checkpoint or review answer, for the review queue (and, when the learner shares, the most-missed questions)
+  const handleAnswer = (pathId: string, questionId: string, right: boolean) => {
     setJourney(j => recordAnswer(j, pathId, questionId, right));
+    reportAnswer(account.status === 'signed-in' ? account.user.id : null, stepKey(pathId, questionId), right);
+  };
 
   const resetTrackProgress = (t: TrackSection) => {
     const ids = TRACK_MODULES[t].map(m => m.id);
