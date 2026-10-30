@@ -188,9 +188,11 @@ async function changePassword(c: RouteContext): Promise<Response> {
     .first<{ id: string }>();
   if (!changed) throw new HttpError(409, 'conflict', 'Your password changed at the same time. Sign in again and retry.');
   await revokeTokens(c.env.DB, user.id, ['reset'], now);
-  await c.env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(user.id).run();
-  // The new session exists only while the password is still the one set here: a reset landing in
-  // between (which ends every session) is not undone by this slower request
+  // Sessions end, and the new one is made, only while the password is still the one set here. A reset
+  // landing in between keeps its own new session, and is not undone by this slower request.
+  await c.env.DB.prepare('DELETE FROM sessions WHERE user_id = ?1 AND (SELECT password_hash FROM users WHERE id = ?1) = ?2')
+    .bind(user.id, newHash)
+    .run();
   const token = await createPasswordSession(c.env.DB, user.id, now, newHash);
   if (!token) {
     throw new HttpError(409, 'conflict', 'Your password was changed again elsewhere. Sign in with the newest one.', { 'Set-Cookie': clearSessionCookie() });
