@@ -60,6 +60,8 @@ async function accountApi(context: BrowserContext, opts: { hasPassword: boolean;
       if (b.currentPassword !== 'violet harbor lantern quiz') {
         return route.fulfill({ status: 403, json: { error: 'wrong_password', message: 'Your current password is not correct.' } });
       }
+      // Like the server: every session ends, and this browser gets a new one
+      stub.sessions = [{ id: 'dddddddddddddddd', createdAt: now, expiresAt: now + 30 * DAY, signedInAt: now, current: true }];
       return route.fulfill({ json: { ok: true } });
     }
     return route.fulfill({ status: 404, json: { error: 'not_found', message: 'Not found' } });
@@ -97,7 +99,7 @@ test.describe('signed in with a password', () => {
     test.use({ allowConsoleErrors: true });
 
     test('changing the password: a wrong current password is shown at its field, then it works', async ({ page, context }) => {
-      await accountApi(context, { hasPassword: true });
+      const stub = await accountApi(context, { hasPassword: true });
       await page.goto('#/account/security');
       await page.getByLabel('Current password', { exact: true }).first().fill('not my password');
       await page.getByLabel('New password', { exact: true }).fill('a brand new long passphrase');
@@ -109,6 +111,12 @@ test.describe('signed in with a password', () => {
       await page.getByLabel('New password', { exact: true }).fill('a brand new long passphrase');
       await page.getByRole('button', { name: 'Change password' }).click();
       await expect(page.getByText('Password changed. Your other devices were signed out.')).toBeVisible();
+
+      // The sessions list follows: only the new session, and signing out this browser ends that one
+      const sessions = page.getByRole('list', { name: 'Sessions' }).getByRole('listitem');
+      await expect(sessions).toHaveCount(1);
+      await page.getByRole('button', { name: 'Sign out of this browser' }).click();
+      expect(stub.sent.some(s => s.method === 'DELETE' && s.path === '/api/account/sessions/dddddddddddddddd')).toBe(true);
     });
   });
 

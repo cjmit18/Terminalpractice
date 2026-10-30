@@ -58,6 +58,8 @@ const ReauthNotice: React.FC<{ providers: string[] | null }> = ({ providers }) =
 export const SecurityPage: React.FC<{ user: AccountUser }> = ({ user }) => {
   const [details, setDetails] = useState<AccountDetails | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // A password change ends every session and starts a new one here: the list is loaded afresh
+  const [sessionsKey, setSessionsKey] = useState(0);
   const load = useCallback(async () => {
     const r = await getAccount();
     if (r.ok) {
@@ -84,11 +86,17 @@ export const SecurityPage: React.FC<{ user: AccountUser }> = ({ user }) => {
       )}
       {details && (
         <>
-          <PasswordForm details={details} onDone={load} />
+          <PasswordForm
+            details={details}
+            onDone={() => {
+              void load();
+              setSessionsKey(k => k + 1);
+            }}
+          />
           <SignInMethods details={details} onChange={load} />
         </>
       )}
-      <Sessions />
+      <Sessions key={sessionsKey} />
       <ExportData />
       <DeleteAccount hasPassword={details?.hasPassword ?? false} />
     </div>
