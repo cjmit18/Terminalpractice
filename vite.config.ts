@@ -30,6 +30,30 @@ function precacheBuildAssets(): Plugin {
   };
 }
 
+/**
+ * The headers public/_headers gives every static file on Cloudflare, for `vite preview`: the browser tests
+ * run against the preview, so the whole suite runs under the live Content-Security-Policy, and a
+ * violation (a console error) fails it. HSTS and upgrade-insecure-requests are left out on http://localhost.
+ */
+export function staticHeaders(text = readFileSync('public/_headers', 'utf8')): Record<string, string> {
+  const headers: Record<string, string> = {};
+  let all = false;
+  for (const line of text.split('\n')) {
+    if (!line.trim() || line.trimStart().startsWith('#')) continue;
+    if (!/^\s/.test(line)) {
+      all = line.trim() === '/*';
+      continue;
+    }
+    const i = line.indexOf(':');
+    if (!all || i < 0) continue;
+    const name = line.slice(0, i).trim();
+    const value = line.slice(i + 1).trim();
+    if (name === 'Strict-Transport-Security') continue;
+    headers[name] = name === 'Content-Security-Policy' ? value.replace(/;\s*upgrade-insecure-requests/, '') : value;
+  }
+  return headers;
+}
+
 export default defineConfig(() => {
   return {
     // Relative by default, so the build works from a GitHub Pages project path (/<repo>/).
@@ -37,6 +61,7 @@ export default defineConfig(() => {
     // deep link such as /old/path still loads /assets/... instead of /old/assets/...
     base: process.env.VITE_BASE || './',
     plugins: [react(), tailwindcss(), precacheBuildAssets()],
+    preview: { headers: staticHeaders() },
     build: {
       rollupOptions: {
         output: {
