@@ -1,7 +1,7 @@
 // Email + password accounts: sign up, sign in, confirm the address, and reset a forgotten password.
 import { HttpError, appOrigin, inBackground, ipSubject, isUniqueViolation, json, sha256, str, type Db, type Route, type RouteContext } from '../http';
 import { emailSendingEnabled, resetEmail, sendEmail, verificationEmail } from '../mail';
-import { hashPassword, passwordProblem, verifyAgainstDummy, verifyPassword } from '../password';
+import { hashPassword, passwordProblem, pepperHash, pepperStoredHash, verifyAgainstDummy, verifyPassword } from '../password';
 import { LIMITS, countLimit, enforceLimit, rateLimited } from '../ratelimit';
 import { EMAIL_CLAIM_TTL, createPasswordSession, createSession, endAllSessions, endIncomingSession, loadUser, requireUser, sessionCookie, staleEmailClaim, toPublicUser } from '../session';
 import { SYNC_TABLES } from '../sync';
@@ -90,7 +90,7 @@ async function register(c: RouteContext): Promise<Response> {
   if (!(await releaseStaleClaim(c.env.DB, email, now))) throw taken();
 
   const id = crypto.randomUUID();
-  const hash = await hashPassword(password);
+  const hash = await hashPassword(password, c.env);
   try {
     await c.env.DB.prepare(
       'INSERT INTO users (id, display_name, avatar_url, created_at, email, email_set_at, password_hash, updated_at) VALUES (?, ?, NULL, ?, ?, ?, ?, ?)',
@@ -135,7 +135,7 @@ async function login(c: RouteContext): Promise<Response> {
   // up with it and takes it: a learner who signed out before confirming is not locked out of their account
   const usable = row && row.password_hash ? row : null;
   // Same work, same answer whether or not the account exists or has a password
-  const ok = usable ? await verifyPassword(password, usable.password_hash!) : await verifyAgainstDummy(password);
+  const ok = usable ? await verifyPassword(password, usable.password_hash!, c.env) : await verifyAgainstDummy(password, c.env);
   if (!usable || !ok) {
     const over = [perEmail, perHour].find(l => l?.over);
     if (over) throw rateLimited(over.retryAfter);
@@ -143,8 +143,11 @@ async function login(c: RouteContext): Promise<Response> {
   }
 
   // Only while the password is still the one just checked: a reset that finished meanwhile wins
-  const session = await createPasswordSession(c.env.DB, usable.id, now, usable.password_hash!);
+  // A hash from before the pepper is upgraded now; a sign-in elsewhere upgrading it meanwhile still counts
+  const upgraded = await pepperStoredHash(usable.password_hash!, c.env);
+  const session = await createPasswordSession(c.env.DB, usable.id, now, usable.password_hash!, upgraded);
   if (!session) throw INVALID_CREDENTIALS();
+  if (upgraded) await pepperHash(c.env.DB, usable.id, usable.password_hash!, upgraded);
   await endIncomingSession(c);
   const user = await loadUser(c.env.DB, usable.id);
   return json({ user: toPublicUser(user!) }, 200, { 'Set-Cookie': sessionCookie(session) });
@@ -234,7 +237,7 @@ async function reset(c: RouteContext): Promise<Response> {
   const before = await loadUser(c.env.DB, pendingUser);
   if (!before) throw INVALID_TOKEN();
   requireStrongPassword(password, before.email, before.display_name);
-  const hash = await hashPassword(password);
+  const hash = await hashPassword(password, c.env);
 
   const tokenHash = await sha256(token);
   const userId = await consumeToken(c.env.DB, token, 'reset', now);

@@ -76,13 +76,13 @@ test('migrations: an email belongs to one account only', () => {
 // --- Passwords -------------------------------------------------------------------------------
 
 test('passwords: PBKDF2 hash with a random salt, verified in constant time, never stored as typed', async () => {
-  const stored = await hashPassword('correct horse battery staple');
+  const stored = await hashPassword('correct horse battery staple', {});
   assert.match(stored, new RegExp(`^pbkdf2\\$sha256\\$${PBKDF2_ITERATIONS}\\$[A-Za-z0-9+/=]+\\$[A-Za-z0-9+/=]+$`));
   assert.ok(!stored.includes('correct horse'));
-  assert.notEqual(await hashPassword('correct horse battery staple'), stored, 'a new salt each time');
-  assert.equal(await verifyPassword('correct horse battery staple', stored), true);
-  assert.equal(await verifyPassword('correct horse battery stapl', stored), false);
-  assert.equal(await verifyPassword('anything', 'not-a-hash'), false);
+  assert.notEqual(await hashPassword('correct horse battery staple', {}), stored, 'a new salt each time');
+  assert.equal(await verifyPassword('correct horse battery staple', stored, {}), true);
+  assert.equal(await verifyPassword('correct horse battery stapl', stored, {}), false);
+  assert.equal(await verifyPassword('anything', 'not-a-hash', {}), false);
 });
 
 test('passwords: too short, too long, common, the email, or containing the name or site are refused', () => {

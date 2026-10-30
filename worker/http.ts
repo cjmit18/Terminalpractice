@@ -52,6 +52,12 @@ export interface ApiEnv {
    * The account with this confirmed address is the owner: it sees the admin dashboard and adds admins.
    */
   OWNER_EMAIL?: string;
+  /**
+   * Secret key mixed into every stored password hash (worker/password.ts), at least 32 characters. Set as a
+   * secret (`wrangler secret put PASSWORD_PEPPER`) and keep a copy somewhere safe: it cannot be changed, and
+   * if it is lost every password stops working until it is reset.
+   */
+  PASSWORD_PEPPER?: string;
 }
 
 export interface ApiDeps {
