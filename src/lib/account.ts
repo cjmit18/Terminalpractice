@@ -74,6 +74,13 @@ function update(patch: Partial<Snapshot>): void {
   listeners.forEach(l => l());
 }
 
+/**
+ * Goes up whenever this tab learns who is signed in from a sign-in, sign-up, reset or sign-out. A /api/me
+ * answer that was asked for before then is older news: it may still say what sign-in methods exist, but
+ * not who is signed in (#51, 3).
+ */
+let authGeneration = 0;
+
 function subscribe(listener: () => void): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
@@ -82,6 +89,7 @@ function subscribe(listener: () => void): () => void {
 /** Asks the server who is signed in, and which sign-in methods it offers. */
 export async function refreshAccount(): Promise<void> {
   if (!ACCOUNTS_ENABLED) return;
+  const asked = authGeneration;
   try {
     const res = await fetch(apiUrl('me'), { credentials: 'same-origin', headers: { Accept: 'application/json' } });
     const body = res.ok && res.headers.get('Content-Type')?.includes('application/json') ? await res.json() : null;
@@ -89,12 +97,14 @@ export async function refreshAccount(): Promise<void> {
     const providers: Providers = { github: p.github === true, email: p.email === true };
     const emailSending = body?.emailSending === true;
     const role: Role = body?.role === 'owner' || body?.role === 'admin' ? body.role : null;
+    // A sign-in or sign-out finished while this was in flight: it, not this answer, says who is signed in
+    if (asked !== authGeneration) return update({ providers, emailSending });
     if (body?.user) update({ account: { status: 'signed-in', user: body.user as AccountUser }, role, providers, emailSending });
     else if (providers.github || providers.email) update({ account: { status: 'signed-out' }, role: null, providers, emailSending });
     else update({ account: { status: 'unavailable' }, role: null, providers, emailSending });
   } catch {
     // Offline: keep what we knew, otherwise say nothing about accounts
-    if (snapshot.account.status === 'loading') update({ account: { status: 'unavailable' } });
+    if (asked === authGeneration && snapshot.account.status === 'loading') update({ account: { status: 'unavailable' } });
   }
 }
 
@@ -161,18 +171,23 @@ async function request<T>(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: str
 
 /** The session ended: show signed out, and tell the sync to remove the account's data from this browser */
 function setSignedOut(): void {
+  authGeneration++;
   update({ account: { status: 'signed-out' }, role: null });
   announceSignedOut();
 }
 
 /** Someone else announced the end of the session (the sync got a 401) */
 function onSignedOutElsewhere(): void {
-  if (snapshot.account.status === 'signed-in') update({ account: { status: 'signed-out' }, role: null });
+  if (snapshot.account.status === 'signed-in') {
+    authGeneration++;
+    update({ account: { status: 'signed-out' }, role: null });
+  }
 }
 
 /** The server set the session cookie: show signed in */
 function signedIn<T extends { user: AccountUser }>(r: ApiResult<T>): ApiResult<T> {
   if (r.ok && r.data?.user) {
+    authGeneration++;
     update({ account: { status: 'signed-in', user: r.data.user }, role: null });
     void refreshRole(r.data.user.id);
   }
