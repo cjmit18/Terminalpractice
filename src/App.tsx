@@ -1,6 +1,7 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { BottomNav, Header } from './components/Header';
+import { ViewAsBanner } from './components/admin/ViewAsBanner';
 import { ModuleSelector } from './components/ModuleSelector';
 import { ModuleRunner } from './components/ModuleRunner';
 import { ExamModule } from './types/modules';
@@ -58,6 +59,7 @@ reloadOnPreloadError();
 const SimulatorsHub = lazyWithReload(() => import('./components/SimulatorsHub').then(m => ({ default: m.SimulatorsHub })));
 const SandboxMode = lazyWithReload(() => import('./components/SandboxMode').then(m => ({ default: m.SandboxMode })));
 const TestingPage = lazyWithReload(() => import('./components/testing/TestingPage').then(m => ({ default: m.TestingPage })));
+const AdminPage = lazyWithReload(() => import('./components/admin/AdminPage').then(m => ({ default: m.AdminPage })));
 const AccountPortal = lazyWithReload(() => import('./components/account/AccountPortal').then(m => ({ default: m.AccountPortal })));
 const ChallengesPage = lazyWithReload(() =>
   import('./components/challenges/ChallengesPage').then(m => ({ default: m.ChallengesPage })),
@@ -297,7 +299,7 @@ export default function App() {
       challengeTitle,
       challengeRoute ? 'Challenges' : null,
       reviewOpen ? 'Review' : null,
-      route.section === 'badge' ? 'Badge' : route.section === 'testing' ? 'Testing' : route.section === 'account' ? 'Account' : PAGE_TITLES[route.section],
+      route.section === 'badge' ? 'Badge' : route.section === 'testing' ? 'Testing' : route.section === 'account' ? 'Account' : route.section === 'admin' ? 'Admin' : PAGE_TITLES[route.section],
       'Terminus CertSim',
     ];
     document.title = parts.filter(Boolean).join(' · ');
@@ -395,6 +397,8 @@ export default function App() {
           </a>
         </p>
       )}
+
+      <ViewAsBanner />
 
       <Header
         current={navSection(route.section)}
@@ -499,6 +503,12 @@ export default function App() {
         {route.section === 'account' && (
           <Suspense fallback={loading}>
             <AccountPortal page={route.page} />
+          </Suspense>
+        )}
+
+        {route.section === 'admin' && (
+          <Suspense fallback={loading}>
+            <AdminPage />
           </Suspense>
         )}
         </PageErrorBoundary>
