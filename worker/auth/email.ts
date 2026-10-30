@@ -3,7 +3,7 @@ import { HttpError, appOrigin, inBackground, ipSubject, isUniqueViolation, json,
 import { emailSendingEnabled, resetEmail, sendEmail, verificationEmail } from '../mail';
 import { hashPassword, passwordProblem, pepperHash, pepperStoredHash, verifyAgainstDummy, verifyPassword } from '../password';
 import { LIMITS, countLimit, enforceLimit, rateLimited } from '../ratelimit';
-import { EMAIL_CLAIM_TTL, createPasswordSession, endAllSessions, endIncomingSession, loadUser, requireUser, sessionCookie, staleEmailClaim, toPublicUser } from '../session';
+import { EMAIL_CLAIM_TTL, createPasswordSession, endIncomingSession, loadUser, requireUser, sessionCookie, staleEmailClaim, toPublicUser } from '../session';
 import { SYNC_TABLES } from '../sync';
 import { consumeToken, issueToken, peekToken, revokeTokens, tokenFailure, type TokenPurpose } from '../tokens';
 
@@ -268,16 +268,26 @@ async function reset(c: RouteContext): Promise<Response> {
     .bind(hash, now, userId, tokenHash)
     .first<{ id: string }>();
   if (!changed) throw INVALID_TOKEN();
+  // The cleanup runs only while the password is still the one set here, each step in its own statement: a
+  // newer reset or change that lands meanwhile has done its own cleanup, and this slower request must not end
+  // the sessions or links that one just made (#68 review). The peppered form of the hash counts as the same.
+  const still = `(SELECT password_hash FROM users WHERE id = ?1) IN (?2, ?3)`;
+  const peppered = (await pepperStoredHash(hash, c.env)) ?? hash;
+  const ifStill = (sql: string) => c.env.DB.prepare(sql).bind(userId, hash, peppered).run();
   if (current.email_verified_at === null) {
     // The claimant's other sign-in methods and synced progress go; the inbox owner starts fresh
-    await c.env.DB.prepare("DELETE FROM identities WHERE user_id = ? AND provider <> 'email'").bind(userId).run();
-    for (const table of SYNC_TABLES) await c.env.DB.prepare(`DELETE FROM ${table} WHERE user_id = ?`).bind(userId).run();
+    await ifStill(`DELETE FROM identities WHERE user_id = ?1 AND provider <> 'email' AND ${still}`);
+    for (const table of SYNC_TABLES) await ifStill(`DELETE FROM ${table} WHERE user_id = ?1 AND ${still}`);
   }
-  await revokeTokens(c.env.DB, userId, ['verify', 'reset'], now);
-  await endAllSessions(c.env.DB, userId);
+  await c.env.DB.prepare(
+    `UPDATE auth_tokens SET used_at = ?4 WHERE user_id = ?1 AND purpose IN ('verify', 'reset') AND used_at IS NULL AND ${still}`,
+  )
+    .bind(userId, hash, peppered, now)
+    .run();
+  await ifStill(`DELETE FROM sessions WHERE user_id = ?1 AND ${still}`);
   await endIncomingSession(c);
   // Only while the password is still the one set here: a newer reset or change that finished meanwhile wins
-  const session = await createPasswordSession(c.env.DB, userId, now, hash);
+  const session = await createPasswordSession(c.env.DB, userId, now, hash, peppered);
   if (!session) throw new HttpError(409, 'conflict', 'Your password was changed again elsewhere. Sign in with the newest one.');
   const user = await loadUser(c.env.DB, userId);
   return json({ user: toPublicUser(user!) }, 200, { 'Set-Cookie': sessionCookie(session) });

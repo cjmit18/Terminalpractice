@@ -267,3 +267,25 @@ test('#51-2: an older reset that resumes after a newer one finished changes noth
   assert.notEqual(await me(s, newerSession), null, "the newer reset's session is still signed in");
   assert.equal((await s.login('learner@example.com', 'violet harbor lantern quiz')).status, 200);
 });
+
+test('#68 review: a reset that wrote its password, then waits, does not end the newer reset’s session', async () => {
+  const s = setup();
+  await s.register();
+  await forgot(s);
+  const older = tokenIn(s.sent.at(-1)!);
+  // The older reset has written its password and waits just before ending the account's sessions
+  const hold = holdNext(s, 'DELETE FROM sessions WHERE user_id = ?1');
+  const slowReset = reset(s, older);
+  await hold.atGate;
+  await forgot(s);
+  const newer = await reset(s, tokenIn(s.sent.at(-1)!), 'violet harbor lantern quiz');
+  assert.equal(newer.status, 200);
+  const newerSession = sessionOf(newer);
+  hold.release();
+  const late = await slowReset;
+  assert.equal(late.status, 409);
+  assert.equal(sessionOf(late), null);
+  assert.notEqual(await me(s, newerSession), null, "the newer reset's sign-in survives");
+  assert.equal(count(s.db, 'sessions'), 1);
+  assert.equal((await s.login('learner@example.com', 'violet harbor lantern quiz')).status, 200);
+});
