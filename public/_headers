@@ -1,0 +1,11 @@
+# Security headers for every static file (Cloudflare Workers static assets read this file from dist/).
+# The API (/api/*) runs Worker code and sets its own headers (worker/http.ts SECURITY_HEADERS).
+# e2e/csp.spec.ts loads the app under this exact Content-Security-Policy and fails on any violation.
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
+  Cross-Origin-Opener-Policy: same-origin
+  Strict-Transport-Security: max-age=31536000
