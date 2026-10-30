@@ -163,6 +163,55 @@ test('unlinking: never the last sign-in method; GitHub can go when a password re
   assert.deepEqual((await (await s.call('GET', '/api/account', undefined, as(session))).json()).signInMethods, ['email']);
 });
 
+/** Runs `between` once, just before the first statement starting with `sql` is prepared (another request landing there) */
+function interleave(s: Setup, sql: string, between: () => void) {
+  const realPrepare = s.db.prepare.bind(s.db);
+  let done = false;
+  s.db.prepare = (text: string) => {
+    if (!done && text.trimStart().startsWith(sql)) {
+      done = true;
+      between();
+    }
+    return realPrepare(text);
+  };
+}
+
+test('two unlinks at once cannot remove every way to sign in, in either order', async () => {
+  for (const [first, second] of [
+    ['github', 'email'],
+    ['email', 'github'],
+  ] as const) {
+    const s = setup();
+    const session = sessionOf(await s.register());
+    const userId = (await me(s, session)).id;
+    s.db.raw.prepare("INSERT INTO identities (provider, provider_id, user_id, login, linked_at) VALUES ('github', '42', ?, 'octo', 0)").run(userId);
+    // The other unlink completes after this request's check, before its write
+    interleave(s, first === 'github' ? 'DELETE FROM identities' : 'UPDATE users SET email = NULL', () => {
+      if (second === 'email') {
+        s.db.raw.prepare('UPDATE users SET email = NULL, email_verified_at = NULL, password_hash = NULL WHERE id = ?').run(userId);
+        s.db.raw.prepare("DELETE FROM identities WHERE user_id = ? AND provider = 'email'").run(userId);
+      } else s.db.raw.prepare("DELETE FROM identities WHERE user_id = ? AND provider = 'github'").run(userId);
+    });
+    const res = await s.call('DELETE', `/api/account/identities/${first}`, { currentPassword: PASSWORD }, as(session));
+    assert.equal(res.status, 409, `unlinking ${first} after ${second} went`);
+    assert.equal((await res.json()).error, 'last_method');
+    const row = s.db.raw.prepare('SELECT email, password_hash FROM users WHERE id = ?').get(userId) as { email: string | null; password_hash: string | null };
+    const github = s.db.raw.prepare("SELECT COUNT(*) AS n FROM identities WHERE user_id = ? AND provider = 'github'").get(userId) as { n: number };
+    assert.ok((row.email && row.password_hash) || github.n === 1, 'one way to sign in remains');
+  }
+});
+
+test('a password reset landing during a password change is not undone by the change’s new session', async () => {
+  const s = setup();
+  const session = sessionOf(await s.register());
+  // After this request set its password and ended every session, a reset sets another password
+  interleave(s, 'INSERT INTO sessions', () => s.db.raw.prepare("UPDATE users SET password_hash = 'set-by-the-reset'").run());
+  const res = await s.call('POST', '/api/account/password', { currentPassword: PASSWORD, newPassword: NEW_PASSWORD }, as(session));
+  assert.equal(res.status, 409);
+  assert.match(res.headers.get('Set-Cookie') ?? '', /__Host-session=;.*Max-Age=0/);
+  assert.equal(count(s.db, 'sessions'), 0, 'no session from the slower change survives the reset');
+});
+
 test('export is a JSON download with the progress, and no password, session or token hashes', async () => {
   const s = setup();
   const session = sessionOf(await s.register());
