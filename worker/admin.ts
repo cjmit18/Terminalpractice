@@ -57,12 +57,8 @@ async function stats(c: RouteContext): Promise<Response> {
     ),
   };
   const activity = {
-    signedInLast7Days: await countOf(
-      db,
-      `SELECT COUNT(DISTINCT user_id) AS n FROM sessions WHERE COALESCE(authenticated_at, created_at) >= ?2 AND user_id NOT IN (${STAFF})`,
-      owner,
-      now - 7 * DAY,
-    ),
+    // From users.last_sign_in_at, which every sign-in sets and signing out leaves alone
+    signedInLast7Days: await countOf(db, `SELECT COUNT(*) AS n ${learners} AND last_sign_in_at >= ?2`, owner, now - 7 * DAY),
     liveSessions: await countOf(db, `SELECT COUNT(*) AS n FROM sessions WHERE expires_at > ?2 AND user_id NOT IN (${STAFF})`, owner, now),
   };
   const { results } = await db

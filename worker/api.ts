@@ -19,7 +19,7 @@ import { emailRoutes } from './auth/email';
 import { syncRoutes } from './sync';
 import { adminRoutes, roleOf } from './admin';
 import { emailSendingEnabled } from './mail';
-import { currentSession, loadUser, toPublicUser } from './session';
+import { currentSession, loadUser, recordSignIn, toPublicUser } from './session';
 
 export type { ApiDeps, ApiEnv, Db, DbStatement } from './http';
 
@@ -236,6 +236,7 @@ async function createSession(db: Db, userId: string, now: number): Promise<strin
     .prepare('INSERT INTO sessions (token_hash, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)')
     .bind(await sha256(token), userId, now + SESSION_TTL, now)
     .run();
+  await recordSignIn(db, userId, now);
   return token;
 }
 
