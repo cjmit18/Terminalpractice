@@ -201,6 +201,30 @@ test('two unlinks at once cannot remove every way to sign in, in either order', 
   }
 });
 
+test('a password reset landing before a password change ends sessions keeps the reset’s own session', async () => {
+  const s = setup();
+  const session = sessionOf(await s.register());
+  const userId = (await me(s, session)).id;
+  // After this request set its password, a reset sets another one and signs in with a fresh session
+  interleave(s, 'DELETE FROM sessions', () => {
+    s.db.raw.prepare("UPDATE users SET password_hash = 'set-by-the-reset'").run();
+    s.db.raw.prepare('DELETE FROM sessions').run();
+    s.db.raw.prepare("INSERT INTO sessions (token_hash, user_id, expires_at, created_at, authenticated_at) VALUES ('reset-session', ?, ?, ?, ?)").run(
+      userId,
+      Date.UTC(2027, 0, 1),
+      Date.UTC(2026, 9, 23),
+      Date.UTC(2026, 9, 23),
+    );
+  });
+  const res = await s.call('POST', '/api/account/password', { currentPassword: PASSWORD, newPassword: NEW_PASSWORD }, as(session));
+  assert.equal(res.status, 409);
+  assert.deepEqual(
+    (s.db.raw.prepare('SELECT token_hash FROM sessions').all() as { token_hash: string }[]).map(r => r.token_hash),
+    ['reset-session'],
+    'the slower change does not end the session the reset just made',
+  );
+});
+
 test('a password reset landing during a password change is not undone by the change’s new session', async () => {
   const s = setup();
   const session = sessionOf(await s.register());
