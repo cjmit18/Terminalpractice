@@ -5,9 +5,11 @@ import { Dashboard } from './Dashboard';
 import { ForgotPage, ResetPage, VerifyPage } from './EmailLinkPages';
 import { textLink } from './forms';
 import { PrivacyNote, SignInCard } from './SignIn';
+import { SecurityPage } from './SecurityPage';
 
 const TITLES: Record<AccountPage, string> = {
   home: 'Account',
+  security: 'Security and data',
   forgot: 'Reset your password',
   verify: 'Confirm your email',
   reset: 'Choose a new password',
@@ -19,6 +21,7 @@ export const AccountPortal: React.FC<{ page: AccountPage }> = ({ page }) => {
 
   let title = TITLES[page];
   if (page === 'home') title = account.status === 'signed-in' ? `Hello, ${account.user.name}` : account.status === 'signed-out' ? 'Sign in' : 'Account';
+  if (page === 'security' && account.status === 'signed-out') title = 'Sign in';
 
   let body: React.ReactNode;
   if (page === 'forgot') body = <ForgotPage emailSending={emailSending} />;
@@ -38,7 +41,8 @@ export const AccountPortal: React.FC<{ page: AccountPage }> = ({ page }) => {
         <PrivacyNote />
       </div>
     );
-  } else body = <Dashboard user={account.user} emailSending={emailSending} />;
+  } else if (page === 'security') body = <SecurityPage user={account.user} />;
+  else body = <Dashboard user={account.user} emailSending={emailSending} />;
 
   return (
     <div className="max-w-3xl mx-auto w-full px-4 sm:px-6 py-8 sm:py-12 space-y-8">
