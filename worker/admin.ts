@@ -4,6 +4,7 @@
 import { HttpError, json, noContent, str, type ApiEnv, type Db, type Route, type RouteContext } from './http';
 import { requireUser, type UserRow } from './session';
 import { normalizeEmail } from './auth/email';
+import { mostMissed } from './answers';
 
 export type Role = 'owner' | 'admin';
 
@@ -75,6 +76,12 @@ async function stats(c: RouteContext): Promise<Response> {
   return json({ asOf: now, accounts, activity, progress });
 }
 
+/** GET /api/admin/missed: the questions learners who share their answers miss most (portal part 9c) */
+async function missed(c: RouteContext): Promise<Response> {
+  await requireRole(c, 'admin');
+  return json({ asOf: c.deps.now(), ...(await mostMissed(c.env, STAFF, ownerEmail(c.env) ?? '')) });
+}
+
 /** GET /api/admin/admins (owner only): the admin addresses; the owner's own comes from the secret */
 async function listAdmins(c: RouteContext): Promise<Response> {
   await requireRole(c, 'owner');
@@ -111,6 +118,7 @@ async function removeAdmin(c: RouteContext): Promise<Response> {
 
 export const adminRoutes: Route[] = [
   { method: 'GET', path: '/api/admin/stats', handler: stats },
+  { method: 'GET', path: '/api/admin/missed', handler: missed },
   { method: 'GET', path: '/api/admin/admins', handler: listAdmins },
   { method: 'POST', path: '/api/admin/admins', handler: addAdmin },
   { method: 'DELETE', path: '/api/admin/admins', handler: removeAdmin },
