@@ -19,6 +19,7 @@ import {
 } from './session';
 import { revokeTokens } from './tokens';
 import { SYNC_TABLES, readState } from './sync';
+import { sharedAnswersOf } from './answers';
 import { requireDisplayName, requireStrongPassword } from './auth/email';
 
 const PROVIDERS = ['github', 'email'] as const;
@@ -267,6 +268,8 @@ async function exportAccount(c: RouteContext): Promise<Response> {
     sessions: sessions.results.map(s => ({ createdAt: iso(s.created_at), expiresAt: iso(s.expires_at) })),
     // Synced progress (worker/sync.ts): items, reset epochs and app settings, as GET /api/progress gives them
     progress: await readState(c.env.DB, user.id),
+    // Answers shared for the most-missed questions (worker/answers.ts): question keys and counts only
+    sharedAnswers: await sharedAnswersOf(c.env.DB, user.id),
   };
   return new Response(JSON.stringify(data, null, 2), {
     headers: secureHeaders({
@@ -282,9 +285,9 @@ async function deleteAccount(c: RouteContext): Promise<Response> {
   const body = await c.body();
   if (body.confirm !== 'delete') throw new HttpError(400, 'confirm_required', 'Send { "confirm": "delete" } to delete your account.');
   await requireRecentAuth(c, user, session, optStr(body, 'currentPassword', 1024));
-  // ON DELETE CASCADE removes identities, sessions, tokens and synced progress; the explicit deletes
+  // ON DELETE CASCADE removes identities, sessions, tokens, shared answers and synced progress; the explicit deletes
   // also cover a database where foreign keys are not enforced
-  for (const table of ['sessions', 'identities', 'auth_tokens', ...SYNC_TABLES]) {
+  for (const table of ['sessions', 'identities', 'auth_tokens', 'question_answers', ...SYNC_TABLES]) {
     await c.env.DB.prepare(`DELETE FROM ${table} WHERE user_id = ?`).bind(user.id).run();
   }
   await c.env.DB.prepare('DELETE FROM users WHERE id = ?').bind(user.id).run();

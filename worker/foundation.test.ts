@@ -21,6 +21,7 @@ const MIGRATIONS = [
   '0005_progress_sync.sql',
   '0006_admins.sql',
   '0007_last_sign_in.sql',
+  '0008_answer_sharing.sql',
 ];
 const migration = (name: string) => readFileSync(new URL(`../migrations/${name}`, import.meta.url), 'utf8');
 
