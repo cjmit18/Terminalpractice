@@ -2,6 +2,7 @@
 // sign-in and by the daily sweep; a pepper too short to help is not used.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { PASSWORD, sessionOf, setup } from './testkit.ts';
 import { hashPassword, pepperStoredHash, pepperStoredHashes, verifyPassword } from './password.ts';
 import { dailyMaintenance } from './maintenance.ts';
@@ -105,4 +106,20 @@ test('the daily sweep upgrades accounts that do not sign in, a batch at a time, 
   assert.deepEqual(kinds(), ['pbkdf2-hmac', 'pbkdf2-hmac', 'pbkdf2-hmac', 'pbkdf2-hmac']);
   assert.equal((s.db.raw.prepare("SELECT password_hash FROM users WHERE id = 'new'").get() as { password_hash: string }).password_hash, kept);
   assert.equal((await s.login('l0@example.com')).status, 200);
+});
+
+test('a GitHub account that adds email and a password gets a peppered hash', async () => {
+  const s = setup(PEPPER);
+  const now = s.advance(0);
+  s.db.raw.prepare("INSERT INTO users (id, display_name, created_at) VALUES ('gh', 'Octo', ?)").run(now);
+  s.db.raw.prepare("INSERT INTO identities (provider, provider_id, user_id, login, linked_at) VALUES ('github', '1', 'gh', 'octo', ?)").run(now);
+  const token = 'token-gh';
+  s.db.raw
+    .prepare('INSERT INTO sessions (token_hash, user_id, expires_at, created_at, authenticated_at) VALUES (?, ?, ?, ?, ?)')
+    .run(createHash('sha256').update(token).digest('hex'), 'gh', now + 86_400_000, now, now);
+  const res = await s.call('POST', '/api/account/email', { email: 'octo@example.com', newPassword: PASSWORD }, { Cookie: `__Host-session=${token}` });
+  assert.equal(res.status, 201);
+  const stored = (s.db.raw.prepare("SELECT password_hash FROM users WHERE id = 'gh'").get() as { password_hash: string }).password_hash;
+  assert.match(stored, /^pbkdf2-hmac\$/);
+  assert.equal((await s.login('octo@example.com')).status, 200);
 });
