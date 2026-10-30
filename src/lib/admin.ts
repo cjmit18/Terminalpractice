@@ -11,6 +11,21 @@ export interface AdminStats {
   progress: { accountsWithProgress: number; tasksDone: number; lessonsRead: number; quizzesTaken: number };
 }
 
+/** One question on the most-missed list: learners who answered it, how many of them missed it, and the answer totals */
+export interface MissedQuestion {
+  key: string;
+  learners: number;
+  missedBy: number;
+  answered: number;
+  missed: number;
+}
+
+export interface MostMissed {
+  asOf: number;
+  learnersSharing: number;
+  questions: MissedQuestion[];
+}
+
 export interface AdminEntry {
   email: string;
   addedAt: number;
@@ -40,6 +55,7 @@ async function call<T>(method: 'GET' | 'POST' | 'DELETE', path: string, body?: u
 }
 
 export const getAdminStats = () => call<AdminStats>('GET', 'admin/stats');
+export const getMostMissed = () => call<MostMissed>('GET', 'admin/missed');
 export const listAdmins = () => call<{ admins: AdminEntry[] }>('GET', 'admin/admins');
 export const addAdmin = (email: string) => call<{ ok: true }>('POST', 'admin/admins', { email });
 export const removeAdmin = (email: string) => call<unknown>('DELETE', 'admin/admins', { email });

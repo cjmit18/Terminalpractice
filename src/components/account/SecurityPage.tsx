@@ -16,6 +16,7 @@ import {
   type AccountUser,
   type ApiResult,
 } from '../../lib/account';
+import { setAnswerSharing, useAnswerSharing } from '../../lib/answers';
 import { accountHref } from '../../lib/router';
 import { Field, FormError, FormNote, PasswordField, dangerButton, secondaryButton, textLink, useFocusFirstError } from './forms';
 import { displayNameError, newPasswordError, type ErrorField } from './messages';
@@ -97,6 +98,7 @@ export const SecurityPage: React.FC<{ user: AccountUser }> = ({ user }) => {
         </>
       )}
       <Sessions key={sessionsKey} />
+      <ShareAnswers />
       <ExportData />
       <DeleteAccount hasPassword={details?.hasPassword ?? false} />
     </div>
@@ -398,6 +400,53 @@ const Sessions: React.FC = () => {
   );
 };
 
+const ShareAnswers: React.FC = () => {
+  const id = useId();
+  const sharing = useAnswerSharing();
+  // The choice being saved, shown at once; cleared when the server has answered (back to the saved one on failure)
+  const [pending, setPending] = useState<boolean | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const toggle = async (share: boolean) => {
+    setNote(null);
+    setError(null);
+    setPending(share);
+    const r = await setAnswerSharing(share);
+    setPending(null);
+    if (!r.ok) return setError(r.status === 0 ? 'Could not reach the server. Check your connection and try again.' : 'That did not save. Try again.');
+    setNote(share ? 'Thanks! Your answers now help improve the questions.' : 'Sharing is off, and the answers you shared are deleted.');
+  };
+  return (
+    <section aria-labelledby="share-h" className={sectionClass}>
+      <h2 id="share-h" className={headingClass}>
+        Help improve the questions
+      </h2>
+      <p id={`${id}-what`} className="text-sm text-muted">
+        Off unless you turn it on. While it is on, each checkpoint and review answer sends which question it was and
+        whether you got it right, nothing else. The site’s admins see only totals across learners, never who missed
+        what. Turning it off deletes what you shared.
+      </p>
+      {sharing.status === 'unknown' ? (
+        <p className="text-sm text-muted">Loading…</p>
+      ) : (
+        <label className="flex items-start gap-3 min-h-10 py-1 cursor-pointer text-[15px] text-text">
+          <input
+            type="checkbox"
+            checked={pending ?? sharing.share}
+            disabled={pending !== null}
+            onChange={e => void toggle(e.target.checked)}
+            aria-describedby={`${id}-what`}
+            className="mt-1 size-4 shrink-0 accent-accent"
+          />
+          Share which questions I miss
+        </label>
+      )}
+      <FormError message={error} />
+      <FormNote message={note} />
+    </section>
+  );
+};
+
 const ExportData: React.FC = () => {
   const [state, setState] = useState<'idle' | 'busy' | 'done' | { error: string }>('idle');
   const run = async () => {
@@ -410,7 +459,7 @@ const ExportData: React.FC = () => {
       <h2 id="export-h" className={headingClass}>
         Your data
       </h2>
-      <p className="text-sm text-muted">A JSON file with everything stored for your account: profile, ways to sign in, sessions and progress.</p>
+      <p className="text-sm text-muted">A JSON file with everything stored for your account: profile, ways to sign in, sessions, progress and any answers you shared.</p>
       <div className="flex flex-wrap items-center gap-3">
         <button type="button" onClick={run} disabled={state === 'busy'} className={secondaryButton}>
           Download my data

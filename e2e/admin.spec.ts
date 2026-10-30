@@ -15,6 +15,7 @@ async function adminApi(context: BrowserContext) {
   const admins = [{ email: 'helper@example.com', addedAt: 1 }];
   const sent: { method: string; body: unknown }[] = [];
   await context.route('**/api/admin/stats', route => route.fulfill({ json: STATS }));
+  await context.route('**/api/admin/missed', route => route.fulfill({ json: { asOf: STATS.asOf, learnersSharing: 0, questions: [] } }));
   await context.route('**/api/admin/admins', async route => {
     const req = route.request();
     const body = req.postData() ? req.postDataJSON() : undefined;

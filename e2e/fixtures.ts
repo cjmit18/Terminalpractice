@@ -23,6 +23,8 @@ export const test = base.extend<{ allowConsoleErrors: boolean; consoleErrors: st
       await context.route('**/api/logout', route => route.fulfill({ json: { ok: true } }));
       // Signed in, the app syncs progress; an account with none yet, unless a test routes it itself
       await context.route('**/api/progress', route => route.fulfill({ json: { items: [], epochs: {}, settings: {} } }));
+      // Sharing answers for the most-missed questions is off unless a test routes it itself
+      await context.route('**/api/answers/sharing', route => route.fulfill({ json: { share: false, questions: 0 } }));
       await use();
     },
     { auto: true },
