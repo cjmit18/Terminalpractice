@@ -3,6 +3,7 @@ import { createNode, writeFileContent } from '../../filesystem';
 import { WindowsContext, WindowsResult, cmdCommands } from '../context';
 import { cmdDoc } from '../../docs';
 import { hasConnectivity } from './network';
+import { DOMAIN_SID, nextRid, sidOf } from '../psAD';
 import { BOOT_GP, applyGroupPolicy, gpresultTime, windowsNow } from '../clock';
 
 // CMD system tools: whoami, hostname, ver, systeminfo, tasklist, taskkill, sfc, dism, chkdsk,
@@ -509,8 +510,16 @@ function whoami(ctx: WindowsContext): WindowsResult {
   const sw = ctx.args.map(a => a.toLowerCase().replace(/^-/, '/'));
   const user = ctx.state.currentUser;
   const account = `corp\\${user.toLowerCase()}`;
-  const ridOf = (n: string) => (n.toLowerCase() === 'administrator' ? 500 : 1100 + [...n.toLowerCase()].reduce((s, c) => s + c.charCodeAt(0), 0));
-  const domainSid = 'S-1-5-21-3623811015-3361044348-30300820';
+  // The same SIDs Get-ADUser shows; a name with no directory object keeps the old name-based RID
+  const legacyRid = (n: string) => (n.toLowerCase() === 'administrator' ? 500 : 1100 + [...n.toLowerCase()].reduce((s, c) => s + c.charCodeAt(0), 0));
+  const userSid = (n: string) => {
+    const u = ctx.state.adUsers.find(x => x.sAMAccountName.toLowerCase() === n.toLowerCase());
+    return u ? sidOf(u) : `${DOMAIN_SID}-${legacyRid(n)}`;
+  };
+  const groupSid = (n: string) => {
+    const g = ctx.state.adGroups.find(x => x.name.toLowerCase() === n.toLowerCase());
+    return g ? sidOf(g) : `${DOMAIN_SID}-${n === 'Enterprise Admins' ? 519 : n === 'Schema Admins' ? 518 : legacyRid(n)}`;
+  };
   const unknown = sw.find(s => !['/upn', '/fqdn', '/logonid', '/user', '/groups', '/priv', '/all', '/fo', 'table', 'list', 'csv', '/nh'].includes(s));
   if (unknown) return ctx.fail(`ERROR: Invalid argument/option - '${unknown}'.\nType "WHOAMI /?" for usage.`, 1);
   if (!sw.length) return ctx.ok(account);
@@ -531,13 +540,13 @@ function whoami(ctx: WindowsContext): WindowsResult {
     ['NT AUTHORITY\\Authenticated Users', 'Well-known group', 'S-1-5-11', std],
     ['NT AUTHORITY\\This Organization', 'Well-known group', 'S-1-5-15', std],
     ['LOCAL', 'Well-known group', 'S-1-2-0', std],
-    ...(ad?.memberOf ?? []).filter(g => g !== 'Domain Users').map(g => [`CORP\\${g}`, 'Group', `${domainSid}-${g === 'Domain Admins' ? 512 : g === 'Enterprise Admins' ? 519 : g === 'Schema Admins' ? 518 : ridOf(g)}`, std]),
+    ...(ad?.memberOf ?? []).filter(g => g !== 'Domain Users').map(g => [`CORP\\${g}`, 'Group', groupSid(g), std]),
     ['Authentication authority asserted identity', 'Well-known group', 'S-1-18-1', std],
     elevated ? ['Mandatory Label\\High Mandatory Level', 'Label', 'S-1-16-12288', ''] : ['Mandatory Label\\Medium Mandatory Level', 'Label', 'S-1-16-8192', ''],
   ];
   const privs = (elevated ? PRIVILEGES : PRIVILEGES.filter(p => !p[2])).map(([n, d]) => [n, d, ENABLED_PRIVS.has(n) ? 'Enabled' : 'Disabled']);
   const parts: string[] = [];
-  if (all || sw.includes('/user')) parts.push(whoamiTable('USER INFORMATION', ['User Name', 'SID'], [[account, `${domainSid}-${ridOf(user)}`]]));
+  if (all || sw.includes('/user')) parts.push(whoamiTable('USER INFORMATION', ['User Name', 'SID'], [[account, userSid(user)]]));
   if (all || sw.includes('/groups')) parts.push(whoamiTable('GROUP INFORMATION', ['Group Name', 'Type', 'SID', 'Attributes'], groups));
   if (all || sw.includes('/priv')) parts.push(whoamiTable('PRIVILEGES INFORMATION', ['Privilege Name', 'Description', 'State'], privs));
   if (all) parts.push(['', 'USER CLAIMS INFORMATION', '-----------------------', '', 'User claims unknown.', '', 'Kerberos support for Dynamic Access Control on this device has been disabled.'].join('\n'));
@@ -597,7 +606,7 @@ function netUserDomainChange(ctx: WindowsContext, operands: string[], switches: 
     // A blank password fails the default domain policy
     if (!password) return ctx.fail(`${DC_NOTE}\n\n${PASSWORD_POLICY}`, 2);
     state.adUsers.push({
-      sAMAccountName: name, givenName: '', surname: '', displayName: name, email: '', department: '',
+      sAMAccountName: name, rid: nextRid(state), givenName: '', surname: '', displayName: name, email: '', department: '',
       ou: 'CN=Users,DC=corp,DC=local', enabled: !/^\/active:no$/.test(active ?? ''), locked: false, passwordNeverExpires: false, memberOf: ['Domain Users'],
     });
     const du = state.adGroups.find(g => g.name.toLowerCase() === 'domain users');
