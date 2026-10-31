@@ -193,6 +193,17 @@ function executeLinuxPipeline(
   let exitCode = 0;
   const errors: string[] = [];
   const notes: string[] = [];
+  // In a pipeline of two or more commands each one runs in its own subshell, so what is local to the shell
+  // (directory, umask, variables, who you are after su) is the same for every stage and never reaches this
+  // shell; files and the rest of the machine change for real (#28, 7)
+  const shellLocal = (st: SystemState): Partial<SystemState> => ({
+    umask: st.umask,
+    envVars: st.envVars,
+    currentUser: st.currentUser,
+    currentGroup: st.currentGroup,
+    isRootOrAdmin: st.isRootOrAdmin,
+  });
+  const before = shellLocal(activeState);
 
   for (const [stageIndex, stage] of stages.entries()) {
     let fd1: Sink = { kind: 'out' };
@@ -299,6 +310,10 @@ function executeLinuxPipeline(
     currentCwd = res.newCwd;
     activeFs = res.newFs;
     activeState = res.newState;
+    if (stages.length > 1) {
+      currentCwd = cwd;
+      activeState = { ...activeState, ...before };
+    }
     exitCode = res.exitCode;
     errors.push(...expandErrors);
 

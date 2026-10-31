@@ -79,3 +79,17 @@ test('/etc/resolv.conf exists at its real path', () => {
   assert.match(res.stdout, /nameserver 192\.168\.1\.1/);
   assert.ok(run('ls /etc').stdout.includes('resolv.conf'));
 });
+
+test('builtins in a pipeline run in a subshell: cd, umask and variables do not change this shell (#28, 7)', () => {
+  const run = linuxSession();
+  // The issue's cases
+  assert.equal(run('cd /tmp | cat; pwd').stdout, '/home/student');
+  assert.equal(run('umask 077 | cat; umask').stdout, '0022');
+  // Variables set in a stage, and each stage starting from this shell rather than the stage before
+  assert.equal(run('X=1 | cat; echo "[$X]"').stdout, '[]');
+  assert.equal(run('cd /tmp | pwd').stdout, '/home/student');
+  // Files still change for real, and a single command still changes this shell
+  run('touch made | cat');
+  assert.equal(run('ls made').stdout, 'made');
+  assert.equal(run('cd /tmp; pwd').stdout, '/tmp');
+});
