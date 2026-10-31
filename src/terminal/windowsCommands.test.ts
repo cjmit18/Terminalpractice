@@ -222,6 +222,23 @@ test('Review: diskpart assign/format need a selected partition', () => {
   assert.deepEqual([part.fsType, part.driveLetter, part.label], ['NTFS', 'F:', 'Data']);
 });
 
+test('diskpart refuses to format the running C: volume and the EFI system partition (#28, 13)', () => {
+  // The issue's case
+  const run = windowsSession('cmd');
+  run('diskpart');
+  assert.match(run('select volume C').stdout, /is the selected volume/);
+  for (const line of ['format fs=fat32 quick', 'format fs=ntfs quick override', 'form fs=ntfs']) {
+    const res = run(line);
+    assert.equal(res.exitCode, 1, line);
+    assert.match(res.stdout, /^Virtual Disk Service error:\nThe operation is not allowed on the current boot, system/, line);
+  }
+  run('select disk 0');
+  run('select partition 1');
+  assert.equal(run('format fs=fat32 quick').exitCode, 1, 'the EFI system partition');
+  const disk0 = run.state().disks[0].partitions;
+  assert.deepEqual(disk0.map(p => [p.fsType, p.label]), [['FAT32', 'EFI System'], ['Unallocated', 'MSR Reserved'], ['NTFS', 'Windows']], 'nothing changed');
+});
+
 test('PowerShell: Get-ChildItem, Get-Content, Get-Location and aliases', () => {
   const run = windowsSession('powershell');
   const gci = run('Get-ChildItem').stdout;

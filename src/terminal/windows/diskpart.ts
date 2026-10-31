@@ -314,6 +314,11 @@ const DISKPART_COMMANDS: [RegExp, DiskpartHandler][] = [
     if (!opts) return invalidArgs('FORMAT');
     const part = selectedPartition(state);
     if (!part) return { stdout: NO_VOLUME, exitCode: 1 };
+    // Like delete and clean: the running boot volume (C:) and the EFI system partition cannot be formatted,
+    // with or without override (#28, 13)
+    if (isProtected(part)) {
+      return { stdout: 'Virtual Disk Service error:\nThe operation is not allowed on the current boot, system, pagefile,\ncrashdump or hibernation volume.', exitCode: 1 };
+    }
     const fs = (opts.fs ?? 'ntfs').toUpperCase();
     if (fs !== 'NTFS' && fs !== 'FAT32') return { stdout: `The file system "${fs}" is not supported here (use fs=ntfs or fs=fat32).`, exitCode: 1 };
     part.fsType = fs as 'NTFS' | 'FAT32';
