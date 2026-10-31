@@ -240,9 +240,9 @@ export const GameLayerProvider: React.FC<ProviderProps> = ({ activity, setActivi
     silent.current = false;
     badgeQuietKey.current = quietKey;
     // Only this tab's own actions are announced here: what another tab did (earning a badge, or
-    // "Clear badges and activity" there) is said in that tab, and caught up with quietly in this one
+    // "Clear badges and activity" there) is said in that tab, and caught up with quietly in this one.
+    // The flags are read here and by the milestones below, and cleared after both (#28, 15)
     const elsewhere = fromOtherTab?.some(r => r.current) ?? false;
-    fromOtherTab?.forEach(r => (r.current = false));
     if (ids.length === 0) return;
     setActivity(a => earnBadges(a, ids));
     // The first evaluation in a tab only catches up with what was already true: no note
@@ -262,7 +262,9 @@ export const GameLayerProvider: React.FC<ProviderProps> = ({ activity, setActivi
     prev.current = now;
     const quiet = milestoneQuietKey.current !== quietKey;
     milestoneQuietKey.current = quietKey;
-    if (!before || quiet) return;
+    // Work done in another tab was announced and counted there: this tab only moves its baseline (#28, 15)
+    const elsewhere = fromOtherTab?.some(r => r.current) ?? false;
+    if (!before || quiet || elsewhere) return;
     // New tasks, labs, lessons and checkpoints: facts for "Today: ...", and a day toward the weekly goal
     const practice: string[] = [];
     for (const t of now.tasks) if (!before.tasks.has(t)) practice.push(taskFact(t.slice(0, t.indexOf('/')), t.slice(t.indexOf('/') + 1)));
@@ -291,6 +293,12 @@ export const GameLayerProvider: React.FC<ProviderProps> = ({ activity, setActivi
       }
     }
   }, [current, paths, modulesById, announce, setActivity, quietKey]);
+
+  // After the badge and milestone effects of this render have both read "from another tab", it is spent.
+  // No dependency list: it runs after every render, and after the effects above, which are declared first.
+  useEffect(() => {
+    fromOtherTab?.forEach(r => (r.current = false));
+  });
 
   // ---- Weekly goal: a week that meets it is counted once, and stays counted ----
   const week = weekGoal(activity, dayKey(), weekStart);

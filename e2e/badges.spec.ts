@@ -61,6 +61,28 @@ test('two tabs: clearing badges in one is quiet in the other', async ({ page, co
   await other.close();
 });
 
+test('two tabs: a lab finished in one is celebrated there only, and the other catches up quietly (#28, 15)', async ({ page, context }) => {
+  // The issue's case: an idle tab used to announce "Lab done" for the other tab's work
+  await page.goto('#/learn');
+  await expect(page.getByText('No badges yet.')).toBeVisible();
+  const other = await context.newPage();
+  await other.goto('#/linux/lpi-101-1-system-architecture');
+  await showTerminal(other);
+  for (const c of ['lspci', 'lsmod', 'dmesg | grep -i sata']) await runCommand(other, c);
+  await expect(celebrations(other)).toContainText('Lab done: Determine and configure hardware settings.');
+  // This tab shows the badge the lab earned, and says nothing
+  await expect(earnedList(page)).toContainText('First lab');
+  await page.waitForTimeout(800);
+  await expect(celebrations(page)).toHaveText('');
+  await expect(page.getByTestId('celebration-note')).toHaveCount(0);
+
+  // Its own work afterwards is still announced
+  await page.goto('#/sandbox');
+  await runCommand(page, 'man ls');
+  await expect(celebrations(page)).toContainText('man man');
+  await other.close();
+});
+
 test('the note waits while the pointer is over its text, then goes', async ({ page, isMobile }) => {
   test.skip(isMobile, 'hover');
   await page.clock.install();
