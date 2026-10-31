@@ -21,6 +21,24 @@ export function setLineRunner(fn: LineRunner): void {
 }
 
 /**
+ * Runs one command line as another user, in that user's shell (su -c): filesystem changes persist, the
+ * caller's directory and identity do not change.
+ */
+export function runLineAs(ctx: LinuxContext, line: string, as: { user: string; group: string; cwd: string }): StageResult {
+  if (!lineRunner || ctx.depth >= MAX_DEPTH) return ctx.fail('bash: maximum nesting level exceeded', 1);
+  const state = { ...ctx.state, currentUser: as.user, currentGroup: as.group, isRootOrAdmin: as.user === 'root' };
+  const res = lineRunner(line, as.cwd, ctx.fs, state, ctx.depth + 1, ctx.tty);
+  ctx.fs = res.newFs;
+  ctx.state = {
+    ...res.newState,
+    currentUser: ctx.state.currentUser,
+    currentGroup: ctx.state.currentGroup,
+    isRootOrAdmin: ctx.state.isRootOrAdmin,
+  };
+  return res;
+}
+
+/**
  * Runs one command line as a child process of the current command (find -exec, xargs):
  * filesystem changes persist, the caller's cwd and identity do not change.
  */

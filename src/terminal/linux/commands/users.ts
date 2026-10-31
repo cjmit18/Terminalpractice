@@ -2,21 +2,56 @@ import { FileNode } from '../../../types/terminal';
 import { applyChmod, getSpecialBits, applySpecialBits, octalToSymbolic, toOctalField, describeIdentity, writeFileContent, removeNode } from '../../filesystem';
 import { parseOptions, optionValue } from '../../textUtils';
 import { LinuxContext, LinuxResult, linuxCommands, createInDir } from '../context';
+import { runLineAs } from '../scripts';
 
 import { LAB_DAY as LAB_TODAY, MS_PER_DAY } from '../../labClock';
 
 // Identity, ownership and permissions: su, exit, whoami, id, chmod, chown, chgrp, umask,
 // useradd, usermod, groupadd
 
+/**
+ * su [-|-l|--login] [-c command] [-s shell] [user]: becomes the named user (root when none is given), in that
+ * user's primary group; with - the directory moves to the user's home. -c runs one command as the user and
+ * comes back. There are no passwords in this practice machine, so su does not ask for one (#28, 8).
+ */
 function su(ctx: LinuxContext): LinuxResult {
-  ctx.state.currentUser = 'root';
-  ctx.state.currentGroup = 'root';
-  ctx.state.isRootOrAdmin = true;
+  const usage = "\nTry 'su --help' for more information.";
+  let login = false;
+  let command: string | undefined;
+  let target: string | undefined;
+  for (let i = 0; i < ctx.args.length; i++) {
+    const a = ctx.args[i];
+    if (a === '-' || a === '-l' || a === '--login') login = true;
+    else if (a === '-c' || a === '--command' || a === '-s' || a === '--shell') {
+      const value = ctx.args[++i];
+      if (value === undefined) return ctx.fail(`su: option requires an argument -- '${a.replace(/^-+/, '')[0]}'${usage}`);
+      if (a === '-c' || a === '--command') command = value;
+    } else if (a.startsWith('--command=')) command = a.slice('--command='.length);
+    else if (a.startsWith('--shell=')) continue;
+    else if (a.startsWith('-')) return ctx.fail(`su: invalid option -- '${a.replace(/^-+/, '')[0] ?? '-'}'${usage}`);
+    else if (target === undefined) target = a;
+  }
+  const name = target ?? 'root';
+  const db = accounts(ctx);
+  const entry = db.user(name);
+  if (!entry) return ctx.fail(`su: user ${name} does not exist or the user entry does not contain all the required fields`);
+  const group = db.groupByGid(entry[3])?.[0] ?? name;
+  const home = entry[5] || '/';
+  const cwd = login ? home : ctx.cwd;
+  if (command !== undefined) {
+    const res = runLineAs(ctx, command, { user: name, group, cwd });
+    return ctx.result(res.stdout, res.stderr, res.exitCode);
+  }
+  ctx.state.currentUser = name;
+  ctx.state.currentGroup = group;
+  ctx.state.isRootOrAdmin = name === 'root';
+  if (login) ctx.cwd = home;
   return ctx.ok();
 }
 
 function exit(ctx: LinuxContext): LinuxResult {
-  if (ctx.state.currentUser === 'root' || ctx.state.isRootOrAdmin) {
+  // Leaving a su shell (root or any other user) goes back to student, the account this machine starts in
+  if (ctx.state.currentUser !== 'student' || ctx.state.isRootOrAdmin) {
     ctx.state.currentUser = 'student';
     ctx.state.currentGroup = 'student';
     ctx.state.isRootOrAdmin = false;
