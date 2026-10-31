@@ -97,3 +97,29 @@ test('rm -rf checks permission for every entry inside the tree, as real rm does 
   root('mkdir /tmp/p; touch /tmp/p/d; chmod 500 /tmp/p');
   assert.equal(root('rm -rf /tmp/p').exitCode, 0);
 });
+
+test('cp -r copies a read-only folder with everything in it, then makes the copy read-only (#28, 9)', () => {
+  // The issue's case
+  const run = linuxSession();
+  run('mkdir dir; echo hello > dir/data; chmod 555 dir');
+  const res = run('cp -r dir copy');
+  assert.equal(res.exitCode, 0);
+  assert.equal(res.stderr, '');
+  assert.equal(run('cat copy/data').stdout, 'hello');
+  assert.match(run('ls -ld copy').stdout, /^dr-xr-xr-x /);
+  // A folder inside a setgid folder keeps the bit it inherits
+  run('mkdir shared; chmod 2775 shared; cp -r dir shared/');
+  assert.match(run('ls -ld shared/dir').stdout, /^dr-xr-sr-x /);
+});
+
+test('cp -p sets the mode on a file that already exists, not only on a new one (#28, 10)', () => {
+  // The issue's case: a 600 file copied over a 644 one keeps 600
+  const run = linuxSession();
+  run('echo secret > src; chmod 600 src; echo old > dst; chmod 644 dst');
+  assert.equal(run('cp -p src dst').exitCode, 0);
+  assert.match(run('ls -l dst').stdout, /^-rw------- /);
+  assert.equal(run('cat dst').stdout, 'secret');
+  // Without -p an existing file keeps its own mode, as with real cp
+  run('chmod 644 dst; cp src dst');
+  assert.match(run('ls -l dst').stdout, /^-rw-r--r-- /);
+});
