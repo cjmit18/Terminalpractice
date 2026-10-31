@@ -3,6 +3,23 @@ import { getNodeAtPath } from '../filesystem';
 
 // Shell variables as bash sees them: the session's envVars plus the ones bash and login set itself.
 
+/**
+ * Machine settings the simulator keeps in envVars although they are not shell variables: the default systemd
+ * target and the system time zone. A subshell (a pipeline stage, su -c) changes them for real, and env and
+ * printenv never show them.
+ */
+export const MACHINE_SETTINGS = ['SYSTEMD_DEFAULT_TARGET', 'SYSTEM_TIMEZONE'] as const;
+
+/** This shell's variables, with the machine settings as `after` left them */
+export function keepMachineSettings(shell: Record<string, string>, after: Record<string, string> | undefined): Record<string, string> {
+  const out = { ...shell };
+  for (const key of MACHINE_SETTINGS) {
+    if (after && key in after) out[key] = after[key];
+    else delete out[key];
+  }
+  return out;
+}
+
 /** The passwd row (split on ':') for a user, if any. */
 export function passwdEntry(fs: FileNode, user: string): string[] | undefined {
   const content = getNodeAtPath(fs, '/etc/passwd', false)?.content ?? '';
