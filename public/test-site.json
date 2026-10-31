@@ -1,0 +1,37 @@
+{
+  "builtAt": "2026-10-31T11:44:21.244Z",
+  "main": "3ef76c34c0dcf05877ef8ea7c6e62d60088a87b1",
+  "included": [
+    {
+      "number": 75,
+      "title": "cp: copy read-only folders, and -p onto existing files (#28, 9 and 10)",
+      "url": "https://github.com/cjmit18/Terminalpractice/pull/75"
+    },
+    {
+      "number": 76,
+      "title": "Active Directory: every object gets its own SID (#28, 11)",
+      "url": "https://github.com/cjmit18/Terminalpractice/pull/76"
+    },
+    {
+      "number": 77,
+      "title": "Get-ADGroupMember -Recursive: list the users in nested groups (#28, 12)",
+      "url": "https://github.com/cjmit18/Terminalpractice/pull/77"
+    },
+    {
+      "number": 78,
+      "title": "DiskPart: refuse to format the running C: volume (#28, 13)",
+      "url": "https://github.com/cjmit18/Terminalpractice/pull/78"
+    },
+    {
+      "number": 79,
+      "title": "Accounts: GitHub sign-in ends the session the browser already had",
+      "url": "https://github.com/cjmit18/Terminalpractice/pull/79"
+    },
+    {
+      "number": 80,
+      "title": "Celebrations: a lab finished in another tab is not announced here (#28, 15)",
+      "url": "https://github.com/cjmit18/Terminalpractice/pull/80"
+    }
+  ],
+  "skipped": []
+}
