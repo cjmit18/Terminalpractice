@@ -342,8 +342,32 @@ export function getADGroupMemberRows(ctx: WindowsContext): Row[] | WindowsResult
   const group = findADGroup(state, groupId);
   if (!group) return ctx.fail(adNotFound(ctx.raw, cmdlet, groupId).replace(':ADUser)', ':ADGroup)'));
   // Users that list the group are members too (the lab data keeps both sides)
-  const sams = new Set(group.members.map(m => m.toLowerCase()));
-  for (const u of state.adUsers) if (u.memberOf.some(g => g.toLowerCase() === group.name.toLowerCase())) sams.add(u.sAMAccountName.toLowerCase());
+  const direct = (g: ADGroup) => {
+    const sams = new Set(g.members.map(m => m.toLowerCase()));
+    for (const u of state.adUsers) if (u.memberOf.some(x => x.toLowerCase() === g.name.toLowerCase())) sams.add(u.sAMAccountName.toLowerCase());
+    return sams;
+  };
+  let sams = direct(group);
+  if (b.has('Recursive')) {
+    // As the real cmdlet: walk every nested group (each once, so a loop of groups ends) and return the users
+    // found anywhere below, each once; the groups themselves are not listed (#28, 12)
+    const users = new Set<string>();
+    const seen = new Set<ADGroup>([group]);
+    const queue = [group];
+    while (queue.length) {
+      for (const s of direct(queue.shift()!)) {
+        if (state.adUsers.some(u => u.sAMAccountName.toLowerCase() === s)) users.add(s);
+        else {
+          const nested = findADGroup(state, s);
+          if (nested && !seen.has(nested)) {
+            seen.add(nested);
+            queue.push(nested);
+          }
+        }
+      }
+    }
+    sams = users;
+  }
   const rows: Row[] = [];
   for (const s of sams) {
     const u = state.adUsers.find(x => x.sAMAccountName.toLowerCase() === s);
