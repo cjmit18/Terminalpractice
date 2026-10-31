@@ -255,6 +255,19 @@ async function reset(c: RouteContext): Promise<Response> {
     .bind(userId, tokenHash)
     .first<{ id: string; email_verified_at: number | null }>();
   if (!current) throw INVALID_TOKEN();
+  // Taking an unconfirmed address back: the claimant's other sign-in methods and synced progress go, and the
+  // inbox owner starts fresh. This runs before the password write, with the same conditions as that write and
+  // while the account is still unconfirmed, so whichever reset confirms the account has already done it: two
+  // resets at once can never both skip it (#68 review).
+  const authorized = `id = ?1 AND email_verified_at IS NULL AND email IS NOT NULL
+    AND email = (SELECT email FROM auth_tokens WHERE token_hash = ?2)
+    AND NOT EXISTS (SELECT 1 FROM auth_tokens WHERE user_id = ?1 AND purpose = 'reset'
+                      AND rowid > (SELECT rowid FROM auth_tokens WHERE token_hash = ?2))`;
+  if (current.email_verified_at === null) {
+    const ifClaimed = (sql: string) => c.env.DB.prepare(sql).bind(userId, tokenHash).run();
+    await ifClaimed(`DELETE FROM identities WHERE user_id = ?1 AND provider <> 'email' AND EXISTS (SELECT 1 FROM users WHERE ${authorized})`);
+    for (const table of SYNC_TABLES) await ifClaimed(`DELETE FROM ${table} WHERE user_id = ?1 AND EXISTS (SELECT 1 FROM users WHERE ${authorized})`);
+  }
   // The same check again inside the write: the address may have been released to a new sign-up since.
   // Nothing changes unless this account still holds the address the link was sent to, and no newer reset
   // link has been issued since this one: a newer reset, even one that finished first, always wins (#51, 2)
@@ -268,17 +281,12 @@ async function reset(c: RouteContext): Promise<Response> {
     .bind(hash, now, userId, tokenHash)
     .first<{ id: string }>();
   if (!changed) throw INVALID_TOKEN();
-  // The cleanup runs only while the password is still the one set here, each step in its own statement: a
-  // newer reset or change that lands meanwhile has done its own cleanup, and this slower request must not end
-  // the sessions or links that one just made (#68 review). The peppered form of the hash counts as the same.
+  // Ending sessions and links runs only while the password is still the one set here, each step in its own
+  // statement: a newer reset or change that lands meanwhile has done its own, and this slower request must not
+  // end the sessions or links that one just made (#68 review). The peppered form of the hash counts as the same.
   const still = `(SELECT password_hash FROM users WHERE id = ?1) IN (?2, ?3)`;
   const peppered = (await pepperStoredHash(hash, c.env)) ?? hash;
   const ifStill = (sql: string) => c.env.DB.prepare(sql).bind(userId, hash, peppered).run();
-  if (current.email_verified_at === null) {
-    // The claimant's other sign-in methods and synced progress go; the inbox owner starts fresh
-    await ifStill(`DELETE FROM identities WHERE user_id = ?1 AND provider <> 'email' AND ${still}`);
-    for (const table of SYNC_TABLES) await ifStill(`DELETE FROM ${table} WHERE user_id = ?1 AND ${still}`);
-  }
   await c.env.DB.prepare(
     `UPDATE auth_tokens SET used_at = ?4 WHERE user_id = ?1 AND purpose IN ('verify', 'reset') AND used_at IS NULL AND ${still}`,
   )

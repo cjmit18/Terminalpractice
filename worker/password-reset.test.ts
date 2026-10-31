@@ -289,3 +289,26 @@ test('#68 review: a reset that wrote its password, then waits, does not end the 
   assert.equal(count(s.db, 'sessions'), 1);
   assert.equal((await s.login('learner@example.com', 'violet harbor lantern quiz')).status, 200);
 });
+
+test('#68 review: two resets taking an unconfirmed address back both leave the claimant with no other way in', async () => {
+  for (const pauseAt of ['UPDATE auth_tokens SET used_at = ?4', 'DELETE FROM identities']) {
+    const s = setup();
+    await s.register();
+    const userId = (s.db.raw.prepare('SELECT id FROM users').get() as { id: string }).id;
+    s.db.raw.prepare("INSERT INTO identities (provider, provider_id, user_id, login, linked_at) VALUES ('github', '42', ?, 'claimant', 0)").run(userId);
+    await forgot(s);
+    const older = tokenIn(s.sent.at(-1)!);
+    // Reset A pauses (after its password write and confirmation, or before its claimant cleanup) while reset B runs
+    const hold = holdNext(s, pauseAt);
+    const slowReset = reset(s, older);
+    await hold.atGate;
+    await forgot(s);
+    const newer = await reset(s, tokenIn(s.sent.at(-1)!), 'violet harbor lantern quiz');
+    assert.equal(newer.status, 200, pauseAt);
+    hold.release();
+    await slowReset;
+    const left = s.db.raw.prepare('SELECT provider FROM identities WHERE user_id = ?').all(userId).map(r => (r as { provider: string }).provider);
+    assert.deepEqual(left, ['email'], `the claimant's GitHub sign-in is gone (${pauseAt})`);
+    assert.equal((await s.login('learner@example.com', 'violet harbor lantern quiz')).status, 200);
+  }
+});
