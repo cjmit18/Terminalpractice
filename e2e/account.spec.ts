@@ -114,6 +114,24 @@ test.describe('signed out, email sign-in available', () => {
     await expect(page.getByRole('button', { name: 'Account: Casey' })).toBeVisible();
   });
 
+  test.describe('a lapsed claim', () => {
+    // The browser logs the stubbed 400 as a console error
+    test.use({ allowConsoleErrors: true });
+
+    test('a confirm link that ran out with the claim leads to a password reset', async ({ page }) => {
+      await stub(
+        page,
+        'auth/email/verify',
+        { error: 'email_claim_lapsed', message: 'This address was not confirmed within 24 hours. To confirm it now, use Forgot password: the reset link confirms the address too.' },
+        400,
+      );
+      await page.goto('#/account/verify?token=old-code');
+      await expect(page.getByRole('alert')).toContainText('not confirmed within 24 hours');
+      await page.getByRole('link', { name: 'Reset your password to confirm this address' }).click();
+      await expect(page.getByRole('heading', { level: 1, name: 'Reset your password' })).toBeVisible();
+    });
+  });
+
   test('the confirm link confirms the email as the page opens', async ({ page }) => {
     const sent = await stub(page, 'auth/email/verify', { ok: true });
     await page.goto('#/account/verify?token=confirm-code-9');
