@@ -93,3 +93,14 @@ test('builtins in a pipeline run in a subshell: cd, umask and variables do not c
   assert.equal(run('ls made').stdout, 'made');
   assert.equal(run('cd /tmp; pwd').stdout, '/tmp');
 });
+
+test('#73 review: machine settings changed in a pipeline stage still change for real', () => {
+  const run = linuxSession();
+  run('sudo systemctl set-default graphical.target | cat');
+  assert.equal(run('systemctl get-default').stdout, 'graphical.target');
+  run('sudo timedatectl set-timezone Europe/Berlin | cat');
+  assert.match(run('timedatectl').stdout, /Time zone: Europe\/Berlin/);
+  // They are machine settings, not variables: env does not list them, and the shell's own variables still stay
+  assert.doesNotMatch(run('env').stdout, /SYSTEMD_DEFAULT_TARGET|SYSTEM_TIMEZONE/);
+  assert.equal(run('export ONLY_HERE=1 | cat; echo "[$ONLY_HERE]"').stdout, '[]');
+});

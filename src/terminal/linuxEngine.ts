@@ -7,7 +7,7 @@ import { ParsedCommand } from './parser';
 import {
   splitBashChain, parseBashPipeline, checkBashSyntax, wordText, expandWord, expandToString, assignmentOf, Expander, ExpansionError, Field,
 } from './linux/shell';
-import { shellVariable, homeOf } from './linux/env';
+import { shellVariable, homeOf, keepMachineSettings } from './linux/env';
 import { runChain, StageResult } from './chain';
 import { cloneState } from './state';
 import { BudgetExceeded, chargeLine, checkValueLength, startBudget } from './limits';
@@ -312,7 +312,8 @@ function executeLinuxPipeline(
     activeState = res.newState;
     if (stages.length > 1) {
       currentCwd = cwd;
-      activeState = { ...activeState, ...before };
+      // Machine settings kept among the variables (systemctl set-default, timedatectl) still change for real
+      activeState = { ...activeState, ...before, envVars: keepMachineSettings(before.envVars!, activeState.envVars) };
     }
     exitCode = res.exitCode;
     errors.push(...expandErrors);
