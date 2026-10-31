@@ -87,6 +87,21 @@ test.describe('signed out, email sign-in available', () => {
     expect(sent[0]).toEqual({ email: 'casey@example.com' });
   });
 
+  test.describe('a server failure', () => {
+    // The browser logs the stubbed 503 as a console error
+    test.use({ allowConsoleErrors: true });
+
+    test('forgot password says no link was sent when the server fails, and the address stays to retry', async ({ page }) => {
+      await stub(page, 'auth/password/forgot', { error: 'unavailable', message: 'Accounts are not available on this server.' }, 503);
+      await page.goto('#/account/forgot');
+      await page.getByLabel('Email', { exact: true }).fill('casey@example.com');
+      await page.getByRole('button', { name: 'Send reset link' }).click();
+      await expect(page.getByText('No reset link was sent: something went wrong on our side.')).toBeVisible();
+      await expect(page.getByText('If an account uses that email, we sent a reset link.')).toHaveCount(0);
+      await expect(page.getByLabel('Email', { exact: true })).toHaveValue('casey@example.com');
+    });
+  });
+
   test('the reset link sets a new password, signs in, and takes the code out of the address', async ({ page }) => {
     const sent = await stub(page, 'auth/password/reset', { user: { ...EMAIL_USER, emailVerified: true } });
     await page.goto('#/account/reset?token=reset-code-123');
@@ -97,6 +112,24 @@ test.describe('signed out, email sign-in available', () => {
     await expect(page.getByText('Your new password is set and you are signed in.')).toBeVisible();
     expect(sent[0]).toEqual({ token: 'reset-code-123', password: 'a fresh long passphrase' });
     await expect(page.getByRole('button', { name: 'Account: Casey' })).toBeVisible();
+  });
+
+  test.describe('a lapsed claim', () => {
+    // The browser logs the stubbed 400 as a console error
+    test.use({ allowConsoleErrors: true });
+
+    test('a confirm link that ran out with the claim leads to a password reset', async ({ page }) => {
+      await stub(
+        page,
+        'auth/email/verify',
+        { error: 'email_claim_lapsed', message: 'This address was not confirmed within 24 hours. To confirm it now, use Forgot password: the reset link confirms the address too.' },
+        400,
+      );
+      await page.goto('#/account/verify?token=old-code');
+      await expect(page.getByRole('alert')).toContainText('not confirmed within 24 hours');
+      await page.getByRole('link', { name: 'Reset your password to confirm this address' }).click();
+      await expect(page.getByRole('heading', { level: 1, name: 'Reset your password' })).toBeVisible();
+    });
   });
 
   test('the confirm link confirms the email as the page opens', async ({ page }) => {

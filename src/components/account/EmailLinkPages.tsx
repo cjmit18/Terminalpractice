@@ -5,8 +5,10 @@ import { Field, FormError, FormNote, PasswordField, primaryButton, textLink, use
 import { emailError, newPasswordError, normalizeEmail } from './messages';
 
 const FORGOT_SENT = 'If an account uses that email, we sent a reset link.';
+/** The server failed (or refused the request): no link was asked for, so the learner must not wait for one */
+export const FORGOT_FAILED = 'No reset link was sent: something went wrong on our side. Try again in a few minutes.';
 
-/** #/account/forgot: always the same answer, so it never tells whether an email has an account. */
+/** #/account/forgot: the same answer for every address, so it never tells whether an email has an account. */
 export const ForgotPage: React.FC<{ emailSending: boolean }> = ({ emailSending }) => {
   const [email, setEmail] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -39,12 +41,14 @@ export const ForgotPage: React.FC<{ emailSending: boolean }> = ({ emailSending }
     setBusy(true);
     const r = await forgotPassword(normalizeEmail(email));
     setBusy(false);
-    if (!r.ok && r.code === 'network') {
-      setError(r.message);
+    // The server accepts every request the same way (202), known address or not, limited or not. Anything
+    // else is a failure, and saying "sent" would leave the learner waiting for an email that is not coming
+    // (#51, 4). The failure message is the same for every address, so it tells nothing about accounts.
+    if (!r.ok) {
+      setError(r.code === 'network' ? r.message : FORGOT_FAILED);
       focusErrors();
       return;
     }
-    // Any other answer, even "too many tries", gets the same message
     setEmail('');
     setSent(true);
   };
@@ -159,7 +163,7 @@ export const ResetPage: React.FC = () => {
 /** #/account/verify?token=…: confirms the email as soon as the page opens. */
 export const VerifyPage: React.FC = () => {
   const token = useHashToken();
-  const [state, setState] = useState<{ kind: 'working' } | { kind: 'done' } | { kind: 'failed'; message: string }>(
+  const [state, setState] = useState<{ kind: 'working' } | { kind: 'done' } | { kind: 'failed'; message: string; code?: string }>(
     token ? { kind: 'working' } : { kind: 'failed', message: 'This link is missing its code. Open the link from the email again.' },
   );
   const sent = useRef(false);
@@ -167,7 +171,7 @@ export const VerifyPage: React.FC = () => {
   useEffect(() => {
     if (!token || sent.current) return;
     sent.current = true;
-    void verifyEmail(token).then(r => setState(r.ok ? { kind: 'done' } : { kind: 'failed', message: r.message }));
+    void verifyEmail(token).then(r => setState(r.ok ? { kind: 'done' } : { kind: 'failed', message: r.message, code: r.code }));
   }, [token]);
 
   return (
@@ -179,13 +183,22 @@ export const VerifyPage: React.FC = () => {
           {state.message}
         </p>
       )}
-      {state.kind !== 'working' && (
+      {state.kind === 'failed' && state.code === 'email_claim_lapsed' ? (
+        // A new confirm link is not sent for a lapsed claim; a reset link to the inbox confirms the address
         <p className="text-sm">
-          <a href={accountHref()} className={textLink}>
-            Go to your account
+          <a href={accountHref('forgot')} className={textLink}>
+            Reset your password to confirm this address
           </a>
-          {state.kind === 'failed' && <span className="text-muted"> to send a new link.</span>}
         </p>
+      ) : (
+        state.kind !== 'working' && (
+          <p className="text-sm">
+            <a href={accountHref()} className={textLink}>
+              Go to your account
+            </a>
+            {state.kind === 'failed' && <span className="text-muted"> to send a new link.</span>}
+          </p>
+        )
       )}
     </div>
   );

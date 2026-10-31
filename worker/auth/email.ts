@@ -3,9 +3,9 @@ import { HttpError, appOrigin, inBackground, ipSubject, isUniqueViolation, json,
 import { emailSendingEnabled, resetEmail, sendEmail, verificationEmail } from '../mail';
 import { hashPassword, passwordProblem, pepperHash, pepperStoredHash, verifyAgainstDummy, verifyPassword } from '../password';
 import { LIMITS, countLimit, enforceLimit, rateLimited } from '../ratelimit';
-import { EMAIL_CLAIM_TTL, createPasswordSession, createSession, endAllSessions, endIncomingSession, loadUser, requireUser, sessionCookie, staleEmailClaim, toPublicUser } from '../session';
+import { EMAIL_CLAIM_TTL, createPasswordSession, endIncomingSession, loadUser, requireUser, sessionCookie, staleEmailClaim, toPublicUser } from '../session';
 import { SYNC_TABLES } from '../sync';
-import { consumeToken, issueToken, peekToken, revokeTokens, tokenFailure, type TokenPurpose } from '../tokens';
+import { TOKEN_TTL, consumeToken, issueToken, peekToken, revokeTokens, tokenFailure, type TokenPurpose } from '../tokens';
 
 const INVALID_CREDENTIALS = () => new HttpError(401, 'invalid_credentials', 'That email and password do not match an account.');
 const INVALID_TOKEN = () => new HttpError(400, 'invalid_token', 'This link is invalid or was already used. Ask for a new one.');
@@ -70,9 +70,17 @@ export function requireStrongPassword(password: string, email: string | null, di
 }
 
 /** Issues a verification token and emails the link (after the answer is sent, when the platform allows it) */
+/**
+ * Sends a confirm link for the account's unconfirmed address. The link lasts no longer than the claim on the
+ * address (24 hours from when it was set): a link resent at hour 23 works for 1 hour and says so (#28, 14).
+ */
 export async function sendVerification(c: RouteContext, userId: string, email: string): Promise<void> {
-  const token = await issueToken(c.env.DB, userId, 'verify', c.deps.now(), email);
-  await inBackground(c.deps, () => sendEmail(c.env, c.deps, verificationEmail(appOrigin(c), email, token)));
+  const now = c.deps.now();
+  const row = await c.env.DB.prepare('SELECT email_set_at FROM users WHERE id = ?').bind(userId).first<{ email_set_at: number | null }>();
+  const left = Math.min(TOKEN_TTL.verify, (row?.email_set_at ?? now) + EMAIL_CLAIM_TTL - now);
+  if (left <= 0) return;
+  const token = await issueToken(c.env.DB, userId, 'verify', now, email, left);
+  await inBackground(c.deps, () => sendEmail(c.env, c.deps, verificationEmail(appOrigin(c), email, token, left)));
 }
 
 async function register(c: RouteContext): Promise<Response> {
@@ -108,7 +116,12 @@ async function register(c: RouteContext): Promise<Response> {
 
   // A sign-up replaces whatever session this browser had
   await endIncomingSession(c);
-  const session = await createSession(c.env.DB, id, now);
+  // Only while the account still has the password set here: if the inbox owner reset it meanwhile (taking
+  // the address back), this sign-up gets no session (#51, 1)
+  const session = await createPasswordSession(c.env.DB, id, now, hash);
+  if (!session) {
+    throw new HttpError(409, 'email_taken', 'The owner of this email address took it back while the account was being made. Sign in, or reset the password.');
+  }
   await sendVerification(c, id, email);
   const user = await loadUser(c.env.DB, id);
   // emailSent false: this site cannot send email yet, so no confirmation link is on its way
@@ -160,12 +173,30 @@ async function login(c: RouteContext): Promise<Response> {
  * link was sent to, set before the link was made, and the claim must not have lapsed. Comparing the address
  * itself covers an address that changes while a link is being sent (the link still goes to the old inbox).
  */
+const LAPSED_MESSAGE = 'This address was not confirmed within 24 hours. To confirm it now, use Forgot password: the reset link confirms the address too.';
+
+/** The confirm link's account still holds its address, unconfirmed, and the 24-hour claim on it has run out */
+async function claimLapsed(db: Db, tokenHash: string, now: number): Promise<boolean> {
+  const row = await db
+    .prepare(
+      `SELECT 1 AS x FROM users u JOIN auth_tokens t ON t.user_id = u.id
+        WHERE t.token_hash = ? AND t.purpose = 'verify' AND u.email_verified_at IS NULL AND u.email = t.email AND u.email_set_at <= ?`,
+    )
+    .bind(tokenHash, now - EMAIL_CLAIM_TTL)
+    .first();
+  return row !== null;
+}
+
 async function verify(c: RouteContext): Promise<Response> {
   const now = c.deps.now();
   const token = str(await c.body(), 'token', 200);
   const tokenHash = await sha256(token);
   const userId = await consumeToken(c.env.DB, token, 'verify', now);
-  if (!userId) throw await badToken(c, token, 'verify');
+  if (!userId) {
+    // A link now ends with the claim on its address: when that is why it no longer works, say how to confirm it now
+    if (await claimLapsed(c.env.DB, tokenHash, now)) throw new HttpError(400, 'email_claim_lapsed', LAPSED_MESSAGE);
+    throw await badToken(c, token, 'verify');
+  }
   const confirmed = await c.env.DB.prepare(
     `UPDATE users SET email_verified_at = COALESCE(email_verified_at, ?)
       WHERE id = ? AND email IS NOT NULL
@@ -178,6 +209,8 @@ async function verify(c: RouteContext): Promise<Response> {
     .bind(now, userId, tokenHash, tokenHash, now - EMAIL_CLAIM_TTL)
     .first<{ id: string }>();
   if (!confirmed) {
+    // The address is still this account's but was not confirmed in time: say so, and how to confirm it now
+    if (await claimLapsed(c.env.DB, tokenHash, now)) throw new HttpError(400, 'email_claim_lapsed', LAPSED_MESSAGE);
     throw new HttpError(400, 'invalid_token', 'This link is for an earlier sign-up or address on the account. Sign in and ask for a new link, or sign up again.');
   }
   return json({ ok: true });
@@ -191,7 +224,7 @@ async function resendVerification(c: RouteContext): Promise<Response> {
   // A lapsed claim gets no new links from a signed-in account (stops endless confirm emails to a stranger).
   // The inbox owner confirms it with a password reset instead: that link goes to the inbox, not to whoever signed up.
   if (staleEmailClaim(user, c.deps.now())) {
-    throw new HttpError(409, 'email_claim_lapsed', 'This address was not confirmed within 24 hours. To confirm it now, use Forgot password: the reset link confirms the address too.');
+    throw new HttpError(409, 'email_claim_lapsed', LAPSED_MESSAGE);
   }
   if (user.email_verified_at === null) await sendVerification(c, user.id, user.email);
   return json({ ok: true, emailSent: emailSendingEnabled(c.env, c.deps) }, 202);
@@ -250,25 +283,48 @@ async function reset(c: RouteContext): Promise<Response> {
     .bind(userId, tokenHash)
     .first<{ id: string; email_verified_at: number | null }>();
   if (!current) throw INVALID_TOKEN();
+  // Taking an unconfirmed address back: the claimant's other sign-in methods and synced progress go, and the
+  // inbox owner starts fresh. This runs before the password write, with the same conditions as that write and
+  // while the account is still unconfirmed, so whichever reset confirms the account has already done it: two
+  // resets at once can never both skip it (#68 review).
+  const authorized = `id = ?1 AND email_verified_at IS NULL AND email IS NOT NULL
+    AND email = (SELECT email FROM auth_tokens WHERE token_hash = ?2)
+    AND NOT EXISTS (SELECT 1 FROM auth_tokens WHERE user_id = ?1 AND purpose = 'reset'
+                      AND rowid > (SELECT rowid FROM auth_tokens WHERE token_hash = ?2))`;
+  if (current.email_verified_at === null) {
+    const ifClaimed = (sql: string) => c.env.DB.prepare(sql).bind(userId, tokenHash).run();
+    await ifClaimed(`DELETE FROM identities WHERE user_id = ?1 AND provider <> 'email' AND EXISTS (SELECT 1 FROM users WHERE ${authorized})`);
+    for (const table of SYNC_TABLES) await ifClaimed(`DELETE FROM ${table} WHERE user_id = ?1 AND EXISTS (SELECT 1 FROM users WHERE ${authorized})`);
+  }
   // The same check again inside the write: the address may have been released to a new sign-up since.
-  // Nothing changes unless this account still holds the address the link was sent to.
+  // Nothing changes unless this account still holds the address the link was sent to, and no newer reset
+  // link has been issued since this one: a newer reset, even one that finished first, always wins (#51, 2)
   const changed = await c.env.DB.prepare(
-    `UPDATE users SET password_hash = ?, email_verified_at = COALESCE(email_verified_at, ?), updated_at = ?
-      WHERE id = ? AND email IS NOT NULL AND email = (SELECT email FROM auth_tokens WHERE token_hash = ?)
+    `UPDATE users SET password_hash = ?1, email_verified_at = COALESCE(email_verified_at, ?2), updated_at = ?2
+      WHERE id = ?3 AND email IS NOT NULL AND email = (SELECT email FROM auth_tokens WHERE token_hash = ?4)
+        AND NOT EXISTS (SELECT 1 FROM auth_tokens WHERE user_id = ?3 AND purpose = 'reset'
+                          AND rowid > (SELECT rowid FROM auth_tokens WHERE token_hash = ?4))
       RETURNING id`,
   )
-    .bind(hash, now, now, userId, tokenHash)
+    .bind(hash, now, userId, tokenHash)
     .first<{ id: string }>();
   if (!changed) throw INVALID_TOKEN();
-  if (current.email_verified_at === null) {
-    // The claimant's other sign-in methods and synced progress go; the inbox owner starts fresh
-    await c.env.DB.prepare("DELETE FROM identities WHERE user_id = ? AND provider <> 'email'").bind(userId).run();
-    for (const table of SYNC_TABLES) await c.env.DB.prepare(`DELETE FROM ${table} WHERE user_id = ?`).bind(userId).run();
-  }
-  await revokeTokens(c.env.DB, userId, ['verify', 'reset'], now);
-  await endAllSessions(c.env.DB, userId);
+  // Ending sessions and links runs only while the password is still the one set here, each step in its own
+  // statement: a newer reset or change that lands meanwhile has done its own, and this slower request must not
+  // end the sessions or links that one just made (#68 review). The peppered form of the hash counts as the same.
+  const still = `(SELECT password_hash FROM users WHERE id = ?1) IN (?2, ?3)`;
+  const peppered = (await pepperStoredHash(hash, c.env)) ?? hash;
+  const ifStill = (sql: string) => c.env.DB.prepare(sql).bind(userId, hash, peppered).run();
+  await c.env.DB.prepare(
+    `UPDATE auth_tokens SET used_at = ?4 WHERE user_id = ?1 AND purpose IN ('verify', 'reset') AND used_at IS NULL AND ${still}`,
+  )
+    .bind(userId, hash, peppered, now)
+    .run();
+  await ifStill(`DELETE FROM sessions WHERE user_id = ?1 AND ${still}`);
   await endIncomingSession(c);
-  const session = await createSession(c.env.DB, userId, now);
+  // Only while the password is still the one set here: a newer reset or change that finished meanwhile wins
+  const session = await createPasswordSession(c.env.DB, userId, now, hash, peppered);
+  if (!session) throw new HttpError(409, 'conflict', 'Your password was changed again elsewhere. Sign in with the newest one.');
   const user = await loadUser(c.env.DB, userId);
   return json({ user: toPublicUser(user!) }, 200, { 'Set-Cookie': sessionCookie(session) });
 }

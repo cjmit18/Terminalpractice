@@ -26,14 +26,22 @@ function layout(heading: string, intro: string, button: string, link: string, ou
   return { text, html };
 }
 
-export function verificationEmail(origin: string, to: string, token: string): Message {
+/** "in 23 hours", "in 1 hour", "in less than an hour": rounded down, so the email never promises more time than there is */
+export function expiresInText(ms: number): string {
+  const hours = Math.floor(ms / 3_600_000);
+  if (hours < 1) return 'in less than an hour';
+  return hours === 1 ? 'in 1 hour' : `in ${hours} hours`;
+}
+
+/** `expiresIn`: how long the link works (ms), which a resend shortens to what is left of the address claim */
+export function verificationEmail(origin: string, to: string, token: string, expiresIn = 24 * 3_600_000): Message {
   const link = `${origin}/#/account/verify?token=${encodeURIComponent(token)}`;
   return {
     to,
     subject: 'Confirm your email for Terminus CertSim',
     ...layout(
       'Confirm your email address',
-      'Open this link to confirm the email address on your Terminus CertSim account. The link works once and expires in 24 hours.',
+      `Open this link to confirm the email address on your Terminus CertSim account. The link works once and expires ${expiresInText(expiresIn)}.`,
       'Confirm email',
       link,
       'If you did not create an account with this address, ignore this email and do not open the link.',

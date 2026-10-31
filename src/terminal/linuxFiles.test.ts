@@ -123,3 +123,20 @@ test('cp -p sets the mode on a file that already exists, not only on a new one (
   run('chmod 644 dst; cp src dst');
   assert.match(run('ls -l dst').stdout, /^-rw-r--r-- /);
 });
+
+test('ls -R does not go into a folder below one it cannot search, as real ls does (#28, 6)', () => {
+  // The issue's case: outer is r-- (names readable, not searchable), so ls -R lists inner's name and stops
+  const run = linuxSession();
+  run('mkdir -p outer/inner/private; chmod 400 outer');
+  const res = run('ls -R outer');
+  assert.equal(res.exitCode, 2);
+  assert.equal(res.stdout, 'outer:\ninner');
+  assert.equal(res.stderr, "ls: cannot open directory 'outer/inner': Permission denied");
+  assert.doesNotMatch(res.stdout, /private/);
+
+  // Searchable again, the whole tree lists
+  run('chmod 700 outer');
+  const ok = run('ls -R outer');
+  assert.equal(ok.exitCode, 0);
+  assert.match(ok.stdout, /outer\/inner:\nprivate/);
+});

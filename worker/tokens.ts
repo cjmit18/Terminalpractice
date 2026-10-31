@@ -11,18 +11,27 @@ export const TOKEN_TTL: Record<TokenPurpose, number> = {
 
 /**
  * Issues a new token and retires the user's earlier unused ones for the same purpose, so only the newest link works.
- * `email` records the address the link is sent to (a confirm link then verifies only that address).
+ * `email` records the address the link is sent to (a confirm link then verifies only that address). `ttl` can only
+ * shorten the purpose's lifetime.
  *
  * "Newest" is the highest rowid for the user and purpose. The token is inserted first and the older ones are retired
  * after, each in one statement, so two requests at once still leave only the later insert working; consumeToken
  * also accepts only the newest, which closes the moment between one request's insert and its retiring step.
  */
-export async function issueToken(db: Db, userId: string, purpose: TokenPurpose, now: number, email: string | null = null): Promise<string> {
+export async function issueToken(
+  db: Db,
+  userId: string,
+  purpose: TokenPurpose,
+  now: number,
+  email: string | null = null,
+  /** A lifetime shorter than TOKEN_TTL[purpose], e.g. what is left of an email claim */
+  ttl: number = TOKEN_TTL[purpose],
+): Promise<string> {
   await db.prepare('DELETE FROM auth_tokens WHERE user_id = ? AND expires_at <= ?').bind(userId, now).run();
   const token = randomToken();
   await db
     .prepare('INSERT INTO auth_tokens (token_hash, user_id, purpose, expires_at, created_at, email) VALUES (?, ?, ?, ?, ?, ?)')
-    .bind(await sha256(token), userId, purpose, now + TOKEN_TTL[purpose], now, email)
+    .bind(await sha256(token), userId, purpose, now + Math.min(ttl, TOKEN_TTL[purpose]), now, email)
     .run();
   await db
     .prepare(

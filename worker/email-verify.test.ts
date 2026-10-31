@@ -32,13 +32,15 @@ test('sign-up sends one email with a single-use link to this site, and the link 
   assert.equal((await again.json()).error, 'invalid_token');
 });
 
-test('an expired link says so; a made-up one is invalid', async () => {
+test('a link that ran out with the claim says how to confirm the address now; a made-up one is invalid', async () => {
   const s = setup();
   await s.register();
   const token = tokenIn(s.sent[0]);
   s.advance(TOKEN_TTL.verify);
   const expired = await s.call('POST', '/api/auth/email/verify', { token });
-  assert.equal((await expired.json()).error, 'token_expired');
+  const body = await expired.json();
+  assert.equal(body.error, 'email_claim_lapsed');
+  assert.match(body.message, /Forgot password/);
   const madeUp = await s.call('POST', '/api/auth/email/verify', { token: 'not-a-real-token' });
   assert.equal((await madeUp.json()).error, 'invalid_token');
 });
@@ -132,4 +134,26 @@ test('a link sent to one address never confirms a different one, even if the add
   const res = await s.call('POST', '/api/auth/email/verify', { token: tokenIn(mail) });
   assert.equal(res.status, 400);
   assert.equal(s.db.raw.prepare('SELECT email_verified_at FROM users').get()?.email_verified_at, null, 'new-inbox was not verified');
+});
+
+test('#28-14: a resent link lasts only as long as the claim on the address, and its email says so', async () => {
+  const s = setup();
+  const session = sessionOf(await s.register());
+  assert.match(s.sent[0].text, /expires in 24 hours/);
+  // Resent at hour 23: the claim has an hour left, so the link does too
+  s.advance(23 * 60 * 60 * 1000);
+  assert.equal((await s.call('POST', '/api/auth/email/resend-verification', {}, { Cookie: `__Host-session=${session}` })).status, 202);
+  const resent = s.sent.at(-1)!;
+  assert.match(resent.text, /expires in 1 hour\./);
+  assert.doesNotMatch(resent.text, /24 hours/);
+  const token = tokenIn(resent);
+  // Opened after the claim ran out: the link has expired with it, and the answer says what to do
+  s.advance(61 * 60 * 1000);
+  const late = await s.call('POST', '/api/auth/email/verify', { token });
+  assert.equal((await late.json()).error, 'email_claim_lapsed');
+});
+
+test('#28-14: the expiry wording rounds down, never promising more time than there is', () => {
+  assert.match(verificationEmail('https://terminuscli.com', 'a@example.com', 't', 2.9 * 3_600_000).text, /expires in 2 hours\./);
+  assert.match(verificationEmail('https://terminuscli.com', 'a@example.com', 't', 59 * 60_000).text, /expires in less than an hour\./);
 });
