@@ -241,3 +241,16 @@ test('two adds at once: only the first address lands', async () => {
   assert.equal((await account(s, session)).user.email, 'first@example.com');
   assert.equal(count(s.db, 'auth_tokens'), 0, 'no link sent for the address that did not land');
 });
+
+test('signing in with GitHub ends the session this browser already had, as email sign-in does', async () => {
+  const s = linkSetup();
+  const emailSession = await emailAccount(s);
+  // Not a link: a plain GitHub sign-in in a browser that is signed in to the email account
+  const { done } = await github(s, { session: emailSession });
+  const githubSession = sessionOf(done);
+  assert.ok(githubSession, 'GitHub signs this browser in');
+  assert.equal((await s.call('GET', '/api/me', undefined, as(emailSession))).status, 200);
+  assert.equal((await (await s.call('GET', '/api/me', undefined, as(emailSession))).json()).user, null, 'the email session ended');
+  assert.equal((await (await s.call('GET', '/api/me', undefined, as(githubSession))).json()).user.name, 'Octo From GitHub');
+  assert.equal(count(s.db, 'sessions'), 1);
+});
