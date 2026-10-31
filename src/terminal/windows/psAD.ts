@@ -11,9 +11,24 @@ export type Row = Record<string, unknown>;
 export const DOMAIN_DN = 'DC=corp,DC=local';
 const USERS_CONTAINER = `CN=Users,${DOMAIN_DN}`;
 
-const rid = (sam: string) => 1100 + [...sam.toLowerCase()].reduce((n, c) => n + c.charCodeAt(0), 0);
-const guid = (sam: string) => `${rid(sam).toString(16).padStart(8, '0')}-3c1e-4b7a-9f02-5d6e7a8b9c0d`;
-const sid = (sam: string) => `S-1-5-21-3623811015-3361044348-30300820-${rid(sam)}`;
+export const DOMAIN_SID = 'S-1-5-21-3623811015-3361044348-30300820';
+
+/**
+ * An object's RID, the last part of its SID. Each object carries its own, handed out once (#28, 11). An object
+ * without one (made by a test, or saved before RIDs were stored) falls back to the old name-based number, which
+ * nextRid stays above, so a new object never shares a RID with it.
+ */
+export const ridOf = (o: ADUser | ADGroup): number =>
+  o.rid ?? 1100 + [...('sAMAccountName' in o ? o.sAMAccountName : o.name).toLowerCase()].reduce((n, c) => n + c.charCodeAt(0), 0);
+export const sidOf = (o: ADUser | ADGroup) => `${DOMAIN_SID}-${ridOf(o)}`;
+const guidOf = (o: ADUser | ADGroup) => `${ridOf(o).toString(16).padStart(8, '0')}-3c1e-4b7a-9f02-5d6e7a8b9c0d`;
+
+/** The RID for a new object: above every RID in use and every one handed out before, like a domain controller's RID pool */
+export function nextRid(state: SystemState): number {
+  const next = Math.max(state.adNextRid ?? 1100, ...[...state.adUsers, ...state.adGroups].map(o => ridOf(o) + 1));
+  state.adNextRid = next + 1;
+  return next;
+}
 
 /** A sign-in name like the ones a domain controller generates ($K3Q000-8F2NJ4TQB1LV), the same for the same DN. */
 function generatedSam(dn: string): string {
@@ -42,9 +57,9 @@ export function adUserProps(state: SystemState, u: ADUser): Record<string, strin
     GivenName: u.givenName,
     Name: u.displayName,
     ObjectClass: 'user',
-    ObjectGUID: guid(u.sAMAccountName),
+    ObjectGUID: guidOf(u),
     SamAccountName: u.sAMAccountName,
-    SID: sid(u.sAMAccountName),
+    SID: sidOf(u),
     Surname: u.surname,
     UserPrincipalName: u.userPrincipalName ?? `${u.sAMAccountName}@corp.local`,
     // extended properties, only shown when asked for with -Properties
@@ -70,7 +85,7 @@ export function findADUser(state: SystemState, identity: string): ADUser | undef
 
 export function findADGroup(state: SystemState, identity: string): ADGroup | undefined {
   const id = identity.trim().toLowerCase();
-  return state.adGroups.find(g => g.name.toLowerCase() === id || groupDN(g).toLowerCase() === id || sid(g.name).toLowerCase() === id);
+  return state.adGroups.find(g => g.name.toLowerCase() === id || groupDN(g).toLowerCase() === id || sidOf(g).toLowerCase() === id || guidOf(g) === id);
 }
 
 /** Renders objects the way PowerShell's list view does: "Name : value", one block per object. */
@@ -220,6 +235,7 @@ function newADUser(ctx: WindowsContext): WindowsResult {
   const enabled = wantsEnabled && password !== undefined;
   state.adUsers.push({
     sAMAccountName: sam,
+    rid: nextRid(state),
     // New-ADUser sets no UPN unless asked
     userPrincipalName: b.str('UserPrincipalName') ?? '',
     givenName: b.str('GivenName') ?? '',
@@ -332,8 +348,8 @@ export function getADGroupMemberRows(ctx: WindowsContext): Row[] | WindowsResult
   for (const s of sams) {
     const u = state.adUsers.find(x => x.sAMAccountName.toLowerCase() === s);
     const g = u ? undefined : findADGroup(state, s);
-    if (u) rows.push({ distinguishedName: userDN(u), name: u.displayName, objectClass: 'user', objectGUID: guid(u.sAMAccountName), SamAccountName: u.sAMAccountName, SID: sid(u.sAMAccountName) });
-    else if (g) rows.push({ distinguishedName: groupDN(g), name: g.name, objectClass: 'group', objectGUID: guid(g.name), SamAccountName: g.name, SID: sid(g.name) });
+    if (u) rows.push({ distinguishedName: userDN(u), name: u.displayName, objectClass: 'user', objectGUID: guidOf(u), SamAccountName: u.sAMAccountName, SID: sidOf(u) });
+    else if (g) rows.push({ distinguishedName: groupDN(g), name: g.name, objectClass: 'group', objectGUID: guidOf(g), SamAccountName: g.name, SID: sidOf(g) });
   }
   return rows;
 }

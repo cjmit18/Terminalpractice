@@ -69,9 +69,12 @@ const baseWindowsState: SystemState = {
       ],
     }
   ],
+  // RIDs as a real domain has them: the built-in Administrator is 500, Domain Admins 512, Domain Users 513;
+  // objects created later count up from 1103, and New-ADUser carries on from the highest
   adUsers: [
     {
       sAMAccountName: 'jdoe',
+      rid: 1105,
       givenName: 'John',
       surname: 'Doe',
       displayName: 'John Doe',
@@ -85,6 +88,7 @@ const baseWindowsState: SystemState = {
     },
     {
       sAMAccountName: 'mscott',
+      rid: 1106,
       givenName: 'Michael',
       surname: 'Scott',
       displayName: 'Michael Scott',
@@ -98,6 +102,7 @@ const baseWindowsState: SystemState = {
     },
     {
       sAMAccountName: 'administrator',
+      rid: 500,
       givenName: 'Builtin',
       surname: 'Administrator',
       displayName: 'Domain Administrator',
@@ -113,6 +118,7 @@ const baseWindowsState: SystemState = {
   adGroups: [
     {
       name: 'Domain Admins',
+      rid: 512,
       scope: 'Global',
       category: 'Security',
       ou: 'OU=IT_Admins,DC=corp,DC=local',
@@ -121,6 +127,7 @@ const baseWindowsState: SystemState = {
     },
     {
       name: 'Helpdesk Tier 1',
+      rid: 1103,
       scope: 'Global',
       category: 'Security',
       ou: 'OU=IT_Admins,DC=corp,DC=local',
@@ -129,6 +136,7 @@ const baseWindowsState: SystemState = {
     },
     {
       name: 'Sales Managers',
+      rid: 1104,
       scope: 'Global',
       category: 'Security',
       ou: 'OU=Sales,DC=corp,DC=local',
@@ -137,6 +145,7 @@ const baseWindowsState: SystemState = {
     },
     {
       name: 'Domain Users',
+      rid: 513,
       scope: 'Global',
       category: 'Security',
       ou: 'OU=Users,DC=corp,DC=local',
