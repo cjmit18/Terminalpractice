@@ -148,7 +148,9 @@ function ls(ctx: LinuxContext): LinuxResult {
   if (files.length) blocks.push(lsFormat(ctx, lsSort(files, o), o).join('\n'));
   const showHeaders = operands.length > 1 || recursive;
   const listDir = (e: LsEntry) => {
-    if (!ctx.access(e.node, e.path, 'r', `Listing ${e.path} needs read (r) on it, but it`).ok) {
+    // Opening a folder needs search (x) on every folder above it as well as read (r) on it: with -R a folder
+    // whose names can be read but not searched lists its names and stops there (#28, 6)
+    if (!ctx.traverse(e.path).ok || !ctx.access(e.node, e.path, 'r', `Listing ${e.path} needs read (r) on it, but it`).ok) {
       errors.push(`ls: cannot open directory '${e.name}': Permission denied`);
       code = 2;
       return;
