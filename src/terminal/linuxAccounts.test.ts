@@ -98,3 +98,46 @@ test('chage -l after chage -d 0 says the password must be changed', () => {
   assert.match(out[1], /^Password expires\s+: password must be changed$/);
   assert.match(out[2], /^Password inactive\s+: password must be changed$/);
 });
+
+test('su becomes the user it names, not always root (#28, 8)', () => {
+  const run = linuxSession();
+  run('sudo useradd -m alice');
+  // The issue's case: su to a user who is not root
+  run('su alice');
+  assert.equal(run('whoami').stdout, 'alice');
+  assert.equal(run('id -gn').stdout, 'alice');
+  assert.equal(run('pwd').stdout, '/home/student', 'without - the directory stays');
+  run('exit');
+  assert.equal(run('whoami').stdout, 'student');
+
+  // su - moves to the user's home; plain su is still root
+  run('su - alice');
+  assert.equal(run('pwd').stdout, '/home/alice');
+  run('exit');
+  run('su');
+  assert.equal(run('whoami').stdout, 'root');
+  run('exit');
+
+  // -c runs one command as the user and comes back
+  assert.equal(run('su alice -c whoami').stdout, 'alice');
+  assert.equal(run('whoami').stdout, 'student');
+
+  // An unknown user is refused, and nothing changes
+  const bad = run('su nobody-here');
+  assert.equal(bad.exitCode, 1);
+  assert.equal(bad.stderr, 'su: user nobody-here does not exist or the user entry does not contain all the required fields');
+  assert.equal(run('whoami').stdout, 'student');
+});
+
+test('#74 review: su -c runs in a child shell; its umask and variables stay there, machine changes do not', () => {
+  const run = linuxSession();
+  run('su root -c "umask 077"');
+  assert.equal(run('umask').stdout, '0022');
+  run('su root -c "export CHILD_ONLY=yes"');
+  assert.equal(run('echo "[$CHILD_ONLY]"').stdout, '[]');
+  // Files and machine settings change for real
+  run('su root -c "touch /tmp/made-by-root; systemctl set-default graphical.target"');
+  assert.match(run('ls -l /tmp/made-by-root').stdout, / root root /);
+  assert.equal(run('systemctl get-default').stdout, 'graphical.target');
+  assert.equal(run('whoami').stdout, 'student');
+});
