@@ -128,3 +128,16 @@ test('su becomes the user it names, not always root (#28, 8)', () => {
   assert.equal(bad.stderr, 'su: user nobody-here does not exist or the user entry does not contain all the required fields');
   assert.equal(run('whoami').stdout, 'student');
 });
+
+test('#74 review: su -c runs in a child shell; its umask and variables stay there, machine changes do not', () => {
+  const run = linuxSession();
+  run('su root -c "umask 077"');
+  assert.equal(run('umask').stdout, '0022');
+  run('su root -c "export CHILD_ONLY=yes"');
+  assert.equal(run('echo "[$CHILD_ONLY]"').stdout, '[]');
+  // Files and machine settings change for real
+  run('su root -c "touch /tmp/made-by-root; systemctl set-default graphical.target"');
+  assert.match(run('ls -l /tmp/made-by-root').stdout, / root root /);
+  assert.equal(run('systemctl get-default').stdout, 'graphical.target');
+  assert.equal(run('whoami').stdout, 'student');
+});

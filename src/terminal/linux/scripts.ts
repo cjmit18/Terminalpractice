@@ -1,6 +1,7 @@
 import { StageResult } from '../chain';
 import { LinuxContext, linuxCommands } from './context';
 import { checkOptions } from './options';
+import { keepMachineSettings } from './env';
 
 // Running files: ./script.sh, /usr/bin/ls, bash script.sh, bash -c "...", source / .
 
@@ -21,8 +22,8 @@ export function setLineRunner(fn: LineRunner): void {
 }
 
 /**
- * Runs one command line as another user, in that user's shell (su -c): filesystem changes persist, the
- * caller's directory and identity do not change.
+ * Runs one command line as another user, in that user's shell (su -c): filesystem and machine changes persist;
+ * the caller's directory, identity, umask and variables do not change, since the command ran in a child shell.
  */
 export function runLineAs(ctx: LinuxContext, line: string, as: { user: string; group: string; cwd: string }): StageResult {
   if (!lineRunner || ctx.depth >= MAX_DEPTH) return ctx.fail('bash: maximum nesting level exceeded', 1);
@@ -34,6 +35,8 @@ export function runLineAs(ctx: LinuxContext, line: string, as: { user: string; g
     currentUser: ctx.state.currentUser,
     currentGroup: ctx.state.currentGroup,
     isRootOrAdmin: ctx.state.isRootOrAdmin,
+    umask: ctx.state.umask,
+    envVars: keepMachineSettings(ctx.state.envVars, res.newState.envVars),
   };
   return res;
 }
