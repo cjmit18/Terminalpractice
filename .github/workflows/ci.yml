@@ -8,7 +8,9 @@ on:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to 26.04, which this repo's Playwright (1.56.1) cannot install Chromium on.
+    # Go back to ubuntu-latest once Playwright is upgraded to a version that supports it.
+    runs-on: ubuntu-24.04
     # A stalled step fails the run instead of holding a runner for hours
     timeout-minutes: 30
 
