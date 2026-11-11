@@ -1,5 +1,5 @@
 import { FileNode } from '../../../types/terminal';
-import { writeFileContent, modeBits, toOctalField, getNodeAtPath } from '../../filesystem';
+import { writeFileContent, modeBits, toOctalField, getNodeAtPath, applyChmod } from '../../filesystem';
 import { parseOptions } from '../../textUtils';
 import { LinuxContext, LinuxResult, linuxCommands, createInDir } from '../context';
 import { MAX_PATH_DEPTH, pathDepth, treeHeight } from '../../limits';
@@ -59,6 +59,22 @@ function cp(ctx: LinuxContext): LinuxResult {
     if (ctx.isRoot || ctx.groups.includes(node.group)) made.group = node.group;
   };
 
+  // Write access lets cp replace a file's content, but only its owner (or root) may change its mode, group or
+  // times, as with chmod. On someone else's file, real cp -p copies the content, then fails on the first of
+  // those it tries (the times), and leaves the mode and group alone (#75 review).
+  const ownsDest = (dest: FileNode) => ctx.isRoot || dest.owner === ctx.user;
+  const notPreserved = (destLabel: string) => {
+    errors.push(`cp: preserving times for '${destLabel}': Operation not permitted`);
+  };
+
+  /** Sets a copy's mode (the octal field, special bits included), keeping permissions and octal in step */
+  const setMode = (made: FileNode, mode: number) => {
+    const r = applyChmod(made.permissions, String(mode).padStart(4, '0'));
+    if (!r) return;
+    made.permissions = r.sym;
+    made.octal = r.octal;
+  };
+
   const copy = (node: FileNode, srcAbs: string, srcLabel: string, destAbs: string, destLabel: string): void => {
     const existing = ctx.node(destAbs);
     if (node.type === 'file') {
@@ -78,6 +94,12 @@ function cp(ctx: LinuxContext): LinuxResult {
       }
       if (existing) {
         writeFileContent(existing, node.content || '');
+        // -p sets the mode (and, where allowed, the owner) on a file that was already there too (#28, 10)
+        if (preserve) {
+          if (!ownsDest(existing)) return notPreserved(destLabel);
+          setMode(existing, node.octal);
+          preserveOwnership(node, destAbs);
+        }
       } else {
         createInDir(ctx.fs, destAbs, 'file', node.content || '', preserve && ctx.isRoot ? node.owner : ctx.user,
           preserve && ctx.isRoot ? node.group : ctx.group, newMode(node));
@@ -96,18 +118,28 @@ function cp(ctx: LinuxContext): LinuxResult {
         errors.push(`cp: cannot overwrite non-directory '${destLabel}' with directory '${srcLabel}'`);
         return;
       }
+      let finalMode = newMode(node);
       if (!existing) {
         const check = ctx.canWrite(destAbs);
         if (!check.ok) {
           errors.push(`cp: cannot create directory '${destLabel}': ${check.error}`);
           return;
         }
-        createInDir(ctx.fs, destAbs, 'directory', '', ctx.user, ctx.group, newMode(node));
+        // Like coreutils, a new folder is made writable by its owner while it is filled, and gets its final
+        // mode afterwards: a read-only folder (555) still copies with everything in it (#28, 9)
+        const fillable = toOctalField(parseInt(String(finalMode % 1000).padStart(3, '0'), 8) | 0o700) + Math.floor(finalMode / 1000) * 1000;
+        createInDir(ctx.fs, destAbs, 'directory', '', ctx.user, ctx.group, fillable);
+        // Keep the setgid bit a setgid parent folder passed on to the new one
+        const inherited = Math.floor((ctx.node(destAbs)?.octal ?? 0) / 1000) & 2;
+        if (inherited && !(Math.floor(finalMode / 1000) & 2)) finalMode += 2000;
         preserveOwnership(node, destAbs);
       }
       for (const name of Object.keys(node.children ?? {}).sort()) {
         copy(node.children![name], joinLabel(srcAbs, name), joinLabel(srcLabel, name), joinLabel(destAbs, name), joinLabel(destLabel, name));
       }
+      const made = ctx.node(destAbs);
+      if (made && existing && preserve && !ownsDest(made)) return notPreserved(destLabel);
+      if (made && (!existing || preserve)) setMode(made, finalMode);
     }
     if (f.has('v')) out.push(`'${srcLabel}' -> '${destLabel}'`);
   };

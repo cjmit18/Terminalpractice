@@ -98,6 +98,32 @@ test('rm -rf checks permission for every entry inside the tree, as real rm does 
   assert.equal(root('rm -rf /tmp/p').exitCode, 0);
 });
 
+test('cp -r copies a read-only folder with everything in it, then makes the copy read-only (#28, 9)', () => {
+  // The issue's case
+  const run = linuxSession();
+  run('mkdir dir; echo hello > dir/data; chmod 555 dir');
+  const res = run('cp -r dir copy');
+  assert.equal(res.exitCode, 0);
+  assert.equal(res.stderr, '');
+  assert.equal(run('cat copy/data').stdout, 'hello');
+  assert.match(run('ls -ld copy').stdout, /^dr-xr-xr-x /);
+  // A folder inside a setgid folder keeps the bit it inherits
+  run('mkdir shared; chmod 2775 shared; cp -r dir shared/');
+  assert.match(run('ls -ld shared/dir').stdout, /^dr-xr-sr-x /);
+});
+
+test('cp -p sets the mode on a file that already exists, not only on a new one (#28, 10)', () => {
+  // The issue's case: a 600 file copied over a 644 one keeps 600
+  const run = linuxSession();
+  run('echo secret > src; chmod 600 src; echo old > dst; chmod 644 dst');
+  assert.equal(run('cp -p src dst').exitCode, 0);
+  assert.match(run('ls -l dst').stdout, /^-rw------- /);
+  assert.equal(run('cat dst').stdout, 'secret');
+  // Without -p an existing file keeps its own mode, as with real cp
+  run('chmod 644 dst; cp src dst');
+  assert.match(run('ls -l dst').stdout, /^-rw-r--r-- /);
+});
+
 test('ls -R does not go into a folder below one it cannot search, as real ls does (#28, 6)', () => {
   // The issue's case: outer is r-- (names readable, not searchable), so ls -R lists inner's name and stops
   const run = linuxSession();
@@ -113,4 +139,35 @@ test('ls -R does not go into a folder below one it cannot search, as real ls doe
   const ok = run('ls -R outer');
   assert.equal(ok.exitCode, 0);
   assert.match(ok.stdout, /outer\/inner:\nprivate/);
+});
+
+test('cp -p onto a file or folder owned by someone else copies the content but leaves its mode and group alone (#75 review)', () => {
+  const run = linuxSession();
+  // A root-owned file anyone may write to: chmod on it is refused, so cp -p must not change its mode either
+  run('sudo touch /tmp/dest; sudo chmod 666 /tmp/dest; echo secret > src; chmod 600 src');
+  assert.match(run('chmod 600 /tmp/dest').stderr, /Operation not permitted/);
+  const res = run('cp -p src /tmp/dest');
+  assert.equal(res.exitCode, 1);
+  assert.equal(res.stderr, "cp: preserving times for '/tmp/dest': Operation not permitted");
+  assert.equal(run('cat /tmp/dest').stdout, 'secret', 'write access still lets the content through');
+  assert.match(run('ls -l /tmp/dest').stdout, /^-rw-rw-rw- \d+ root root /);
+  // Without -p nothing is preserved, so nothing fails
+  assert.equal(run('cp src /tmp/dest').exitCode, 0);
+
+  // The same for an existing folder: its files are copied in, its own mode stays
+  run('sudo mkdir /tmp/dir; sudo chmod 777 /tmp/dir; mkdir dir; echo hello > dir/data; chmod 700 dir');
+  const dir = run('cp -rp dir /tmp');
+  assert.equal(dir.exitCode, 1);
+  assert.equal(dir.stderr, "cp: preserving times for '/tmp/dir': Operation not permitted");
+  assert.equal(run('cat /tmp/dir/data').stdout, 'hello');
+  assert.match(run('ls -ld /tmp/dir').stdout, /^drwxrwxrwx \d+ root root /);
+
+  // The owner and root may still preserve onto what is already there
+  run('echo old > mine; chmod 644 mine');
+  assert.equal(run('cp -p src mine').exitCode, 0);
+  assert.match(run('ls -l mine').stdout, /^-rw------- /);
+  const root = linuxSession({ currentUser: 'root', currentGroup: 'root', isRootOrAdmin: true });
+  root('echo s > /tmp/a; chmod 600 /tmp/a; echo d > /tmp/b; chown student:student /tmp/b; chmod 666 /tmp/b');
+  assert.equal(root('cp -p /tmp/a /tmp/b').exitCode, 0);
+  assert.match(root('ls -l /tmp/b').stdout, /^-rw------- \d+ root root /);
 });
