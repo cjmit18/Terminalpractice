@@ -21,7 +21,7 @@ import { accountRoutes } from './account';
 import { adminRoutes, roleOf } from './admin';
 import { answerRoutes } from './answers';
 import { emailSendingEnabled } from './mail';
-import { REAUTH_WINDOW, SESSION_MAX_AGE, currentSession, emailUnverified, loadUser, recordSignIn, toPublicUser } from './session';
+import { REAUTH_WINDOW, SESSION_MAX_AGE, currentSession, emailUnverified, endIncomingSession, loadUser, recordSignIn, toPublicUser } from './session';
 
 export type { ApiDeps, ApiEnv, Db, DbStatement } from './http';
 
@@ -233,6 +233,8 @@ async function githubCallback(request: Request, url: URL, env: ApiEnv, deps: Api
     return back(undefined, result === 'ok' ? undefined : result);
   }
   const userId = await upsertGithubUser(env.DB, deps.now(), github);
+  // A sign-in replaces whatever session this browser had, the same rule as email sign-in (#28 held-back finding)
+  await endIncomingSession({ request, env });
   const sessionToken = await createSession(env.DB, userId, deps.now());
   return back(h => h.append('Set-Cookie', cookie(SESSION_COOKIE, sessionToken, SESSION_TTL / 1000)));
 }
