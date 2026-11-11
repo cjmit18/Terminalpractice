@@ -102,6 +102,22 @@ test('E (E-9): Add-ADGroupMember takes positional and comma lists and checks eve
   assert.match(run('Get-ADGroupMember "Domain Admins"').stdout, /SamAccountName +: jdoe/);
 });
 
+test('Get-ADGroupMember -Recursive lists the users in nested groups, each once, and no groups (#28, 12)', () => {
+  // The issue's case: Sales Managers (with mscott) nested inside Domain Admins
+  const run = windowsSession('powershell');
+  assert.equal(run('Add-ADGroupMember "Domain Admins" -Members "Sales Managers"').exitCode, 0);
+  const names = (out: string) => [...out.matchAll(/^SamAccountName +: (.*)$/gm)].map(m => m[1]).sort();
+  assert.deepEqual(names(run('Get-ADGroupMember "Domain Admins"').stdout), ['Sales Managers', 'administrator'], 'without -Recursive the group is listed');
+  const deep = run('Get-ADGroupMember "Domain Admins" -Recursive');
+  assert.equal(deep.exitCode, 0);
+  assert.deepEqual(names(deep.stdout), ['administrator', 'mscott']);
+  assert.doesNotMatch(deep.stdout, /objectClass +: group/);
+
+  // Groups that contain each other: the walk still ends, and a user in both is listed once
+  run('Add-ADGroupMember "Sales Managers" -Members "Domain Admins", administrator');
+  assert.deepEqual(names(run('Get-ADGroupMember "Sales Managers" -Recursive').stdout), ['administrator', 'mscott']);
+});
+
 test('E (E-20): Get-ADUser -Filter script blocks and Search-ADAccount', () => {
   const run = windowsSession('powershell');
   const locked = run('Get-ADUser -Filter {LockedOut -eq $true}');
