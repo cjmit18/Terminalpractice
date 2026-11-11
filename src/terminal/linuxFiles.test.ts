@@ -140,3 +140,34 @@ test('ls -R does not go into a folder below one it cannot search, as real ls doe
   assert.equal(ok.exitCode, 0);
   assert.match(ok.stdout, /outer\/inner:\nprivate/);
 });
+
+test('cp -p onto a file or folder owned by someone else copies the content but leaves its mode and group alone (#75 review)', () => {
+  const run = linuxSession();
+  // A root-owned file anyone may write to: chmod on it is refused, so cp -p must not change its mode either
+  run('sudo touch /tmp/dest; sudo chmod 666 /tmp/dest; echo secret > src; chmod 600 src');
+  assert.match(run('chmod 600 /tmp/dest').stderr, /Operation not permitted/);
+  const res = run('cp -p src /tmp/dest');
+  assert.equal(res.exitCode, 1);
+  assert.equal(res.stderr, "cp: preserving times for '/tmp/dest': Operation not permitted");
+  assert.equal(run('cat /tmp/dest').stdout, 'secret', 'write access still lets the content through');
+  assert.match(run('ls -l /tmp/dest').stdout, /^-rw-rw-rw- \d+ root root /);
+  // Without -p nothing is preserved, so nothing fails
+  assert.equal(run('cp src /tmp/dest').exitCode, 0);
+
+  // The same for an existing folder: its files are copied in, its own mode stays
+  run('sudo mkdir /tmp/dir; sudo chmod 777 /tmp/dir; mkdir dir; echo hello > dir/data; chmod 700 dir');
+  const dir = run('cp -rp dir /tmp');
+  assert.equal(dir.exitCode, 1);
+  assert.equal(dir.stderr, "cp: preserving times for '/tmp/dir': Operation not permitted");
+  assert.equal(run('cat /tmp/dir/data').stdout, 'hello');
+  assert.match(run('ls -ld /tmp/dir').stdout, /^drwxrwxrwx \d+ root root /);
+
+  // The owner and root may still preserve onto what is already there
+  run('echo old > mine; chmod 644 mine');
+  assert.equal(run('cp -p src mine').exitCode, 0);
+  assert.match(run('ls -l mine').stdout, /^-rw------- /);
+  const root = linuxSession({ currentUser: 'root', currentGroup: 'root', isRootOrAdmin: true });
+  root('echo s > /tmp/a; chmod 600 /tmp/a; echo d > /tmp/b; chown student:student /tmp/b; chmod 666 /tmp/b');
+  assert.equal(root('cp -p /tmp/a /tmp/b').exitCode, 0);
+  assert.match(root('ls -l /tmp/b').stdout, /^-rw------- \d+ root root /);
+});

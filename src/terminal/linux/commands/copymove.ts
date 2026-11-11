@@ -59,6 +59,14 @@ function cp(ctx: LinuxContext): LinuxResult {
     if (ctx.isRoot || ctx.groups.includes(node.group)) made.group = node.group;
   };
 
+  // Write access lets cp replace a file's content, but only its owner (or root) may change its mode, group or
+  // times, as with chmod. On someone else's file, real cp -p copies the content, then fails on the first of
+  // those it tries (the times), and leaves the mode and group alone (#75 review).
+  const ownsDest = (dest: FileNode) => ctx.isRoot || dest.owner === ctx.user;
+  const notPreserved = (destLabel: string) => {
+    errors.push(`cp: preserving times for '${destLabel}': Operation not permitted`);
+  };
+
   /** Sets a copy's mode (the octal field, special bits included), keeping permissions and octal in step */
   const setMode = (made: FileNode, mode: number) => {
     const r = applyChmod(made.permissions, String(mode).padStart(4, '0'));
@@ -88,6 +96,7 @@ function cp(ctx: LinuxContext): LinuxResult {
         writeFileContent(existing, node.content || '');
         // -p sets the mode (and, where allowed, the owner) on a file that was already there too (#28, 10)
         if (preserve) {
+          if (!ownsDest(existing)) return notPreserved(destLabel);
           setMode(existing, node.octal);
           preserveOwnership(node, destAbs);
         }
@@ -129,6 +138,7 @@ function cp(ctx: LinuxContext): LinuxResult {
         copy(node.children![name], joinLabel(srcAbs, name), joinLabel(srcLabel, name), joinLabel(destAbs, name), joinLabel(destLabel, name));
       }
       const made = ctx.node(destAbs);
+      if (made && existing && preserve && !ownsDest(made)) return notPreserved(destLabel);
       if (made && (!existing || preserve)) setMode(made, finalMode);
     }
     if (f.has('v')) out.push(`'${srcLabel}' -> '${destLabel}'`);
