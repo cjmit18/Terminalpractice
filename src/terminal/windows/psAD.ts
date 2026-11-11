@@ -11,9 +11,44 @@ export type Row = Record<string, unknown>;
 export const DOMAIN_DN = 'DC=corp,DC=local';
 const USERS_CONTAINER = `CN=Users,${DOMAIN_DN}`;
 
-const rid = (sam: string) => 1100 + [...sam.toLowerCase()].reduce((n, c) => n + c.charCodeAt(0), 0);
-const guid = (sam: string) => `${rid(sam).toString(16).padStart(8, '0')}-3c1e-4b7a-9f02-5d6e7a8b9c0d`;
-const sid = (sam: string) => `S-1-5-21-3623811015-3361044348-30300820-${rid(sam)}`;
+export const DOMAIN_SID = 'S-1-5-21-3623811015-3361044348-30300820';
+
+/** The RIDs every domain gives its built-in accounts and groups, by lower-case name */
+const BUILTIN_USER_RIDS: Record<string, number> = { administrator: 500, guest: 501, krbtgt: 502 };
+const BUILTIN_GROUP_RIDS: Record<string, number> = {
+  'domain admins': 512, 'domain users': 513, 'domain guests': 514, 'domain computers': 515, 'domain controllers': 516,
+  'schema admins': 518, 'enterprise admins': 519, 'group policy creator owners': 520,
+};
+
+/**
+ * The RID for a name that carries none of its own: a built-in name gets its well-known RID, anything else the
+ * old name-based number. Used for objects made before RIDs were stored (older seeds, tests), and by whoami
+ * for a name with no directory object.
+ */
+export function fallbackRid(name: string, kind: 'user' | 'group'): number {
+  const n = name.toLowerCase();
+  const builtin = Object.hasOwn(kind === 'user' ? BUILTIN_USER_RIDS : BUILTIN_GROUP_RIDS, n)
+    ? (kind === 'user' ? BUILTIN_USER_RIDS : BUILTIN_GROUP_RIDS)[n]
+    : undefined;
+  return builtin ?? 1100 + [...n].reduce((sum, c) => sum + c.charCodeAt(0), 0);
+}
+
+/**
+ * An object's RID, the last part of its SID. Each object carries its own, handed out once (#28, 11). An object
+ * without one falls back by name (fallbackRid), which nextRid stays above, so a new object never shares a
+ * RID with it.
+ */
+export const ridOf = (o: ADUser | ADGroup): number =>
+  o.rid ?? ('sAMAccountName' in o ? fallbackRid(o.sAMAccountName, 'user') : fallbackRid(o.name, 'group'));
+export const sidOf = (o: ADUser | ADGroup) => `${DOMAIN_SID}-${ridOf(o)}`;
+const guidOf = (o: ADUser | ADGroup) => `${ridOf(o).toString(16).padStart(8, '0')}-3c1e-4b7a-9f02-5d6e7a8b9c0d`;
+
+/** The RID for a new object: above every RID in use and every one handed out before, like a domain controller's RID pool */
+export function nextRid(state: SystemState): number {
+  const next = Math.max(state.adNextRid ?? 1100, ...[...state.adUsers, ...state.adGroups].map(o => ridOf(o) + 1));
+  state.adNextRid = next + 1;
+  return next;
+}
 
 /** A sign-in name like the ones a domain controller generates ($K3Q000-8F2NJ4TQB1LV), the same for the same DN. */
 function generatedSam(dn: string): string {
@@ -42,9 +77,9 @@ export function adUserProps(state: SystemState, u: ADUser): Record<string, strin
     GivenName: u.givenName,
     Name: u.displayName,
     ObjectClass: 'user',
-    ObjectGUID: guid(u.sAMAccountName),
+    ObjectGUID: guidOf(u),
     SamAccountName: u.sAMAccountName,
-    SID: sid(u.sAMAccountName),
+    SID: sidOf(u),
     Surname: u.surname,
     UserPrincipalName: u.userPrincipalName ?? `${u.sAMAccountName}@corp.local`,
     // extended properties, only shown when asked for with -Properties
@@ -70,7 +105,7 @@ export function findADUser(state: SystemState, identity: string): ADUser | undef
 
 export function findADGroup(state: SystemState, identity: string): ADGroup | undefined {
   const id = identity.trim().toLowerCase();
-  return state.adGroups.find(g => g.name.toLowerCase() === id || groupDN(g).toLowerCase() === id || sid(g.name).toLowerCase() === id);
+  return state.adGroups.find(g => g.name.toLowerCase() === id || groupDN(g).toLowerCase() === id || sidOf(g).toLowerCase() === id || guidOf(g) === id);
 }
 
 /** Renders objects the way PowerShell's list view does: "Name : value", one block per object. */
@@ -220,6 +255,7 @@ function newADUser(ctx: WindowsContext): WindowsResult {
   const enabled = wantsEnabled && password !== undefined;
   state.adUsers.push({
     sAMAccountName: sam,
+    rid: nextRid(state),
     // New-ADUser sets no UPN unless asked
     userPrincipalName: b.str('UserPrincipalName') ?? '',
     givenName: b.str('GivenName') ?? '',
@@ -332,8 +368,8 @@ export function getADGroupMemberRows(ctx: WindowsContext): Row[] | WindowsResult
   for (const s of sams) {
     const u = state.adUsers.find(x => x.sAMAccountName.toLowerCase() === s);
     const g = u ? undefined : findADGroup(state, s);
-    if (u) rows.push({ distinguishedName: userDN(u), name: u.displayName, objectClass: 'user', objectGUID: guid(u.sAMAccountName), SamAccountName: u.sAMAccountName, SID: sid(u.sAMAccountName) });
-    else if (g) rows.push({ distinguishedName: groupDN(g), name: g.name, objectClass: 'group', objectGUID: guid(g.name), SamAccountName: g.name, SID: sid(g.name) });
+    if (u) rows.push({ distinguishedName: userDN(u), name: u.displayName, objectClass: 'user', objectGUID: guidOf(u), SamAccountName: u.sAMAccountName, SID: sidOf(u) });
+    else if (g) rows.push({ distinguishedName: groupDN(g), name: g.name, objectClass: 'group', objectGUID: guidOf(g), SamAccountName: g.name, SID: sidOf(g) });
   }
   return rows;
 }

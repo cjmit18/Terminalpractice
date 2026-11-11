@@ -89,6 +89,8 @@ export interface VirtualDisk {
 
 export interface ADUser {
   sAMAccountName: string;
+  /** Relative ID: the last part of the SID, unique in the domain and never reused (#28, 11) */
+  rid?: number;
   /** Unset on the seeded accounts, which use sAMAccountName@corp.local; '' when New-ADUser was given none */
   userPrincipalName?: string;
   givenName: string;
@@ -105,6 +107,8 @@ export interface ADUser {
 
 export interface ADGroup {
   name: string;
+  /** Relative ID, as on ADUser */
+  rid?: number;
   scope: 'Global' | 'Universal' | 'DomainLocal';
   category: 'Security' | 'Distribution';
   ou: string;
@@ -136,6 +140,8 @@ export interface SystemState {
   disks: VirtualDisk[];
   adUsers: ADUser[];
   adGroups: ADGroup[];
+  /** The next RID the domain hands out; it only goes up, so a deleted object's RID is never given to a new one */
+  adNextRid?: number;
   gpos: GPONode[];
   installedPackages: string[];
   systemIntegrityCorrupted: boolean;

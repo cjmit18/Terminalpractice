@@ -174,6 +174,7 @@ export default function App() {
     adUsers: [
       {
         sAMAccountName: 'jdoe',
+        rid: 1105,
         givenName: 'John',
         surname: 'Doe',
         displayName: 'John Doe',
@@ -187,6 +188,7 @@ export default function App() {
       },
       {
         sAMAccountName: 'administrator',
+        rid: 500,
         givenName: 'Admin',
         surname: 'Account',
         displayName: 'Administrator',
@@ -202,6 +204,7 @@ export default function App() {
     adGroups: [
       {
         name: 'Domain Admins',
+        rid: 512,
         scope: 'Global',
         category: 'Security',
         ou: 'OU=IT_Admins,DC=corp,DC=local',
@@ -210,6 +213,7 @@ export default function App() {
       },
       {
         name: 'Domain Users',
+        rid: 513,
         scope: 'Global',
         category: 'Security',
         ou: 'OU=Users,DC=corp,DC=local',
