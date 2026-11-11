@@ -3,7 +3,7 @@ import { createNode, writeFileContent } from '../../filesystem';
 import { WindowsContext, WindowsResult, cmdCommands } from '../context';
 import { cmdDoc } from '../../docs';
 import { hasConnectivity } from './network';
-import { DOMAIN_SID, nextRid, sidOf } from '../psAD';
+import { DOMAIN_SID, fallbackRid, nextRid, sidOf } from '../psAD';
 import { BOOT_GP, applyGroupPolicy, gpresultTime, windowsNow } from '../clock';
 
 // CMD system tools: whoami, hostname, ver, systeminfo, tasklist, taskkill, sfc, dism, chkdsk,
@@ -510,15 +510,14 @@ function whoami(ctx: WindowsContext): WindowsResult {
   const sw = ctx.args.map(a => a.toLowerCase().replace(/^-/, '/'));
   const user = ctx.state.currentUser;
   const account = `corp\\${user.toLowerCase()}`;
-  // The same SIDs Get-ADUser shows; a name with no directory object keeps the old name-based RID
-  const legacyRid = (n: string) => (n.toLowerCase() === 'administrator' ? 500 : 1100 + [...n.toLowerCase()].reduce((s, c) => s + c.charCodeAt(0), 0));
+  // The same SIDs Get-ADUser shows; a name with no directory object falls back by name
   const userSid = (n: string) => {
     const u = ctx.state.adUsers.find(x => x.sAMAccountName.toLowerCase() === n.toLowerCase());
-    return u ? sidOf(u) : `${DOMAIN_SID}-${legacyRid(n)}`;
+    return u ? sidOf(u) : `${DOMAIN_SID}-${fallbackRid(n, 'user')}`;
   };
   const groupSid = (n: string) => {
     const g = ctx.state.adGroups.find(x => x.name.toLowerCase() === n.toLowerCase());
-    return g ? sidOf(g) : `${DOMAIN_SID}-${n === 'Enterprise Admins' ? 519 : n === 'Schema Admins' ? 518 : legacyRid(n)}`;
+    return g ? sidOf(g) : `${DOMAIN_SID}-${fallbackRid(n, 'group')}`;
   };
   const unknown = sw.find(s => !['/upn', '/fqdn', '/logonid', '/user', '/groups', '/priv', '/all', '/fo', 'table', 'list', 'csv', '/nh'].includes(s));
   if (unknown) return ctx.fail(`ERROR: Invalid argument/option - '${unknown}'.\nType "WHOAMI /?" for usage.`, 1);

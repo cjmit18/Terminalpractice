@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { windowsSession } from './testUtils.ts';
+import { SANDBOX_WINDOWS_STATE } from '../data/sandboxWindowsState.ts';
 
 // Active Directory objects in the Windows simulator: identities (#28, 11).
 
@@ -48,4 +49,29 @@ test('whoami shows the same SIDs as the directory', () => {
   assert.match(out, /corp\\administrator +S-1-5-21-3623811015-3361044348-30300820-500/);
   assert.match(out, /CORP\\Domain Admins +Group +S-1-5-21-3623811015-3361044348-30300820-512 /);
   assert.match(out, /CORP\\Enterprise Admins +Group +S-1-5-21-3623811015-3361044348-30300820-519 /);
+});
+
+test('the Sandbox machine, and objects saved without a RID, keep the built-in RIDs (#76 review)', () => {
+  const sid = 'S-1-5-21-3623811015-3361044348-30300820';
+  // The real Sandbox seed, then the same seed as it was before RIDs were stored
+  const legacy = {
+    ...SANDBOX_WINDOWS_STATE,
+    adUsers: SANDBOX_WINDOWS_STATE.adUsers.map(({ rid: _rid, ...u }) => u),
+    adGroups: SANDBOX_WINDOWS_STATE.adGroups.map(({ rid: _rid, ...g }) => g),
+  };
+  for (const [name, state] of [['sandbox', SANDBOX_WINDOWS_STATE], ['no stored RIDs', legacy]] as const) {
+    const cmd = windowsSession('cmd', structuredClone(state));
+    const out = cmd('whoami /all').stdout;
+    assert.match(out, new RegExp(`corp\\\\administrator +${sid}-500\\b`), name);
+    assert.match(out, new RegExp(`CORP\\\\Domain Admins +Group +${sid}-512 `), name);
+
+    const ps = windowsSession('powershell', structuredClone(state));
+    assert.equal(field(ps('Get-ADUser administrator').stdout, 'SID'), `${sid}-500`, name);
+    assert.match(ps('Get-ADGroupMember "Domain Admins"').stdout, new RegExp(`SID +: ${sid}-500`), name);
+    // A new account still gets a RID of its own, above the built-in ones
+    ps('New-ADUser -SamAccountName ab -Name "A B"');
+    ps('New-ADUser -SamAccountName ba -Name "B A"');
+    const [ab, ba] = ['ab', 'ba'].map(n => Number(field(ps(`Get-ADUser ${n}`).stdout, 'SID')!.split('-').at(-1)));
+    assert.ok(ab >= 1100 && ba > ab, `${name}: ${ab}, ${ba}`);
+  }
 });

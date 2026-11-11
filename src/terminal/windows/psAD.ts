@@ -13,13 +13,33 @@ const USERS_CONTAINER = `CN=Users,${DOMAIN_DN}`;
 
 export const DOMAIN_SID = 'S-1-5-21-3623811015-3361044348-30300820';
 
+/** The RIDs every domain gives its built-in accounts and groups, by lower-case name */
+const BUILTIN_USER_RIDS: Record<string, number> = { administrator: 500, guest: 501, krbtgt: 502 };
+const BUILTIN_GROUP_RIDS: Record<string, number> = {
+  'domain admins': 512, 'domain users': 513, 'domain guests': 514, 'domain computers': 515, 'domain controllers': 516,
+  'schema admins': 518, 'enterprise admins': 519, 'group policy creator owners': 520,
+};
+
+/**
+ * The RID for a name that carries none of its own: a built-in name gets its well-known RID, anything else the
+ * old name-based number. Used for objects made before RIDs were stored (older seeds, tests), and by whoami
+ * for a name with no directory object.
+ */
+export function fallbackRid(name: string, kind: 'user' | 'group'): number {
+  const n = name.toLowerCase();
+  const builtin = Object.hasOwn(kind === 'user' ? BUILTIN_USER_RIDS : BUILTIN_GROUP_RIDS, n)
+    ? (kind === 'user' ? BUILTIN_USER_RIDS : BUILTIN_GROUP_RIDS)[n]
+    : undefined;
+  return builtin ?? 1100 + [...n].reduce((sum, c) => sum + c.charCodeAt(0), 0);
+}
+
 /**
  * An object's RID, the last part of its SID. Each object carries its own, handed out once (#28, 11). An object
- * without one (made by a test, or saved before RIDs were stored) falls back to the old name-based number, which
- * nextRid stays above, so a new object never shares a RID with it.
+ * without one falls back by name (fallbackRid), which nextRid stays above, so a new object never shares a
+ * RID with it.
  */
 export const ridOf = (o: ADUser | ADGroup): number =>
-  o.rid ?? 1100 + [...('sAMAccountName' in o ? o.sAMAccountName : o.name).toLowerCase()].reduce((n, c) => n + c.charCodeAt(0), 0);
+  o.rid ?? ('sAMAccountName' in o ? fallbackRid(o.sAMAccountName, 'user') : fallbackRid(o.name, 'group'));
 export const sidOf = (o: ADUser | ADGroup) => `${DOMAIN_SID}-${ridOf(o)}`;
 const guidOf = (o: ADUser | ADGroup) => `${ridOf(o).toString(16).padStart(8, '0')}-3c1e-4b7a-9f02-5d6e7a8b9c0d`;
 
