@@ -333,7 +333,7 @@ function timedatectl(ctx: LinuxContext): LinuxResult {
       `               Local time: ${day} ${stamp} UTC`,
       `           Universal time: ${day} ${stamp} UTC`,
       `                 RTC time: ${day} ${stamp}`,
-      `                Time zone: ${ctx.state.envVars?.TZ ?? 'Etc/UTC'} (UTC, +0000)`,
+      `                Time zone: ${ctx.state.envVars?.SYSTEM_TIMEZONE ?? 'Etc/UTC'} (UTC, +0000)`,
       'System clock synchronized: yes',
       '              NTP service: active',
       '          RTC in local TZ: no',
@@ -344,7 +344,8 @@ function timedatectl(ctx: LinuxContext): LinuxResult {
     if (!ctx.isRoot) return ctx.fail('Failed to set time zone: Interactive authentication required.', 1, ctx.needsRoot(`timedatectl ${sub}`));
     if (sub === 'set-timezone') {
       if (!ctx.args[1]) return ctx.fail('Too few arguments.');
-      ctx.state.envVars = { ...ctx.state.envVars, TZ: ctx.args[1] };
+      // The machine's time zone (a setting kept beside the variables, see MACHINE_SETTINGS), not the TZ variable
+      ctx.state.envVars = { ...ctx.state.envVars, SYSTEM_TIMEZONE: ctx.args[1] };
     }
     return ctx.ok();
   }

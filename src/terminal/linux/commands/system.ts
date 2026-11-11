@@ -4,6 +4,7 @@ import { labNow } from '../../labClock';
 import { parseOptions, optionValue, padNum } from '../../textUtils';
 import { LinuxContext, LinuxResult, linuxCommands, createInDir } from '../context';
 import { DEFAULT_LINUX_DISKS, partitionLayout, KERNEL_RELEASE, KERNEL_VERSION, MEMORY_KIB, MODULES } from '../virtualFs';
+import { MACHINE_SETTINGS } from '../env';
 
 // System, hardware, processes, services, packages and archives
 
@@ -718,7 +719,7 @@ function environment(ctx: LinuxContext): Record<string, string> {
     LANG: 'C.UTF-8',
     TERM: 'xterm-256color',
     PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
-    ...Object.fromEntries(Object.entries(ctx.state.envVars ?? {}).filter(([k]) => k !== 'SYSTEMD_DEFAULT_TARGET')),
+    ...Object.fromEntries(Object.entries(ctx.state.envVars ?? {}).filter(([k]) => !(MACHINE_SETTINGS as readonly string[]).includes(k))),
     USER: user,
   };
 }

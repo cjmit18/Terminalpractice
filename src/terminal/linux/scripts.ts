@@ -1,6 +1,7 @@
 import { StageResult } from '../chain';
 import { LinuxContext, linuxCommands } from './context';
 import { checkOptions } from './options';
+import { keepMachineSettings } from './env';
 
 // Running files: ./script.sh, /usr/bin/ls, bash script.sh, bash -c "...", source / .
 
@@ -18,6 +19,26 @@ type LineRunner = (line: string, cwd: string, fs: import('../../types/terminal')
 let lineRunner: LineRunner | null = null;
 export function setLineRunner(fn: LineRunner): void {
   lineRunner = fn;
+}
+
+/**
+ * Runs one command line as another user, in that user's shell (su -c): filesystem and machine changes persist;
+ * the caller's directory, identity, umask and variables do not change, since the command ran in a child shell.
+ */
+export function runLineAs(ctx: LinuxContext, line: string, as: { user: string; group: string; cwd: string }): StageResult {
+  if (!lineRunner || ctx.depth >= MAX_DEPTH) return ctx.fail('bash: maximum nesting level exceeded', 1);
+  const state = { ...ctx.state, currentUser: as.user, currentGroup: as.group, isRootOrAdmin: as.user === 'root' };
+  const res = lineRunner(line, as.cwd, ctx.fs, state, ctx.depth + 1, ctx.tty);
+  ctx.fs = res.newFs;
+  ctx.state = {
+    ...res.newState,
+    currentUser: ctx.state.currentUser,
+    currentGroup: ctx.state.currentGroup,
+    isRootOrAdmin: ctx.state.isRootOrAdmin,
+    umask: ctx.state.umask,
+    envVars: keepMachineSettings(ctx.state.envVars, res.newState.envVars),
+  };
+  return res;
 }
 
 /**
