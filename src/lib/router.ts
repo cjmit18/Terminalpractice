@@ -5,7 +5,7 @@ import { TEST_SITE } from './testSite';
  * Hash routes:
  *   #/learn, #/learn/<pathId>, #/learn/<pathId>/<stepId>, #/learn/review,
  *   #/linux, #/linux/<moduleId>, #/windows, #/windows/<moduleId>,
- *   #/simulators, #/sandbox, #/sandbox/challenge, #/sandbox/challenge/<challengeId>, #/reference,
+ *   #/simulators, #/sandbox, #/sandbox/challenge, #/sandbox/challenge/<challengeId>, #/sandbox/drills, #/reference,
  *   #/badge/<badgeId>, #/settings, #/testing (the test site only),
  *   #/account, #/account/security, #/account/forgot, #/account/verify?token=…, #/account/reset?token=…
  * Anything else falls back to #/learn.
@@ -19,8 +19,8 @@ export type Route =
   | { section: 'learn'; pathId: string | null; stepId: string | null; page?: 'review' }
   | { section: TrackSection; moduleId: string | null }
   | { section: 'simulators' | 'sandbox' | 'reference' }
-  /** The mini challenges: the list (challengeId null) or one challenge */
-  | { section: 'sandbox'; challengeId: string | null }
+  /** The mini challenges: the list (challengeId null), one challenge, or the Drills tab (#/sandbox/drills) */
+  | { section: 'sandbox'; challengeId: string | null; tab?: 'drills' }
 
   /** #/badge/<badgeId>: what one badge means. Not a nav section; the link carries no personal data */
   | { section: 'badge'; badgeId: string }
@@ -57,6 +57,7 @@ export function badgeHref(badgeId: string): string {
 
 /** #/learn/review. No learning path may use this id. */
 export const REVIEW_SEGMENT = 'review';
+const DRILLS_SEGMENT = 'drills';
 export const DEFAULT_ROUTE: Route = { section: 'learn', pathId: null, stepId: null };
 
 const SECTIONS: Section[] = ['learn', 'linux', 'windows', 'simulators', 'sandbox', 'reference'];
@@ -100,6 +101,9 @@ export function parseHash(hash: string): Route | null {
     if (parts.length > 2) return null;
     return { section, moduleId: parts[1] ?? null };
   }
+  if (section === 'sandbox' && parts[1] === DRILLS_SEGMENT) {
+    return parts.length === 2 ? { section, challengeId: null, tab: 'drills' } : null;
+  }
   if (section === 'sandbox' && parts[1] === 'challenge') {
     if (parts.length > 3) return null;
     return { section, challengeId: parts[2] ?? null };
@@ -119,6 +123,7 @@ export function routeHref(route: Route): string {
     return `#/${segs.join('/')}`;
   }
   if ('challengeId' in route) {
+    if (route.tab === 'drills') return `#/sandbox/${DRILLS_SEGMENT}`;
     return route.challengeId ? `#/sandbox/challenge/${encodeURIComponent(route.challengeId)}` : '#/sandbox/challenge';
   }
   if (route.section === 'badge') return `#/badge/${encodeURIComponent(route.badgeId)}`;
