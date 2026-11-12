@@ -10,6 +10,7 @@
     "lint": "tsc --noEmit && tsc --noEmit -p worker && tsc --noEmit -p worker/tsconfig.test.json",
     "test": "tsx --test 'src/**/*.test.ts' 'worker/**/*.test.ts'",
     "e2e": "playwright test",
+    "coverage": "tsx scripts/coverage.ts",
     "deploy": "wrangler d1 migrations apply DB --remote && wrangler deploy",
     "deploy:prod": "npm run deploy",
     "dev:cf": "wrangler d1 migrations apply DB --local && wrangler dev"

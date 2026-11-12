@@ -32,6 +32,8 @@ export interface Challenge {
   explanation: string;
   /** A known way to solve it, one command per entry (the replay test runs these) */
   solution: string[];
+  /** Exam objective ids this practises (ids from src/data/examObjectives.ts), counted by the coverage report. Optional. */
+  objectives?: string[];
 }
 
 const lines = (text: string) =>
@@ -85,6 +87,7 @@ export const CHALLENGES: Challenge[] = [
     explanation:
       'Two accounts, root and student. grep -c /bin/bash /etc/passwd counts the lines that mention bash; grep /bin/bash /etc/passwd | wc -l does the same in two steps. The other accounts use /usr/sbin/nologin, so nobody can log in as them.',
     solution: ['grep -c /bin/bash /etc/passwd'],
+    objectives: ['107.1', '103.2'],
   },
   {
     id: 'bash-sshd-line',
@@ -100,6 +103,7 @@ export const CHALLENGES: Challenge[] = [
     explanation:
       'grep sshd /var/log/syslog prints the one line where the SSH server says it is listening on port 22. Filtering a log by the name of the program that wrote it is often the first step in reading one.',
     solution: ['grep sshd /var/log/syslog'],
+    objectives: ['103.2', '108.2'],
   },
   {
     id: 'bash-failed-count',
@@ -112,6 +116,7 @@ export const CHALLENGES: Challenge[] = [
     explanation:
       'Three. grep -c "Failed password" /var/log/auth.log counts them. Without the quotes, grep treats password as a second file name: it reports that password does not exist and still counts Failed in auth.log, with the file name in front.',
     solution: ['grep -c "Failed password" /var/log/auth.log'],
+    objectives: ['103.2', '108.2'],
   },
   {
     id: 'bash-suid-programs',
@@ -130,6 +135,7 @@ export const CHALLENGES: Challenge[] = [
     explanation:
       'passwd, su and sudo. find /usr/bin -perm -4000 lists them. In ls -l they show an s where the owner\'s x would be (rwsr-xr-x). chage has the SGID bit instead (rwxr-sr-x), so it is not in the list.',
     solution: ['find /usr/bin -perm -4000'],
+    objectives: ['104.5', '110.1'],
   },
   {
     id: 'bash-listening-ports',
@@ -146,6 +152,7 @@ export const CHALLENGES: Challenge[] = [
     explanation:
       'Ports 22 (SSH) and 80 (the web server). ss -tln is the modern way; netstat -tln gives the same answer on older systems. Add -p as root to see which program owns each port.',
     solution: ['ss -tln'],
+    objectives: ['110.1', '109.3'],
   },
   {
     id: 'bash-name-servers',
@@ -161,6 +168,7 @@ export const CHALLENGES: Challenge[] = [
     explanation:
       '192.168.1.1 first, then 8.8.8.8. grep nameserver /etc/resolv.conf (or grep ^nameserver to be strict) leaves out the comment and the search line.',
     solution: ['grep nameserver /etc/resolv.conf'],
+    objectives: ['109.4'],
   },
   {
     id: 'bash-adm-group',
@@ -177,6 +185,7 @@ export const CHALLENGES: Challenge[] = [
     explanation:
       'syslog and student. getent group adm or grep ^adm: /etc/group prints adm:x:4:syslog,student. The members after the last colon are supplementary members, which is why student can read /var/log/auth.log.',
     solution: ['getent group adm'],
+    objectives: ['107.1'],
   },
   {
     id: 'bash-boot-usage',
@@ -193,6 +202,7 @@ export const CHALLENGES: Challenge[] = [
     explanation:
       '26% used, 353M free. df -h /boot shows only the filesystem that holds /boot. Without -h the sizes are in 1K blocks.',
     solution: ['df -h /boot'],
+    objectives: ['104.2'],
   },
 
   // ---------------------------------------------------------------------------- Command Prompt
@@ -211,6 +221,7 @@ export const CHALLENGES: Challenge[] = [
     explanation:
       'PID 3892. netstat -ano | findstr 4444 keeps the one connection: -a lists all connections, -n keeps numbers, -o adds the owning PID.',
     solution: ['netstat -ano | findstr 4444'],
+    objectives: ['sy0-701:4.0', 'n10-009:5.0'],
   },
   {
     id: 'cmd-port-4444-program',
@@ -227,6 +238,7 @@ export const CHALLENGES: Challenge[] = [
     explanation:
       'svchost_update.exe, PID 3892. The name is made to look like the real svchost.exe, which is why matching the PID matters more than reading the name. tasklist | findstr 3892 works as well.',
     solution: ['netstat -ano | findstr 4444', 'tasklist /fi "PID eq 3892"'],
+    objectives: ['sy0-701:4.0', 'aplus-1202:1.0'],
   },
   {
     id: 'cmd-ipv4-address',
@@ -243,6 +255,7 @@ export const CHALLENGES: Challenge[] = [
     explanation:
       '169.254.82.114. ipconfig | findstr IPv4 shows it. An address that starts with 169.254 is APIPA: Windows picked it itself because no DHCP server answered, so the PC can only reach others on the same local network.',
     solution: ['ipconfig | findstr IPv4'],
+    objectives: ['n10-009:5.0', 'aplus-1202:1.0'],
   },
   {
     id: 'cmd-hosts-dc01',
@@ -259,6 +272,7 @@ export const CHALLENGES: Challenge[] = [
     explanation:
       '192.168.1.10. findstr dc01 C:\\Windows\\System32\\drivers\\etc\\hosts prints that entry. Windows reads the hosts file before it asks DNS, so a wrong line here can send a PC to the wrong server.',
     solution: ['findstr dc01 C:\\Windows\\System32\\drivers\\etc\\hosts'],
+    objectives: ['n10-009:5.0'],
   },
 
   // ---------------------------------------------------------------------------- PowerShell
@@ -278,6 +292,7 @@ export const CHALLENGES: Challenge[] = [
     explanation:
       'W32Time (Windows Time) and wuauserv (Windows Update). Get-Service | Where-Object Status -eq Stopped filters the objects by a property, so it does not depend on how the table looks.',
     solution: ['Get-Service | Where-Object Status -eq Stopped'],
+    objectives: ['aplus-1202:1.0'],
   },
   {
     id: 'ps-top-cpu',
@@ -295,6 +310,7 @@ export const CHALLENGES: Challenge[] = [
     explanation:
       'svchost_update, PID 3892. Get-Process | Sort-Object CPU -Descending | Select-Object -First 1 sorts the process objects and keeps the top one. It is the same program that owns the connection to port 4444.',
     solution: ['Get-Process | Sort-Object CPU -Descending | Select-Object -First 1'],
+    objectives: ['aplus-1202:3.0', 'sy0-701:4.0'],
   },
   {
     id: 'ps-servicing-stack',
@@ -311,6 +327,7 @@ export const CHALLENGES: Challenge[] = [
     explanation:
       'Servicing Stack v10.0.22621.1. Get-Content C:\\Logs\\CBS.log | Select-String Servicing prints just the line. Select-String -Path C:\\Logs\\CBS.log -Pattern Servicing finds it too, with the file name and line number in front.',
     solution: ['Get-Content C:\\Logs\\CBS.log | Select-String Servicing'],
+    objectives: ['aplus-1202:3.0'],
   },
 ];
 
