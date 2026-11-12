@@ -40,7 +40,7 @@ A scheduled task runs **every Monday at 5:00 AM America/Chicago**. `CRON_TZ=Amer
 
 ## 3. Choosing what to add
 
-1. **Coverage report.** `npm run coverage` (`scripts/coverage.ts`, logic in `src/data/coverage.ts`) lists each exam objective in `src/data/examObjectives.ts` with its count of questions, labs, challenges and lessons, thinnest first inside each exam. `npm run coverage -- --json` prints the same as JSON. The thinnest objectives get content first. A challenge counts once it has an `objectives` tag in `src/data/challenges.ts`; none are tagged yet.
+1. **Coverage report.** `npm run coverage` (`scripts/coverage.ts`, logic in `src/data/coverage.ts`) lists each exam objective in `src/data/examObjectives.ts` with its count of questions, labs, challenges and lessons, thinnest first inside each exam. `npm run coverage -- --json` prints the same as JSON. The thinnest objectives get content first. A challenge counts through its `objectives` tag in `src/data/challenges.ts`; a test requires every challenge to have one.
 2. **Most-missed questions.** These come from the admin dashboard (login portal part 9), as anonymous totals from signed-in users who opt in only. Admin accounts are never counted. A question nearly everyone misses usually needs clearer wording, not more practice.
 3. **CJ's notes** from studying: anything confusing or missing goes on the list for the next run.
 
