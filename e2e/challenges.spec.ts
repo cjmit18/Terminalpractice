@@ -96,3 +96,55 @@ test('a lab shows its help-desk ticket, and the recap closes it with thanks and 
   await page.getByRole('link', { name: 'Listening ports' }).click();
   await expect(page.getByRole('heading', { level: 1, name: 'Listening ports' })).toBeVisible();
 });
+
+test('the Drills tab: a generated subnetting question, checked, explained, then a new one', async ({ page }) => {
+  const { generateSubnetQuestion } = await import('../src/lib/drills/subnet');
+  await page.goto('#/sandbox/challenge');
+  const tabs = page.getByRole('navigation', { name: 'Quick practice' });
+  await expect(tabs.getByRole('link', { name: 'Challenges' })).toHaveAttribute('aria-current', 'page');
+  await tabs.getByRole('link', { name: 'Drills' }).click();
+  await expect(page).toHaveURL(/#\/sandbox\/drills$/);
+  await expect(page).toHaveTitle(/^Drills · Challenges · Sandbox · Terminus CertSim$/);
+  await expect(tabs.getByRole('link', { name: 'Drills' })).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByRole('heading', { level: 2, name: 'Subnetting' })).toBeVisible();
+
+  // The page says which seed made the question, so the test can work out the same answer
+  const form = page.locator('form[data-seed]');
+  const questionNow = async () => generateSubnetQuestion(Number(await form.getAttribute('data-seed')));
+  const first = await questionNow();
+  const box = page.getByRole('textbox', { name: first.prompt });
+  await expect(box).toBeVisible();
+
+  // Nothing typed: a nudge, and nothing counted
+  await page.getByRole('button', { name: 'Check' }).click();
+  await expect(page.getByText('Type an answer first.')).toBeVisible();
+  await expect(page.getByText(/right this visit/)).toHaveCount(0);
+
+  // A wrong answer shows the right one and how it is worked out
+  await box.fill('not an answer');
+  await box.press('Enter');
+  const feedback = form.getByRole('status');
+  await expect(feedback).toContainText('Not quite.');
+  await expect(feedback).toContainText(`The answer is ${first.answer}.`);
+  await expect(feedback).toContainText(first.explanation);
+  await expect(feedback).toBeFocused();
+  await expect(page.getByText('0 of 1 right this visit')).toBeVisible();
+
+  // Next question: new numbers, the box is empty and focused; the right answer counts
+  await page.getByRole('button', { name: 'Next question' }).click();
+  const second = await questionNow();
+  expect(second.seed).not.toBe(first.seed);
+  const box2 = page.getByRole('textbox', { name: second.prompt });
+  await expect(box2).toBeFocused();
+  await expect(box2).toHaveValue('');
+  await box2.fill(second.answer);
+  await page.getByRole('button', { name: 'Check' }).click();
+  await expect(feedback).toContainText('Correct.');
+  await expect(page.getByText('1 of 2 right this visit')).toBeVisible();
+  await expect(page.getByText(/streak|score|missed/i)).toHaveCount(0);
+  await expectNoHorizontalOverflow(page);
+
+  // Back goes to the Challenges tab
+  await page.goBack();
+  await expect(page.getByRole('region', { name: 'Today’s pick' })).toBeVisible();
+});
