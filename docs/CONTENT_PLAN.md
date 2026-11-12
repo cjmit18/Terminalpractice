@@ -40,7 +40,7 @@ A scheduled task runs **every Monday at 5:00 AM America/Chicago**. `CRON_TZ=Amer
 
 ## 3. Choosing what to add
 
-1. **Coverage report.** A script (`scripts/coverage.ts`, to be built) lists each exam objective in `src/data/examObjectives.ts` with its count of questions, labs and challenges. The thinnest objectives get content first.
+1. **Coverage report.** `npm run coverage` (`scripts/coverage.ts`, logic in `src/data/coverage.ts`) lists each exam objective in `src/data/examObjectives.ts` with its count of questions, labs, challenges and lessons, thinnest first inside each exam. `npm run coverage -- --json` prints the same as JSON. The thinnest objectives get content first. A challenge counts once it has an `objectives` tag in `src/data/challenges.ts`; none are tagged yet.
 2. **Most-missed questions.** These come from the admin dashboard (login portal part 9), as anonymous totals from signed-in users who opt in only. Admin accounts are never counted. A question nearly everyone misses usually needs clearer wording, not more practice.
 3. **CJ's notes** from studying: anything confusing or missing goes on the list for the next run.
 
@@ -80,7 +80,7 @@ A small page, `#/whats-new`, linked from Learn. It lists each release by date wi
 
 Each step is its own small PR:
 
-1. Coverage report script and the missing content-quality tests.
+1. Coverage report script (done) and the missing content-quality tests.
 2. The "What's new" page.
 3. Generated subnetting drills, which are also the subnetting feature.
 4. The Monday scheduled task, as described in section 5.

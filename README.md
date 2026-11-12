@@ -88,6 +88,7 @@ npm ci
 npm run dev        # dev server on http://localhost:3000
 npm test           # unit tests (app and worker)
 npm run lint       # three typechecks: the app, the worker, and the worker tests (no ESLint)
+npm run coverage   # content per exam objective, thinnest first (add -- --json for JSON)
 npm run build      # typecheck the app, then production build into dist/
 npm run preview    # serve the production build
 npm run e2e        # browser tests (builds, then serves on port 4173)

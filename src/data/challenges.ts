@@ -32,6 +32,8 @@ export interface Challenge {
   explanation: string;
   /** A known way to solve it, one command per entry (the replay test runs these) */
   solution: string[];
+  /** Exam objective ids this practises (ids from src/data/examObjectives.ts), counted by the coverage report. Optional. */
+  objectives?: string[];
 }
 
 const lines = (text: string) =>
