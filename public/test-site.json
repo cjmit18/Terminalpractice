@@ -1,0 +1,27 @@
+{
+  "builtAt": "2026-11-12T14:13:23.208Z",
+  "main": "282bc1e60b5080fa0789a85cef034c3ad4d1a261",
+  "included": [
+    {
+      "number": 81,
+      "title": "CI: pin the runner to ubuntu-24.04 so Playwright can install Chromium",
+      "url": "https://github.com/cjmit18/Terminalpractice/pull/81"
+    },
+    {
+      "number": 82,
+      "title": "Content: the coverage report (npm run coverage)",
+      "url": "https://github.com/cjmit18/Terminalpractice/pull/82"
+    },
+    {
+      "number": 83,
+      "title": "Drills: the subnetting question engine",
+      "url": "https://github.com/cjmit18/Terminalpractice/pull/83"
+    },
+    {
+      "number": 84,
+      "title": "Drills: a Drills tab on Challenges, with subnetting questions",
+      "url": "https://github.com/cjmit18/Terminalpractice/pull/84"
+    }
+  ],
+  "skipped": []
+}
