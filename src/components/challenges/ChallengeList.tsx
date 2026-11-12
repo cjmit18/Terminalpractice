@@ -6,6 +6,7 @@ import { ALL_MODULES } from '../../lib/modules';
 import { SHELL_LABELS } from '../lab/PageHeader';
 import { useGameLayer } from '../celebrate/GameLayer';
 import { primaryLinkClass } from '../journey/shared';
+import { ChallengeTabs } from './ChallengeTabs';
 
 const MODULE_TITLES = new Map(ALL_MODULES.map(m => [m.id, m.title]));
 
@@ -40,6 +41,7 @@ export const ChallengeList: React.FC = () => {
           </p>
         )}
       </header>
+      <ChallengeTabs current="challenges" />
 
       <section aria-labelledby="pick-heading" className="mt-8 rounded-md border border-line bg-surface px-4 py-4 space-y-2">
         <h2 id="pick-heading" className="text-sm text-muted font-medium">
