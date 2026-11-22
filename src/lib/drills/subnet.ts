@@ -135,8 +135,9 @@ export function checkSubnetAnswer(question: SubnetQuestion, input: string): bool
   if (typed === '') return false;
   switch (question.kind) {
     case 'host-count':
-      // 1,022 and 1 022 are the same number as 1022
-      return /^\d[\d, ]*$/.test(typed) && Number(typed.replace(/[, ]/g, '')) === Number(question.answer);
+      // 1,022 and 1 022 are the same number as 1022: plain digits, or groups of three after one separator
+      // used throughout. Not 1,,022, 1022, or 10 22 (#83 review)
+      return /^(\d+|\d{1,3}(,\d{3})+|\d{1,3}( \d{3})+)$/.test(typed) && Number(typed.replace(/[, ]/g, '')) === Number(question.answer);
     case 'prefix':
       // /26 and 26 both name the prefix
       return /^\/?\d{1,2}$/.test(typed) && Number(typed.replace('/', '')) === Number(question.answer.slice(1));
