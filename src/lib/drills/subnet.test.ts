@@ -89,11 +89,15 @@ test('subnet drills: the checker accepts other ways to write the answer, and ref
   assert.ok(!checkSubnetAnswer(network, toDotted(parseDotted(network.answer)! + 1)));
   for (const bad of ['', ' ', 'abc', '10.0.0', '10.0.0.256', '10.0.0.1.2', `${network.answer}/24`]) assert.ok(!checkSubnetAnswer(network, bad), JSON.stringify(bad));
 
-  const hosts = generateSubnetQuestion(1, 'host-count');
-  const n = Number(hosts.answer);
-  assert.ok(checkSubnetAnswer(hosts, n.toLocaleString('en-US')), 'a thousands comma');
-  assert.ok(!checkSubnetAnswer(hosts, String(n + 2)), 'all addresses is not the usable count');
-  assert.ok(!checkSubnetAnswer(hosts, `${n} hosts`));
+  // Seed 0 asks for a /22, whose answer, 1022, has a thousands place to group
+  const hosts = generateSubnetQuestion(0, 'host-count');
+  assert.equal(hosts.answer, '1022');
+  for (const ok of ['1022', '1,022', '1 022', ' 1,022 ']) assert.ok(checkSubnetAnswer(hosts, ok), JSON.stringify(ok));
+  for (const bad of ['1,,022', '1022,', ',1022', '10 22', '10,22', '1,02,2', '1, 022', '1 ,022', '1024', '1022 hosts']) {
+    assert.ok(!checkSubnetAnswer(hosts, bad), JSON.stringify(bad));
+  }
+  const small = generateSubnetQuestion(1, 'host-count');
+  assert.ok(checkSubnetAnswer(small, small.answer) && !checkSubnetAnswer(small, String(Number(small.answer) + 2)), 'all addresses is not the usable count');
 
   const prefix = q('prefix');
   assert.ok(checkSubnetAnswer(prefix, prefix.answer) && checkSubnetAnswer(prefix, prefix.answer.slice(1)), '/26 or 26');
