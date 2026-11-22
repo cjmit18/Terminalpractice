@@ -55,12 +55,15 @@ Migrations: the test site shares the accounts database and applies migrations wh
 - The "What's new" page (CONTENT_PLAN.md step 2), then the Monday task (step 4).
 - Learning-flow improvements from #52, one path or lab at a time: path introductions (goal, prerequisites, shell,
   time, where to start), lesson structure (example, expected result, common mistake, practice), progressive hints
-  (concept, then command, then walkthrough), and a next step on every completion screen.
+  (concept, then command, then walkthrough), a next step on every completion screen, and lab structure: each lab
+  states its scenario, its starting conditions, success criteria the learner can observe, and what the simulator
+  does not model.
 - Varied labs (CONTENT_PLAN.md step 5), one lab at a time.
 - More drills after ports: `chmod` numbers, then log reading.
 - Portal part 6, Google sign-in.
-- The open round-3 simulator fixes: option parsing, trailing newlines, sort keys, script arguments, honest "not
-  simulated" builtins, find predicates, awk, findstr, drives, shell fidelity, lesson text, app polish.
+- The open round-3 simulator fixes: option parsing, trailing newlines, sort keys, script arguments, `sudo` (#74 fixed
+  `su`, but `sudo -u` still runs a command as a user that does not exist), honest "not simulated" builtins, find
+  predicates, awk, findstr, drives, shell fidelity, lesson text, app polish.
 - Design fixes: phone touch targets, `--subtle` contrast, Mono 600.
 - Docs: README accounts section and privacy text, per-Worker secrets, Node 22.13.
 
