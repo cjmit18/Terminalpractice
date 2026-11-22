@@ -157,9 +157,16 @@ test('the Drills tab: a generated subnetting question, checked, explained, then 
   await page.getByRole('button', { name: 'Next question' }).click();
   const third = await questionNow();
   const box3 = page.getByRole('textbox', { name: third.prompt });
-  await page.getByRole('button', { name: 'Show a hint' }).click();
+  // Opened from the keyboard, the hint moves focus to the answer field, which it describes, and keeps what is
+  // typed (#88 review)
+  await box3.fill('wro');
+  await page.getByRole('button', { name: 'Show a hint' }).focus();
+  await page.keyboard.press('Enter');
   await expect(form.getByText(`Hint: ${third.hint}`)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Show a hint' })).toHaveCount(0);
+  await expect(box3).toBeFocused();
+  await expect(box3).toHaveValue('wro');
+  await expect(box3).toHaveAccessibleDescription(`Hint: ${third.hint}`);
   await box3.fill('wrong');
   await box3.press('Enter');
   await box3.fill(third.answer);

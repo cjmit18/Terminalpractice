@@ -57,16 +57,19 @@ const DrillRunner: React.FC<{ drill: Drill }> = ({ drill }) => {
   const inputRef = useRef<HTMLInputElement>(null);
   const feedbackRef = useRef<HTMLDivElement>(null);
   // Focus moves only after the learner acts, never when the page first opens
-  const focusTarget = useRef<'feedback' | 'input' | null>(null);
+  // 'hint' focuses the answer field without selecting what is typed: the hint button goes away, and the field
+  // is where the learner goes next, with the hint as its description (#88 review)
+  const focusTarget = useRef<'feedback' | 'input' | 'hint' | null>(null);
   useEffect(() => {
     const target = focusTarget.current;
     focusTarget.current = null;
     if (target === 'feedback') feedbackRef.current?.focus();
+    else if (target === 'hint') inputRef.current?.focus();
     else if (target === 'input') {
       inputRef.current?.focus();
       inputRef.current?.select();
     }
-  }, [result, seed, missed]);
+  }, [result, seed, missed, hintShown]);
 
   const check = (e: React.FormEvent) => {
     e.preventDefault();
@@ -161,7 +164,14 @@ const DrillRunner: React.FC<{ drill: Drill }> = ({ drill }) => {
           {result === null && (
             <p className="flex flex-wrap gap-x-4 gap-y-2">
               {!hintShown && (
-                <button type="button" onClick={() => setHintShown(true)} className={textButtonClass}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setHintShown(true);
+                    focusTarget.current = 'hint';
+                  }}
+                  className={textButtonClass}
+                >
                   Show a hint
                 </button>
               )}
