@@ -13,6 +13,8 @@ export interface PortProtocol {
   transport?: 'TCP' | 'UDP' | 'both';
   /** Other names a learner may reasonably type for it */
   aliases?: string[];
+  /** What it is for, without its name or ports: the hint */
+  clue: string;
   /** A line on what it is for, shown in every explanation */
   use: string;
 }
@@ -25,26 +27,26 @@ export interface PortProtocol {
  * UDP transport), SIP (both), SNMP (TCP, RFC 3430) and Syslog (TLS over TCP, RFC 5425) (#87 review).
  */
 export const NETPLUS_PORTS: readonly PortProtocol[] = [
-  { name: 'FTP', full: 'File Transfer Protocol', ports: [20, 21], transport: 'TCP', use: 'file transfer; 21 carries commands, 20 carries data in active mode' },
-  { name: 'SFTP', full: 'Secure File Transfer Protocol', ports: [22], transport: 'TCP', aliases: ['ssh file transfer protocol'], use: 'file transfer over an SSH connection' },
-  { name: 'SSH', full: 'Secure Shell', ports: [22], transport: 'TCP', use: 'encrypted remote command line' },
-  { name: 'Telnet', full: 'Telnet', ports: [23], transport: 'TCP', use: 'remote command line in plain text, replaced by SSH' },
-  { name: 'SMTP', full: 'Simple Mail Transfer Protocol', ports: [25], transport: 'TCP', use: 'sending mail between servers' },
-  { name: 'DNS', full: 'Domain Name System', ports: [53], transport: 'both', use: 'name lookups: UDP for most queries, TCP for zone transfers and large answers' },
-  { name: 'DHCP', full: 'Dynamic Host Configuration Protocol', ports: [67, 68], transport: 'UDP', use: 'handing out IP addresses; servers listen on 67, clients on 68' },
-  { name: 'TFTP', full: 'Trivial File Transfer Protocol', ports: [69], transport: 'UDP', use: 'simple file transfer with no login, used for network boot and device configs' },
-  { name: 'HTTP', full: 'Hypertext Transfer Protocol', ports: [80], transport: 'TCP', use: 'web pages without encryption' },
-  { name: 'NTP', full: 'Network Time Protocol', ports: [123], transport: 'UDP', use: 'keeping clocks in step' },
-  { name: 'SNMP', full: 'Simple Network Management Protocol', ports: [161, 162], use: 'monitoring devices; queries go to 161, traps arrive on 162' },
-  { name: 'LDAP', full: 'Lightweight Directory Access Protocol', ports: [389], use: 'directory lookups, such as Active Directory' },
-  { name: 'HTTPS', full: 'Hypertext Transfer Protocol Secure', ports: [443], use: 'web pages over TLS' },
-  { name: 'SMB', full: 'Server Message Block', ports: [445], transport: 'TCP', aliases: ['cifs'], use: 'Windows file and printer sharing' },
-  { name: 'Syslog', full: 'Syslog', ports: [514], use: 'sending log messages to a central server' },
-  { name: 'SMTPS', full: 'Simple Mail Transfer Protocol Secure', ports: [587], transport: 'TCP', aliases: ['smtp secure', 'smtp over tls'], use: 'sending mail with encryption. CompTIA lists 587, the submission port that upgrades to TLS with STARTTLS; 465 is the registered port for submission over TLS from the start' },
-  { name: 'LDAPS', full: 'Lightweight Directory Access Protocol over SSL', ports: [636], transport: 'TCP', aliases: ['ldap over ssl', 'ldap over tls'], use: 'directory lookups over TLS' },
-  { name: 'SQL Server', full: 'Structured Query Language (SQL) Server', ports: [1433], transport: 'TCP', aliases: ['sql', 'mssql', 'microsoft sql server', 'ms sql'], use: "Microsoft's database server" },
-  { name: 'RDP', full: 'Remote Desktop Protocol', ports: [3389], use: 'Windows remote desktop' },
-  { name: 'SIP', full: 'Session Initiation Protocol', ports: [5060, 5061], use: 'setting up voice and video calls; 5061 is SIP over TLS' },
+  { name: 'FTP', full: 'File Transfer Protocol', ports: [20, 21], transport: 'TCP', clue: 'moving files, with one connection for commands and another for data', use: 'file transfer; 21 carries commands, 20 carries data in active mode' },
+  { name: 'SFTP', full: 'Secure File Transfer Protocol', ports: [22], transport: 'TCP', aliases: ['ssh file transfer protocol'], clue: 'moving files inside an encrypted remote-login connection', use: 'file transfer over an SSH connection' },
+  { name: 'SSH', full: 'Secure Shell', ports: [22], transport: 'TCP', clue: 'an encrypted remote command line', use: 'encrypted remote command line' },
+  { name: 'Telnet', full: 'Telnet', ports: [23], transport: 'TCP', clue: 'a remote command line that sends everything in plain text', use: 'remote command line in plain text, replaced by SSH' },
+  { name: 'SMTP', full: 'Simple Mail Transfer Protocol', ports: [25], transport: 'TCP', clue: 'sending mail from one server to another', use: 'sending mail between servers' },
+  { name: 'DNS', full: 'Domain Name System', ports: [53], transport: 'both', clue: 'turning names such as example.com into addresses', use: 'name lookups: UDP for most queries, TCP for zone transfers and large answers' },
+  { name: 'DHCP', full: 'Dynamic Host Configuration Protocol', ports: [67, 68], transport: 'UDP', clue: 'handing out IP addresses, gateways and DNS servers automatically', use: 'handing out IP addresses; servers listen on 67, clients on 68' },
+  { name: 'TFTP', full: 'Trivial File Transfer Protocol', ports: [69], transport: 'UDP', clue: 'simple file transfer with no login, as used for network boot', use: 'simple file transfer with no login, used for network boot and device configs' },
+  { name: 'HTTP', full: 'Hypertext Transfer Protocol', ports: [80], transport: 'TCP', clue: 'web pages without encryption', use: 'web pages without encryption' },
+  { name: 'NTP', full: 'Network Time Protocol', ports: [123], transport: 'UDP', clue: 'keeping clocks in step', use: 'keeping clocks in step' },
+  { name: 'SNMP', full: 'Simple Network Management Protocol', ports: [161, 162], clue: 'monitoring network devices and receiving their alerts', use: 'monitoring devices; queries go to 161, traps arrive on 162' },
+  { name: 'LDAP', full: 'Lightweight Directory Access Protocol', ports: [389], clue: 'looking up users and groups in a directory, in plain text', use: 'directory lookups, such as Active Directory' },
+  { name: 'HTTPS', full: 'Hypertext Transfer Protocol Secure', ports: [443], clue: 'web pages with encryption', use: 'web pages over TLS' },
+  { name: 'SMB', full: 'Server Message Block', ports: [445], transport: 'TCP', aliases: ['cifs'], clue: 'Windows file and printer sharing', use: 'Windows file and printer sharing' },
+  { name: 'Syslog', full: 'Syslog', ports: [514], clue: 'sending log messages to a central server', use: 'sending log messages to a central server' },
+  { name: 'SMTPS', full: 'Simple Mail Transfer Protocol Secure', ports: [587], transport: 'TCP', aliases: ['smtp secure', 'smtp over tls'], clue: 'sending mail with encryption', use: 'sending mail with encryption. CompTIA lists 587, the submission port that upgrades to TLS with STARTTLS; 465 is the registered port for submission over TLS from the start' },
+  { name: 'LDAPS', full: 'Lightweight Directory Access Protocol over SSL', ports: [636], transport: 'TCP', aliases: ['ldap over ssl', 'ldap over tls'], clue: 'looking up users and groups in a directory, with encryption', use: 'directory lookups over TLS' },
+  { name: 'SQL Server', full: 'Structured Query Language (SQL) Server', ports: [1433], transport: 'TCP', aliases: ['sql', 'mssql', 'microsoft sql server', 'ms sql'], clue: "Microsoft's database server", use: "Microsoft's database server" },
+  { name: 'RDP', full: 'Remote Desktop Protocol', ports: [3389], clue: 'remote control of a Windows desktop', use: 'Windows remote desktop' },
+  { name: 'SIP', full: 'Session Initiation Protocol', ports: [5060, 5061], clue: 'setting up voice and video calls', use: 'setting up voice and video calls; 5061 is SIP over TLS' },
 ];
 
 export type PortQuestionKind = 'port' | 'protocol' | 'transport';
@@ -57,6 +59,8 @@ export interface PortQuestion {
   /** The answer as it is shown: "22", "20 and 21", "SSH or SFTP", "UDP" */
   answer: string;
   explanation: string;
+  /** A nudge that does not give the answer away */
+  hint: string;
   objectives: string[];
   /** What the checker compares against (normalised) */
   accept: string[][];
@@ -83,7 +87,7 @@ export function generatePortQuestion(seed: number, kind?: PortQuestionKind): Por
   const port = pick(ALL_PORTS);
   const withTransport = pick(WITH_TRANSPORT);
   const k = kind ?? drawnKind;
-  const make = (prompt: string, answer: string, explanation: string, accept: string[][]): PortQuestion => ({ seed, kind: k, prompt, answer, explanation, objectives: OBJECTIVES, accept });
+  const make = (prompt: string, answer: string, explanation: string, accept: string[][], hint: string): PortQuestion => ({ seed, kind: k, prompt, answer, explanation, hint, objectives: OBJECTIVES, accept });
 
   switch (k) {
     case 'port': {
@@ -96,6 +100,7 @@ export function generatePortQuestion(seed: number, kind?: PortQuestionKind): Por
         listPorts(protocol.ports),
         describe(protocol),
         [protocol.ports.map(String)],
+        `${protocol.name} stands for ${protocol.full}, used for ${protocol.clue}. ${protocol.ports[0] < 1024 ? 'It is a well-known port, below 1024.' : 'It is a registered port, above 1023.'}`,
       );
     }
     case 'protocol': {
@@ -105,6 +110,7 @@ export function generatePortQuestion(seed: number, kind?: PortQuestionKind): Por
         owners.map(o => o.name).join(' or '),
         `${owners.map(describe).join(' ')}${owners.length > 1 ? ' Either name is right.' : ''}`,
         owners.map(namesOf),
+        `Port ${port} is used for ${owners.map(o => o.clue).join(', and also for ')}.`,
       );
     }
     case 'transport': {
@@ -114,6 +120,7 @@ export function generatePortQuestion(seed: number, kind?: PortQuestionKind): Por
         t === 'both' ? 'both' : t,
         `${describe(withTransport)} It runs over ${t === 'both' ? 'both TCP and UDP' : t}.`,
         [[t.toLowerCase()]],
+        `${withTransport.name} is used for ${withTransport.clue}. Does that need a connection with guaranteed delivery (TCP), quick small messages (UDP), or each at different times?`,
       );
     }
   }

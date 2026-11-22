@@ -109,3 +109,15 @@ test('subnet drills: the checker accepts other ways to write the answer, and ref
   assert.ok(!checkSubnetAnswer(same, same.answer === 'yes' ? 'no' : 'yes'));
   assert.ok(!checkSubnetAnswer(same, 'maybe'));
 });
+
+test('subnet drills: a hint points to the method without giving the answer', () => {
+  for (let seed = 0; seed < 4000; seed++) {
+    const q = generateSubnetQuestion(seed * 7919 + 13);
+    assert.ok(q.hint.length > 20, q.prompt);
+    const nothingGiven = `${q.prompt} / ${q.hint}`;
+    // Addresses, masks and prefixes never appear in the hint; a host count's hint names only the method's 32 and 2
+    if (q.answer.includes('.') || q.answer.startsWith('/')) assert.ok(!q.hint.includes(q.answer), nothingGiven);
+    if (q.kind === 'host-count') assert.ok(!/\b(?!32\b|2\b)\d+\b/.test(q.hint), nothingGiven);
+    if (q.kind === 'same-subnet') assert.ok(!/\b(yes|no)\b/i.test(q.hint), nothingGiven);
+  }
+});

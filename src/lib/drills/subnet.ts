@@ -26,6 +26,8 @@ export interface SubnetQuestion {
   answer: string;
   /** How the answer is reached, shown after answering */
   explanation: string;
+  /** A nudge toward the method that does not give the answer away */
+  hint: string;
   /** Exam objective ids this practises (src/data/examObjectives.ts) */
   objectives: string[];
 }
@@ -82,7 +84,7 @@ export function generateSubnetQuestion(seed: number, kind?: SubnetQuestionKind):
   const size = 2 ** (32 - prefix);
   const range = `${toDotted(network)} to ${toDotted(broadcast)}`;
   const block = `A /${prefix} leaves ${32 - prefix} host bits, so each subnet holds ${size} addresses. ${toDotted(address)} falls in ${range}.`;
-  const make = (prompt: string, answer: string, explanation: string): SubnetQuestion => ({ seed, kind: k, prompt, answer, explanation, objectives: OBJECTIVES });
+  const make = (prompt: string, answer: string, explanation: string): SubnetQuestion => ({ seed, kind: k, prompt, answer, explanation, hint: subnetHint(k, prefix), objectives: OBJECTIVES });
 
   switch (k) {
     case 'network':
@@ -124,6 +126,21 @@ export function generateSubnetQuestion(seed: number, kind?: SubnetQuestionKind):
         `${block} ${toDotted(second)} is ${same ? 'inside' : 'outside'} that range${same ? '' : `: it is in ${toDotted(networkOf(second, prefix))}/${prefix}`}.`,
       );
     }
+  }
+}
+
+/** The method for each kind, with this question's prefix: enough to start, not the answer */
+function subnetHint(kind: SubnetQuestionKind, prefix: number): string {
+  const range = `A /${prefix} leaves ${32 - prefix} host bits, so each subnet holds 2 to the power ${32 - prefix} addresses. Find the multiple of that size at or below the address`;
+  switch (kind) {
+    case 'network': return `${range}: that is the network address.`;
+    case 'broadcast': return `${range}, then add the subnet size minus 1: that is the broadcast address.`;
+    case 'first-host': return `${range} (the network address), then add 1.`;
+    case 'last-host': return `${range}, add the subnet size to get the next network, then take away 2.`;
+    case 'host-count': return 'Host bits are 32 minus the prefix length. Usable hosts are 2 to the power of the host bits, minus 2 (the network and broadcast addresses).';
+    case 'mask': return `Write ${prefix} one bits, then zeros, 8 bits to an octet. A full octet is 255; a part-filled one is 256 minus 2 to the power of its zero bits.`;
+    case 'prefix': return 'Count the one bits in each octet: 255 is 8, 254 is 7, 252 is 6, 248 is 5, 240 is 4, 224 is 3, 192 is 2, 128 is 1 and 0 is 0.';
+    case 'same-subnet': return `Work out the network address of each address with the /${prefix} mask. The same network address means the same subnet.`;
   }
 }
 

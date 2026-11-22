@@ -120,9 +120,18 @@ test('the Drills tab: a generated subnetting question, checked, explained, then 
   await expect(page.getByText('Type an answer first.')).toBeVisible();
   await expect(page.getByText(/right this visit/)).toHaveCount(0);
 
-  // A wrong answer shows the right one and how it is worked out
+  // A first miss: a hint and one more try, with the answer still hidden and nothing counted yet
   await box.fill('not an answer');
   await box.press('Enter');
+  await expect(form.getByRole('status')).toHaveText('Not quite. Try once more.');
+  await expect(form.getByText(`Hint: ${first.hint}`)).toBeVisible();
+  await expect(form.getByText(`The answer is`)).toHaveCount(0);
+  await expect(box).toBeFocused();
+  await expect(page.getByText(/right this visit/)).toHaveCount(0);
+
+  // A second miss shows the right one and how it is worked out
+  await box.fill('still not an answer');
+  await page.getByRole('button', { name: 'Check again' }).click();
   const feedback = form.getByRole('status');
   await expect(feedback).toContainText('Not quite.');
   await expect(feedback).toContainText(`The answer is ${first.answer}.`);
@@ -143,6 +152,36 @@ test('the Drills tab: a generated subnetting question, checked, explained, then 
   await expect(page.getByText('1 of 2 right this visit')).toBeVisible();
   await expect(page.getByText(/streak|score|missed/i)).toHaveCount(0);
   await expectNoHorizontalOverflow(page);
+
+  // A hint on request, then a right answer on the second try counts as right
+  await page.getByRole('button', { name: 'Next question' }).click();
+  const third = await questionNow();
+  const box3 = page.getByRole('textbox', { name: third.prompt });
+  // Opened from the keyboard, the hint moves focus to the answer field, which it describes, and keeps what is
+  // typed (#88 review)
+  await box3.fill('wro');
+  await page.getByRole('button', { name: 'Show a hint' }).focus();
+  await page.keyboard.press('Enter');
+  await expect(form.getByText(`Hint: ${third.hint}`)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Show a hint' })).toHaveCount(0);
+  await expect(box3).toBeFocused();
+  await expect(box3).toHaveValue('wro');
+  await expect(box3).toHaveAccessibleDescription(`Hint: ${third.hint}`);
+  await box3.fill('wrong');
+  await box3.press('Enter');
+  await box3.fill(third.answer);
+  await box3.press('Enter');
+  await expect(feedback).toContainText('Correct, on the second try.');
+  await expect(page.getByText('2 of 3 right this visit')).toBeVisible();
+
+  // Skip: a new question, and the skipped one is not counted
+  await page.getByRole('button', { name: 'Next question' }).click();
+  const fourth = await questionNow();
+  await page.getByRole('button', { name: 'Skip this question' }).click();
+  const fifth = await questionNow();
+  expect(fifth.prompt).not.toBe(fourth.prompt);
+  await expect(page.getByRole('textbox', { name: fifth.prompt })).toBeFocused();
+  await expect(page.getByText('2 of 3 right this visit')).toBeVisible();
 
   // Back goes to the Challenges tab
   await page.goBack();
@@ -194,8 +233,12 @@ test('the ports and protocols drill: chosen on the Drills tab, checked against t
   await page.getByRole('button', { name: 'Next question' }).click();
   const second = await questionNow();
   expect(second.prompt).not.toBe(first.prompt);
-  await page.getByRole('textbox', { name: second.prompt }).fill('not a port');
+  const portBox = page.getByRole('textbox', { name: second.prompt });
+  await portBox.fill('not a port');
   await page.getByRole('button', { name: 'Check' }).click();
+  await expect(form.getByText(`Hint: ${second.hint}`)).toBeVisible();
+  await portBox.fill('still not a port');
+  await page.getByRole('button', { name: 'Check again' }).click();
   await expect(form.getByRole('status')).toContainText('Not quite.');
   await expect(form.getByRole('status')).toContainText(`The answer is ${second.answer}.`);
 

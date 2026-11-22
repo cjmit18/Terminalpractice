@@ -5,9 +5,12 @@ import { nextSeed } from '../../lib/drills/next';
 import { useGameLayer } from '../celebrate/GameLayer';
 import { primaryLinkClass, secondaryLinkClass } from '../journey/shared';
 
+const textButtonClass = 'min-h-11 sm:min-h-9 text-sm font-medium text-accent underline-offset-2 hover:underline rounded-sm';
+
 /**
  * The Drills tab (#/sandbox/drills): generated practice. Choose a drill, then one question at a time: type the
- * answer, check it, read how it is worked out, take the next one. Every question is new, so there is nothing
+ * answer and check it. A miss shows a hint and gives one more try; the answer and how it is worked out show
+ * after a right answer or a second miss. A hint is there on request, and a question can be skipped. Every question is new, so there is nothing
  * to finish and no score to keep; the count is for this visit only.
  */
 export const DrillsPage: React.FC = () => {
@@ -44,20 +47,29 @@ const DrillRunner: React.FC<{ drill: Drill }> = ({ drill }) => {
   const [seed, setSeed] = useState(() => nextSeed(drill.generate, null));
   const question = useMemo(() => drill.generate(seed), [drill, seed]);
   const [typed, setTyped] = useState('');
+  // Two tries a question: a first miss shows the hint and asks again; the answer only shows after the second
+  const [missed, setMissed] = useState(false);
   const [result, setResult] = useState<'right' | 'wrong' | null>(null);
+  const [hintShown, setHintShown] = useState(false);
   const [nudge, setNudge] = useState(false);
   const [tally, setTally] = useState({ right: 0, answered: 0 });
 
   const inputRef = useRef<HTMLInputElement>(null);
   const feedbackRef = useRef<HTMLDivElement>(null);
   // Focus moves only after the learner acts, never when the page first opens
-  const focusTarget = useRef<'feedback' | 'input' | null>(null);
+  // 'hint' focuses the answer field without selecting what is typed: the hint button goes away, and the field
+  // is where the learner goes next, with the hint as its description (#88 review)
+  const focusTarget = useRef<'feedback' | 'input' | 'hint' | null>(null);
   useEffect(() => {
     const target = focusTarget.current;
     focusTarget.current = null;
     if (target === 'feedback') feedbackRef.current?.focus();
-    else if (target === 'input') inputRef.current?.focus();
-  }, [result, seed]);
+    else if (target === 'hint') inputRef.current?.focus();
+    else if (target === 'input') {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }
+  }, [result, seed, missed, hintShown]);
 
   const check = (e: React.FormEvent) => {
     e.preventDefault();
@@ -68,6 +80,13 @@ const DrillRunner: React.FC<{ drill: Drill }> = ({ drill }) => {
       return;
     }
     const right = drill.check(question, typed);
+    if (!right && !missed) {
+      // First miss: the hint, and one more try with the answer still in the box to correct
+      setMissed(true);
+      setHintShown(true);
+      focusTarget.current = 'input';
+      return;
+    }
     setResult(right ? 'right' : 'wrong');
     setTally(t => ({ right: t.right + (right ? 1 : 0), answered: t.answered + 1 }));
     if (right) record([drill.fact]);
@@ -78,10 +97,14 @@ const DrillRunner: React.FC<{ drill: Drill }> = ({ drill }) => {
     // Never the same question twice in a row (#84 review)
     setSeed(nextSeed(drill.generate, question.prompt));
     setTyped('');
+    setMissed(false);
     setResult(null);
+    setHintShown(false);
     setNudge(false);
     focusTarget.current = 'input';
   };
+
+  const describedBy = [hintShown && result === null ? 'drill-hint' : '', nudge ? 'drill-nudge' : ''].filter(Boolean).join(' ') || undefined;
 
   return (
     <>
@@ -110,13 +133,13 @@ const DrillRunner: React.FC<{ drill: Drill }> = ({ drill }) => {
               autoCapitalize="none"
               autoCorrect="off"
               spellCheck={false}
-              aria-invalid={nudge || undefined}
-              aria-describedby={nudge ? 'drill-nudge' : undefined}
+              aria-invalid={nudge || (missed && result === null) || undefined}
+              aria-describedby={describedBy}
               className={`block w-full sm:w-64 min-h-11 sm:min-h-10 rounded-md border border-line-strong bg-bg px-3 text-[15px] text-text aria-[invalid=true]:border-danger ${drill.mono ? 'font-mono' : ''}`}
             />
             {result === null && (
               <button type="submit" className={primaryLinkClass}>
-                Check
+                {missed ? 'Check again' : 'Check'}
               </button>
             )}
           </div>
@@ -126,11 +149,43 @@ const DrillRunner: React.FC<{ drill: Drill }> = ({ drill }) => {
             </p>
           )}
 
+          {result === null && missed && (
+            <p role="status" className="inline-flex items-center gap-1.5 text-[15px] font-medium text-danger">
+              <X className="size-4" aria-hidden="true" />
+              Not quite. Try once more.
+            </p>
+          )}
+          {result === null && hintShown && (
+            <p id="drill-hint" className="text-[15px] text-muted max-w-prose">
+              <span className="font-medium text-text">Hint: </span>
+              {question.hint}
+            </p>
+          )}
+          {result === null && (
+            <p className="flex flex-wrap gap-x-4 gap-y-2">
+              {!hintShown && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setHintShown(true);
+                    focusTarget.current = 'hint';
+                  }}
+                  className={textButtonClass}
+                >
+                  Show a hint
+                </button>
+              )}
+              <button type="button" onClick={next} className={textButtonClass}>
+                Skip this question
+              </button>
+            </p>
+          )}
+
           {result && (
             <div ref={feedbackRef} tabIndex={-1} role="status" className="space-y-2 rounded-sm">
               <p className={`inline-flex items-center gap-1.5 text-[15px] font-medium ${result === 'right' ? 'text-ok' : 'text-danger'}`}>
                 {result === 'right' ? <Check className="size-4" aria-hidden="true" /> : <X className="size-4" aria-hidden="true" />}
-                {result === 'right' ? 'Correct.' : 'Not quite.'}
+                {result === 'right' ? (missed ? 'Correct, on the second try.' : 'Correct.') : 'Not quite.'}
               </p>
               <p className="text-[15px]">
                 The answer is <span className={`font-medium ${drill.mono ? 'font-mono' : ''}`}>{question.answer}</span>.
