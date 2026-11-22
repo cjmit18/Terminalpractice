@@ -1,22 +1,21 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRight, Check, X } from 'lucide-react';
 import { checkSubnetAnswer, generateSubnetQuestion } from '../../lib/drills/subnet';
-import { randomSeed } from '../../lib/rotation';
+import { nextSubnetSeed } from '../../lib/drills/next';
 import { useGameLayer } from '../celebrate/GameLayer';
 import { primaryLinkClass, secondaryLinkClass } from '../journey/shared';
-import { ChallengeTabs } from './ChallengeTabs';
 
 /** The fact kept once a subnetting drill has been answered right (for the activity record) */
 export const SUBNET_DRILL_FACT = 'drill:subnet';
 
 /**
- * #/sandbox/drills: generated practice. One subnetting question at a time: type the answer, check it,
+ * The Drills tab (#/sandbox/drills): generated practice. One subnetting question at a time: type the answer, check it,
  * read how it is worked out, take the next one. Every question is new, so there is nothing to finish
  * and no score to keep; the count is for this visit only.
  */
 export const DrillsPage: React.FC = () => {
   const { record } = useGameLayer();
-  const [seed, setSeed] = useState(randomSeed);
+  const [seed, setSeed] = useState(() => nextSubnetSeed(null));
   const question = useMemo(() => generateSubnetQuestion(seed), [seed]);
   const [typed, setTyped] = useState('');
   const [result, setResult] = useState<'right' | 'wrong' | null>(null);
@@ -50,7 +49,8 @@ export const DrillsPage: React.FC = () => {
   };
 
   const next = () => {
-    setSeed(randomSeed());
+    // Never the same question twice in a row (#84 review)
+    setSeed(nextSubnetSeed(question.prompt));
     setTyped('');
     setResult(null);
     setNudge(false);
@@ -58,15 +58,7 @@ export const DrillsPage: React.FC = () => {
   };
 
   return (
-    <div className="max-w-3xl mx-auto w-full px-4 sm:px-6 py-8 sm:py-12">
-      <header className="space-y-3">
-        <h1 className="text-2xl font-semibold text-text">Challenges</h1>
-        <p className="text-[15px] text-muted max-w-prose">
-          Drills make a new question every time, so there is no answer to memorise, only the method.
-        </p>
-      </header>
-      <ChallengeTabs current="drills" />
-
+    <>
       <section aria-labelledby="drill-heading" className="mt-8">
         <h2 id="drill-heading" className="text-base font-semibold">
           Subnetting
@@ -136,6 +128,6 @@ export const DrillsPage: React.FC = () => {
           </p>
         )}
       </section>
-    </div>
+    </>
   );
 };

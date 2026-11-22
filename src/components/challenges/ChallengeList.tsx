@@ -6,7 +6,6 @@ import { ALL_MODULES } from '../../lib/modules';
 import { SHELL_LABELS } from '../lab/PageHeader';
 import { useGameLayer } from '../celebrate/GameLayer';
 import { primaryLinkClass } from '../journey/shared';
-import { ChallengeTabs } from './ChallengeTabs';
 
 const MODULE_TITLES = new Map(ALL_MODULES.map(m => [m.id, m.title]));
 
@@ -18,7 +17,7 @@ export const challengeMeta = (c: Challenge) => {
   return lab ? `${SHELL_LABELS[c.shell]} · the machine from ${lab}` : SHELL_LABELS[c.shell];
 };
 
-/** #/sandbox/challenge: every challenge in today's rotated order, with the first highlighted as today's pick. */
+/** The Challenges tab (#/sandbox/challenge): every challenge in today's rotated order, with the first highlighted as today's pick. */
 export const ChallengeList: React.FC = () => {
   const { activity } = useGameLayer();
   const solved = (id: string) => activity.facts.includes(challengeFact(id));
@@ -28,20 +27,12 @@ export const ChallengeList: React.FC = () => {
   const count = CHALLENGES.filter(c => solved(c.id)).length;
 
   return (
-    <div className="max-w-3xl mx-auto w-full px-4 sm:px-6 py-8 sm:py-12">
-      <header className="space-y-3">
-        <h1 className="text-2xl font-semibold text-text">Challenges</h1>
-        <p className="text-[15px] text-muted max-w-prose">
-          Short puzzles you answer with a command or two, on the machines from the labs. Take them in any order and
-          come back to them whenever you like; they all stay here.
+    <>
+      {count > 0 && (
+        <p className="mt-6 text-sm text-muted">
+          {count} of {CHALLENGES.length} solved
         </p>
-        {count > 0 && (
-          <p className="text-sm text-muted">
-            {count} of {CHALLENGES.length} solved
-          </p>
-        )}
-      </header>
-      <ChallengeTabs current="challenges" />
+      )}
 
       <section aria-labelledby="pick-heading" className="mt-8 rounded-md border border-line bg-surface px-4 py-4 space-y-2">
         <h2 id="pick-heading" className="text-sm text-muted font-medium">
@@ -83,6 +74,6 @@ export const ChallengeList: React.FC = () => {
           ))}
         </ul>
       </section>
-    </div>
+    </>
   );
 };

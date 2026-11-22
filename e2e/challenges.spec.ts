@@ -133,7 +133,7 @@ test('the Drills tab: a generated subnetting question, checked, explained, then 
   // Next question: new numbers, the box is empty and focused; the right answer counts
   await page.getByRole('button', { name: 'Next question' }).click();
   const second = await questionNow();
-  expect(second.seed).not.toBe(first.seed);
+  expect(second.prompt, 'never the same question twice in a row').not.toBe(first.prompt);
   const box2 = page.getByRole('textbox', { name: second.prompt });
   await expect(box2).toBeFocused();
   await expect(box2).toHaveValue('');
@@ -147,4 +147,26 @@ test('the Drills tab: a generated subnetting question, checked, explained, then 
   // Back goes to the Challenges tab
   await page.goBack();
   await expect(page.getByRole('region', { name: 'Today’s pick' })).toBeVisible();
+});
+
+test('switching tabs by keyboard keeps focus on the tab just chosen', async ({ page, isMobile }) => {
+  test.skip(isMobile, 'keyboard');
+  await page.goto('#/sandbox/challenge');
+  const tabs = page.getByRole('navigation', { name: 'Quick practice' });
+  const drills = tabs.getByRole('link', { name: 'Drills' });
+  await drills.focus();
+  await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(/#\/sandbox\/drills$/);
+  await expect(drills).toHaveAttribute('aria-current', 'page');
+  await expect(drills).toBeFocused();
+  // The next Tab goes on into the drill, not back to the top of the page
+  await page.keyboard.press('Tab');
+  await expect(page.locator('#drill-answer')).toBeFocused();
+
+  // And back again
+  const challenges = tabs.getByRole('link', { name: 'Challenges' });
+  await challenges.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('region', { name: 'Today’s pick' })).toBeVisible();
+  await expect(challenges).toBeFocused();
 });
