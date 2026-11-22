@@ -98,4 +98,4 @@ on other devices) became true when sync shipped in part 8.
 **Decisions needed (held back in #28)**
 - A GitHub sign-in keeps an email session already in the browser, while an email sign-in replaces it. Proposal: GitHub
   sign-in ends the incoming session too, the same rule for every method.
-- `New-Item -Force` on an existing file: needs a check against real PowerShell before changing.
+- `New-Item -Force` on an existing file: checked on Windows PowerShell 5.1 by CJ; it empties the file (or sets it to `-Value`). The simulator now does the same.
