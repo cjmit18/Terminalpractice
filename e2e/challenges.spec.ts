@@ -159,7 +159,9 @@ test('switching tabs by keyboard keeps focus on the tab just chosen', async ({ p
   await expect(page).toHaveURL(/#\/sandbox\/drills$/);
   await expect(drills).toHaveAttribute('aria-current', 'page');
   await expect(drills).toBeFocused();
-  // The next Tab goes on into the drill, not back to the top of the page
+  // The next Tab goes on into the drills (the choice of drill comes first), not back to the top of the page
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('radio', { name: 'Subnetting' })).toBeFocused();
   await page.keyboard.press('Tab');
   await expect(page.locator('#drill-answer')).toBeFocused();
 
@@ -169,4 +171,37 @@ test('switching tabs by keyboard keeps focus on the tab just chosen', async ({ p
   await page.keyboard.press('Enter');
   await expect(page.getByRole('region', { name: 'Today’s pick' })).toBeVisible();
   await expect(challenges).toBeFocused();
+});
+
+test('the ports and protocols drill: chosen on the Drills tab, checked against the Network+ list', async ({ page }) => {
+  const { generatePortQuestion } = await import('../src/lib/drills/ports');
+  await page.goto('#/sandbox/drills');
+  await expect(page.getByRole('radio', { name: 'Subnetting' })).toBeChecked();
+  await page.getByRole('radio', { name: 'Ports and protocols' }).check();
+  await expect(page.getByRole('heading', { level: 2, name: 'Ports and protocols' })).toBeVisible();
+  await expect(page.getByText(/20 ports and protocols on the Network\+ \(N10-009\) objectives/)).toBeVisible();
+
+  const form = page.locator('form[data-seed]');
+  const questionNow = async () => generatePortQuestion(Number(await form.getAttribute('data-seed')));
+  const first = await questionNow();
+  const box = page.getByRole('textbox', { name: first.prompt });
+  await box.fill(first.answer);
+  await box.press('Enter');
+  await expect(form.getByRole('status')).toContainText('Correct.');
+  await expect(form.getByRole('status')).toContainText(first.explanation);
+  await expect(page.getByText('1 of 1 right this visit')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Next question' }).click();
+  const second = await questionNow();
+  expect(second.prompt).not.toBe(first.prompt);
+  await page.getByRole('textbox', { name: second.prompt }).fill('not a port');
+  await page.getByRole('button', { name: 'Check' }).click();
+  await expect(form.getByRole('status')).toContainText('Not quite.');
+  await expect(form.getByRole('status')).toContainText(`The answer is ${second.answer}.`);
+
+  // Switching back starts subnetting afresh, with its own count
+  await page.getByRole('radio', { name: 'Subnetting' }).check();
+  await expect(page.getByRole('heading', { level: 2, name: 'Subnetting' })).toBeVisible();
+  await expect(page.getByText(/right this visit/)).toHaveCount(0);
+  await expectNoHorizontalOverflow(page);
 });
