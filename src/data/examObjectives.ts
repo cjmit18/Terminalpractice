@@ -154,6 +154,7 @@ export const PATH_EXAMS: Record<string, ExamId[]> = {
   'lpic1-102': ['lpic1-102'],
   'aplus-core2': ['aplus-220-1202'],
   'netsec-windows': ['netplus-n10-009', 'secplus-sy0-701'],
+  netplus: ['netplus-n10-009'],
 };
 
 // ---------- Where each objective is practised ----------

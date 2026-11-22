@@ -291,6 +291,7 @@ const PATH_ABILITIES: Record<string, string> = {
   'lpic1-102': 'You can manage accounts, schedule jobs, read the network setup and secure a host.',
   'aplus-core2': 'You can work a Windows PC from the command prompt, prepare disks, repair system files and check services.',
   'netsec-windows': 'You can trace a network fault, manage Active Directory accounts, apply Group Policy and follow an incident to its process.',
+  netplus: 'You can place a problem on the OSI model, read an IPv4 address and name the ports and protocols Network+ asks about.',
 };
 
 export const pathBadgeId = (pathId: string) => `path:${pathId}`;
