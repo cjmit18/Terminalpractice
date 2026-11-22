@@ -22,8 +22,9 @@ export interface PortProtocol {
 /**
  * The ports in N10-009 objective 1.4, exactly as CompTIA lists them (Exam Objectives version 4.0, checked
  * 2026-11-22 against the PDF linked in src/data/examObjectives.ts). CompTIA does not print TCP or UDP; the
- * transport here is the protocol's usual one, and is left out for HTTPS, LDAP, RDP and SIP, which also run
- * over the other (HTTP/3 over QUIC, CLDAP, RDP's UDP transport, SIP over both).
+ * transport here is the protocol's usual one, and is left out where the protocol also runs over the other, so
+ * "TCP, UDP or both?" would have no single right answer: HTTPS (HTTP/3 over QUIC), LDAP (CLDAP), RDP (its
+ * UDP transport), SIP (both), SNMP (TCP, RFC 3430) and Syslog (TLS over TCP, RFC 5425) (#87 review).
  */
 export const NETPLUS_PORTS: readonly PortProtocol[] = [
   { name: 'FTP', full: 'File Transfer Protocol', ports: [20, 21], transport: 'TCP', clue: 'moving files, with one connection for commands and another for data', use: 'file transfer; 21 carries commands, 20 carries data in active mode' },
@@ -36,12 +37,12 @@ export const NETPLUS_PORTS: readonly PortProtocol[] = [
   { name: 'TFTP', full: 'Trivial File Transfer Protocol', ports: [69], transport: 'UDP', clue: 'simple file transfer with no login, as used for network boot', use: 'simple file transfer with no login, used for network boot and device configs' },
   { name: 'HTTP', full: 'Hypertext Transfer Protocol', ports: [80], transport: 'TCP', clue: 'web pages without encryption', use: 'web pages without encryption' },
   { name: 'NTP', full: 'Network Time Protocol', ports: [123], transport: 'UDP', clue: 'keeping clocks in step', use: 'keeping clocks in step' },
-  { name: 'SNMP', full: 'Simple Network Management Protocol', ports: [161, 162], transport: 'UDP', clue: 'monitoring network devices and receiving their alerts', use: 'monitoring devices; queries go to 161, traps arrive on 162' },
+  { name: 'SNMP', full: 'Simple Network Management Protocol', ports: [161, 162], clue: 'monitoring network devices and receiving their alerts', use: 'monitoring devices; queries go to 161, traps arrive on 162' },
   { name: 'LDAP', full: 'Lightweight Directory Access Protocol', ports: [389], clue: 'looking up users and groups in a directory, in plain text', use: 'directory lookups, such as Active Directory' },
   { name: 'HTTPS', full: 'Hypertext Transfer Protocol Secure', ports: [443], clue: 'web pages with encryption', use: 'web pages over TLS' },
   { name: 'SMB', full: 'Server Message Block', ports: [445], transport: 'TCP', aliases: ['cifs'], clue: 'Windows file and printer sharing', use: 'Windows file and printer sharing' },
-  { name: 'Syslog', full: 'Syslog', ports: [514], transport: 'UDP', clue: 'sending log messages to a central server', use: 'sending log messages to a central server' },
-  { name: 'SMTPS', full: 'Simple Mail Transfer Protocol Secure', ports: [587], transport: 'TCP', aliases: ['smtp secure', 'smtp over tls'], clue: 'sending mail with encryption', use: 'sending mail with encryption; CompTIA lists 587 for it' },
+  { name: 'Syslog', full: 'Syslog', ports: [514], clue: 'sending log messages to a central server', use: 'sending log messages to a central server' },
+  { name: 'SMTPS', full: 'Simple Mail Transfer Protocol Secure', ports: [587], transport: 'TCP', aliases: ['smtp secure', 'smtp over tls'], clue: 'sending mail with encryption', use: 'sending mail with encryption. CompTIA lists 587, the submission port that upgrades to TLS with STARTTLS; 465 is the registered port for submission over TLS from the start' },
   { name: 'LDAPS', full: 'Lightweight Directory Access Protocol over SSL', ports: [636], transport: 'TCP', aliases: ['ldap over ssl', 'ldap over tls'], clue: 'looking up users and groups in a directory, with encryption', use: 'directory lookups over TLS' },
   { name: 'SQL Server', full: 'Structured Query Language (SQL) Server', ports: [1433], transport: 'TCP', aliases: ['sql', 'mssql', 'microsoft sql server', 'ms sql'], clue: "Microsoft's database server", use: "Microsoft's database server" },
   { name: 'RDP', full: 'Remote Desktop Protocol', ports: [3389], clue: 'remote control of a Windows desktop', use: 'Windows remote desktop' },
@@ -92,7 +93,10 @@ export function generatePortQuestion(seed: number, kind?: PortQuestionKind): Por
     case 'port': {
       const two = protocol.ports.length > 1;
       return make(
-        two ? `Which two ports does ${protocol.name} use?` : `Which port does ${protocol.name} use?`,
+        // SMTPS has two conventions (587 and 465); the drill teaches the one CompTIA lists, and says so
+        protocol.name === 'SMTPS'
+          ? 'Which port does the CompTIA Network+ list give for SMTPS?'
+          : two ? `Which two ports does ${protocol.name} use?` : `Which port does ${protocol.name} use?`,
         listPorts(protocol.ports),
         describe(protocol),
         [protocol.ports.map(String)],
@@ -128,15 +132,19 @@ export function checkPortAnswer(q: PortQuestion, input: string): boolean {
   if (typed === '') return false;
   switch (q.kind) {
     case 'port': {
-      // Every port, each once, in any order and with any separator: "20/21", "21, 20", "20 and 21"
-      const numbers = typed.split(/\s*(?:,|\/|&|\band\b|\s)\s*/i).filter(Boolean);
-      if (!numbers.every(n => /^\d{1,5}$/.test(n))) return false;
+      // Every port, each once, in any order, with one separator between each: "20/21", "21, 20", "20 and 21".
+      // Not "20,,21" or "20/" (#87 review)
+      if (!/^\d{1,5}(\s*(,|\/|&|\band\b)\s*\d{1,5}|\s+\d{1,5})*$/i.test(typed)) return false;
+      const numbers = typed.split(/\s*(?:,|\/|&|\band\b)\s*|\s+/i);
       const want = q.accept[0];
       return numbers.length === want.length && want.every(p => numbers.includes(p));
     }
     case 'protocol': {
-      // One name is enough where two protocols share the port; "SSH or SFTP" names both and is right too
-      const parts = typed.split(/\s+or\s+|\s*\/\s*/i).map(norm).filter(Boolean);
+      // One name is enough where two protocols share the port; "SSH or SFTP", "SSH and SFTP" or "SSH, SFTP"
+      // name both and are right too. Each separator must have a name on both sides (#87 review)
+      const raw = typed.split(/\s+(?:or|and)\s+|\s*[/,&]\s*/i);
+      if (raw.some(r => r.trim() === '')) return false;
+      const parts = raw.map(norm);
       return parts.length > 0 && parts.length <= q.accept.length && parts.every(t => q.accept.some(names => names.includes(t)))
         && new Set(parts.map(t => q.accept.findIndex(names => names.includes(t)))).size === parts.length;
     }

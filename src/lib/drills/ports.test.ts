@@ -16,7 +16,7 @@ test('ports table: exactly the 20 entries of N10-009 objective 1.4, with their p
   ];
   assert.deepEqual(NETPLUS_PORTS.map(p => [p.full, p.ports.join('/')]), official);
   // Transport is given only where it is clear-cut
-  for (const name of ['HTTPS', 'LDAP', 'RDP', 'SIP']) assert.equal(NETPLUS_PORTS.find(p => p.name === name)?.transport, undefined, name);
+  for (const name of ['HTTPS', 'LDAP', 'RDP', 'SIP', 'SNMP', 'Syslog']) assert.equal(NETPLUS_PORTS.find(p => p.name === name)?.transport, undefined, name);
   assert.equal(NETPLUS_PORTS.find(p => p.name === 'DNS')?.transport, 'both');
 });
 
@@ -32,7 +32,7 @@ test('ports drills: 3,000 seeds give right, answerable questions of every kind',
     prompts.add(q.prompt);
     // The answer agrees with the table, worked out here the plain way
     if (q.kind === 'port') {
-      const p = NETPLUS_PORTS.find(x => q.prompt.includes(` ${x.name} use?`))!;
+      const p = NETPLUS_PORTS.find(x => q.prompt.includes(` ${x.name} use?`) || q.prompt.endsWith(` for ${x.name}?`))!;
       assert.equal(q.answer.replace(' and ', ',').split(',').map(Number).join('/'), p.ports.join('/'), q.prompt);
     } else if (q.kind === 'protocol') {
       const port = Number(/port (\d+)\?/.exec(q.prompt)![1]);
@@ -44,8 +44,8 @@ test('ports drills: 3,000 seeds give right, answerable questions of every kind',
     }
   }
   for (const kind of PORT_KINDS) assert.ok((kinds.get(kind) ?? 0) > 700, `${kind}: ${kinds.get(kind)}`);
-  // 20 protocols, 24 port numbers and 16 clear-cut transports: 60 questions in all
-  assert.ok(prompts.size >= 55, `nearly all 60 questions turn up: ${prompts.size}`);
+  // 20 protocols, 24 port numbers and 14 clear-cut transports: 58 questions in all
+  assert.ok(prompts.size >= 53, `nearly all 58 questions turn up: ${prompts.size}`);
   assert.deepEqual(generatePortQuestion(42), generatePortQuestion(42), 'a seed always gives the same question');
 });
 
@@ -53,12 +53,12 @@ test('ports drills: the checker takes the usual ways to answer and refuses near 
   const portOf = (name: string) => {
     for (let s = 0; ; s++) {
       const q = generatePortQuestion(s, 'port');
-      if (q.prompt.includes(` ${name} use?`)) return q;
+      if (q.prompt.includes(` ${name} use?`) || q.prompt.endsWith(` for ${name}?`)) return q;
     }
   };
   const ftp = portOf('FTP');
   for (const ok of ['20/21', '21/20', '20, 21', '20 and 21', '20 21', ' 21 & 20 ']) assert.ok(checkPortAnswer(ftp, ok), ok);
-  for (const bad of ['21', '20', '20/21/22', '20/20', 'twenty', '20-21', '']) assert.ok(!checkPortAnswer(ftp, bad), JSON.stringify(bad));
+  for (const bad of ['21', '20', '20/21/22', '20/20', 'twenty', '20-21', '', '20,,21', '20/', ',20,21', '20 and and 21', '20 or 21']) assert.ok(!checkPortAnswer(ftp, bad), JSON.stringify(bad));
   const ssh = portOf('SSH');
   assert.ok(checkPortAnswer(ssh, '22') && !checkPortAnswer(ssh, '23') && !checkPortAnswer(ssh, '022/22'));
 
@@ -70,10 +70,16 @@ test('ports drills: the checker takes the usual ways to answer and refuses near 
   };
   const p22 = protocolAt(22);
   assert.equal(p22.answer, 'SFTP or SSH');
-  for (const ok of ['ssh', 'SSH', 'Secure Shell', 'sftp', 'Secure File Transfer Protocol', 'SFTP or SSH', 'ssh/sftp']) assert.ok(checkPortAnswer(p22, ok), ok);
-  for (const bad of ['telnet', 'ftp', 'ss', 'ssh 22', 'ssh or telnet', 'ssh or ssh']) assert.ok(!checkPortAnswer(p22, bad), bad);
+  for (const ok of ['ssh', 'SSH', 'Secure Shell', 'sftp', 'Secure File Transfer Protocol', 'SFTP or SSH', 'ssh/sftp', 'SSH and SFTP', 'ssh, sftp', 'ssh & sftp']) assert.ok(checkPortAnswer(p22, ok), ok);
+  for (const bad of ['telnet', 'ftp', 'ss', 'ssh 22', 'ssh or telnet', 'ssh or ssh', 'ssh,,sftp', 'ssh or', ', ssh']) assert.ok(!checkPortAnswer(p22, bad), bad);
   const p1433 = protocolAt(1433);
   for (const ok of ['SQL Server', 'sqlserver', 'MSSQL', 'Microsoft SQL Server']) assert.ok(checkPortAnswer(p1433, ok), ok);
+  // SMTPS: the question asks for CompTIA's port, and the explanation names both conventions
+  const smtps = portOf('SMTPS');
+  assert.equal(smtps.prompt, 'Which port does the CompTIA Network+ list give for SMTPS?');
+  assert.ok(checkPortAnswer(smtps, '587') && !checkPortAnswer(smtps, '465'));
+  assert.match(smtps.explanation, /587/);
+  assert.match(smtps.explanation, /465/);
   const p587 = protocolAt(587);
   assert.ok(checkPortAnswer(p587, 'SMTPS') && checkPortAnswer(p587, 'smtp secure') && !checkPortAnswer(p587, 'smtp'), 'plain SMTP is port 25');
   const p636 = protocolAt(636);
