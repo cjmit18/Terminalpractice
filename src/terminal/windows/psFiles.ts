@@ -181,7 +181,11 @@ function newItem(ctx: WindowsContext): WindowsResult {
       createNode(ctx.fs, dir, 'directory', '', true, ctx.state.currentUser, 'Users', 755);
     }
   }
-  if (!ctx.node(abs) && !createNode(ctx.fs, abs, type as 'file' | 'directory', String(p.named.get('Value') ?? ''), true,
+  // -Force on a file that is already there replaces it: real PowerShell leaves it empty, or holding -Value
+  // (checked on Windows PowerShell 5.1). An existing folder is kept as it is, with everything in it.
+  const existing = ctx.node(abs);
+  if (existing?.type === 'file' && type === 'file') writeFileContent(existing, String(p.named.get('Value') ?? ''));
+  if (!existing && !createNode(ctx.fs, abs, type as 'file' | 'directory', String(p.named.get('Value') ?? ''), true,
     ctx.state.currentUser, 'Users', type === 'directory' ? 755 : 644)) {
     return ctx.fail(psError(ctx.raw, name, `Could not find a part of the path '${abs}'.`, 'WriteError', abs,
       'DirectoryNotFoundException', 'NewItemIOError'));

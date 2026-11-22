@@ -295,6 +295,29 @@ test('PowerShell: New-Item, Copy-Item, Remove-Item, Write-Output', () => {
   assert.ok(denied.explanation);
 });
 
+test('PowerShell: New-Item -Force empties a file that is already there, and keeps a folder as it is', () => {
+  // Checked on Windows PowerShell 5.1: after "hello" | Set-Content test.txt, New-Item test.txt -ItemType File
+  // -Force leaves test.txt empty (Get-Content prints nothing, Length is 0)
+  const run = windowsSession('powershell');
+  run('New-Item test.txt -Value hello');
+  assert.match(run('New-Item test.txt').stderr, /already exists/, 'without -Force it is refused');
+  assert.equal(node(run, 'C:\\Users\\Student\\test.txt')?.content, 'hello');
+  const forced = run('New-Item test.txt -ItemType File -Force');
+  assert.equal(forced.exitCode, 0);
+  assert.match(forced.stdout, /^-a---- .* 0 test\.txt$/m, 'the new, empty file is listed');
+  assert.equal(node(run, 'C:\\Users\\Student\\test.txt')?.content, '');
+  assert.equal(run('Get-Content test.txt').stdout, '');
+  // With -Value the file holds the new value instead
+  run('New-Item test.txt -Value "second" -Force');
+  assert.equal(node(run, 'C:\\Users\\Student\\test.txt')?.content, 'second');
+
+  // A folder that is already there keeps everything in it
+  run('mkdir Reports');
+  run('New-Item Reports\\keep.txt -Value data');
+  assert.equal(run('New-Item Reports -ItemType Directory -Force').exitCode, 0);
+  assert.equal(node(run, 'C:\\Users\\Student\\Reports\\keep.txt')?.content, 'data');
+});
+
 test('PowerShell recursive file operations honor protected profile boundaries', () => {
   const listing = windowsSession('powershell', STUDENT);
   createNode(listing.fs(), 'C:\\Users\\Administrator\\secret.txt', 'file', 'private', true, 'Administrator', 'Administrators', 600);
