@@ -1,22 +1,48 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRight, Check, X } from 'lucide-react';
-import { checkSubnetAnswer, generateSubnetQuestion } from '../../lib/drills/subnet';
-import { nextSubnetSeed } from '../../lib/drills/next';
+import { DRILLS, type Drill } from '../../lib/drills/catalog';
+import { nextSeed } from '../../lib/drills/next';
 import { useGameLayer } from '../celebrate/GameLayer';
 import { primaryLinkClass, secondaryLinkClass } from '../journey/shared';
 
-/** The fact kept once a subnetting drill has been answered right (for the activity record) */
-export const SUBNET_DRILL_FACT = 'drill:subnet';
-
 /**
- * The Drills tab (#/sandbox/drills): generated practice. One subnetting question at a time: type the answer, check it,
- * read how it is worked out, take the next one. Every question is new, so there is nothing to finish
- * and no score to keep; the count is for this visit only.
+ * The Drills tab (#/sandbox/drills): generated practice. Choose a drill, then one question at a time: type the
+ * answer, check it, read how it is worked out, take the next one. Every question is new, so there is nothing
+ * to finish and no score to keep; the count is for this visit only.
  */
 export const DrillsPage: React.FC = () => {
+  const [drillId, setDrillId] = useState<Drill['id']>('subnet');
+  const drill = DRILLS.find(d => d.id === drillId)!;
+  return (
+    <>
+      <fieldset className="mt-8">
+        <legend className="text-sm font-medium text-muted">Drill</legend>
+        <div className="mt-2 flex flex-wrap gap-x-5 gap-y-2">
+          {DRILLS.map(d => (
+            <label key={d.id} className="inline-flex min-h-11 sm:min-h-9 items-center gap-2 text-[15px] text-text cursor-pointer">
+              <input
+                type="radio"
+                name="drill"
+                value={d.id}
+                checked={d.id === drillId}
+                onChange={() => setDrillId(d.id)}
+                className="size-4 accent-accent"
+              />
+              {d.title}
+            </label>
+          ))}
+        </div>
+      </fieldset>
+      {/* A new drill starts fresh: its own question, answer box and count */}
+      <DrillRunner key={drill.id} drill={drill} />
+    </>
+  );
+};
+
+const DrillRunner: React.FC<{ drill: Drill }> = ({ drill }) => {
   const { record } = useGameLayer();
-  const [seed, setSeed] = useState(() => nextSubnetSeed(null));
-  const question = useMemo(() => generateSubnetQuestion(seed), [seed]);
+  const [seed, setSeed] = useState(() => nextSeed(drill.generate, null));
+  const question = useMemo(() => drill.generate(seed), [drill, seed]);
   const [typed, setTyped] = useState('');
   const [result, setResult] = useState<'right' | 'wrong' | null>(null);
   const [nudge, setNudge] = useState(false);
@@ -41,16 +67,16 @@ export const DrillsPage: React.FC = () => {
       inputRef.current?.focus();
       return;
     }
-    const right = checkSubnetAnswer(question, typed);
+    const right = drill.check(question, typed);
     setResult(right ? 'right' : 'wrong');
     setTally(t => ({ right: t.right + (right ? 1 : 0), answered: t.answered + 1 }));
-    if (right) record([SUBNET_DRILL_FACT]);
+    if (right) record([drill.fact]);
     focusTarget.current = 'feedback';
   };
 
   const next = () => {
     // Never the same question twice in a row (#84 review)
-    setSeed(nextSubnetSeed(question.prompt));
+    setSeed(nextSeed(drill.generate, question.prompt));
     setTyped('');
     setResult(null);
     setNudge(false);
@@ -59,13 +85,11 @@ export const DrillsPage: React.FC = () => {
 
   return (
     <>
-      <section aria-labelledby="drill-heading" className="mt-8">
+      <section aria-labelledby="drill-heading" className="mt-6">
         <h2 id="drill-heading" className="text-base font-semibold">
-          Subnetting
+          {drill.title}
         </h2>
-        <p className="mt-1 text-sm text-muted max-w-prose">
-          Network and broadcast addresses, host ranges, masks and prefix lengths, on private addresses from /16 to /30.
-        </p>
+        <p className="mt-1 text-sm text-muted max-w-prose">{drill.blurb}</p>
 
         <form onSubmit={check} noValidate data-seed={seed} className="mt-5 rounded-md border border-line bg-surface px-4 py-4 space-y-4">
           <label htmlFor="drill-answer" className="block text-[15px] font-medium text-text max-w-prose">
@@ -88,7 +112,7 @@ export const DrillsPage: React.FC = () => {
               spellCheck={false}
               aria-invalid={nudge || undefined}
               aria-describedby={nudge ? 'drill-nudge' : undefined}
-              className="block w-full sm:w-64 min-h-11 sm:min-h-10 rounded-md border border-line-strong bg-bg px-3 font-mono text-[15px] text-text aria-[invalid=true]:border-danger"
+              className={`block w-full sm:w-64 min-h-11 sm:min-h-10 rounded-md border border-line-strong bg-bg px-3 text-[15px] text-text aria-[invalid=true]:border-danger ${drill.mono ? 'font-mono' : ''}`}
             />
             {result === null && (
               <button type="submit" className={primaryLinkClass}>
@@ -109,7 +133,7 @@ export const DrillsPage: React.FC = () => {
                 {result === 'right' ? 'Correct.' : 'Not quite.'}
               </p>
               <p className="text-[15px]">
-                The answer is <span className="font-mono font-medium">{question.answer}</span>.
+                The answer is <span className={`font-medium ${drill.mono ? 'font-mono' : ''}`}>{question.answer}</span>.
               </p>
               <p className="text-[15px] text-muted max-w-prose">{question.explanation}</p>
               <p className="pt-1">
