@@ -3229,9 +3229,9 @@ const netplus: LearningPath = {
             h(`Special addresses`),
             ul(
               `Loopback, 127.0.0.0/8: traffic to 127.0.0.1 (localhost) never leaves the machine. Use it to test the machine's own network stack.`,
-              `APIPA, 169.254.0.0/16: Windows gives itself one of these when it asked for an address and no DHCP server answered. It only reaches other APIPA hosts on the same link.`,
+              `Link-local, 169.254.0.0/16: these addresses only reach hosts on the same link. When ipconfig labels one Autoconfiguration, Windows gave it to itself (APIPA) because it asked for an address and no DHCP server answered. One can also be set by hand, so the label is what tells you DHCP failed.`,
             ),
-            exam(`A PC with a 169.254.x.x address is a DHCP problem, not an IP setting to fix by hand: check the cable, the switch port and the DHCP server, then renew the lease.`),
+            exam(`A PC that auto-configured a 169.254.x.x address is a DHCP problem, not an IP setting to fix by hand: check the cable, the switch port and the DHCP server, then renew the lease.`),
             h(`Address classes`),
             p(`Before CIDR, the first octet set an address's class and with it a fixed network size. Classes are no longer used to route, but the exam still asks about them.`),
             table(`Class (first octet)`, `Default prefix and use`, [
@@ -3267,9 +3267,9 @@ const netplus: LearningPath = {
               `UDP: single messages with no connection, for quick lookups and streams: DNS queries, DHCP, NTP, voice.`,
               `ICMP: errors and tests, such as ping and the replies traceroute relies on. It has no port numbers.`,
               `GRE: wraps one packet inside another to make a tunnel between two routers. It does not encrypt.`,
-              `IPsec: secures IP traffic. AH (Authentication Header) proves where a packet came from and that it was not changed, but does not encrypt. ESP (Encapsulating Security Payload) encrypts as well. IKE (Internet Key Exchange) agrees the keys first.`,
+              `IPsec: secures IP traffic. AH (Authentication Header) proves where a packet came from and that it was not changed, but does not encrypt. ESP (Encapsulating Security Payload) is the one that can encrypt, and it protects integrity too; it can also be set up for integrity alone. IKE (Internet Key Exchange) agrees the keys first.`,
             ),
-            exam(`If a question asks which IPsec part keeps the data confidential, the answer is ESP. AH alone never encrypts.`),
+            exam(`If a question asks which IPsec part can keep the data confidential, the answer is ESP. AH never encrypts.`),
             h(`Traffic types`),
             table(`Type`, `Who receives it`, [
               [`Unicast`, `One sender to one receiver: most traffic`],
@@ -3320,10 +3320,10 @@ const netplus: LearningPath = {
             {
               id: 'q-apipa',
               objectives: ['n10-009:1.0'],
-              prompt: 'A Windows PC shows the address 169.254.33.7. What does that tell you?',
+              prompt: 'A Windows PC set to get its address automatically shows Autoconfiguration IPv4 Address 169.254.33.7. What does that tell you?',
               choices: ['Someone set a static address by hand', 'It asked for an address and no DHCP server replied', 'It is the loopback address', 'Its ISP gave it a public address'],
               answer: 1,
-              explanation: '169.254.0.0/16 is APIPA: Windows picks one itself when DHCP does not answer. Check the cable, the switch port and the DHCP server, then renew the lease. Loopback is 127.0.0.0/8.',
+              explanation: '169.254.0.0/16 is link-local, reaching only the same link. Labelled Autoconfiguration, it is APIPA: Windows picked it itself because DHCP did not answer. Check the cable, the switch port and the DHCP server, then renew the lease. Loopback is 127.0.0.0/8.',
             },
             {
               id: 'q-class',
@@ -3344,10 +3344,10 @@ const netplus: LearningPath = {
             {
               id: 'q-esp',
               objectives: ['n10-009:1.0'],
-              prompt: 'Which part of IPsec encrypts the data it carries?',
+              prompt: 'Which part of IPsec can encrypt the data it carries?',
               choices: ['AH', 'GRE', 'IKE', 'ESP'],
               answer: 3,
-              explanation: 'ESP (Encapsulating Security Payload) encrypts and protects integrity. AH only proves origin and integrity, IKE agrees the keys, and GRE is a tunnel with no encryption at all.',
+              explanation: 'ESP (Encapsulating Security Payload) is the IPsec protocol that can encrypt; it also protects integrity, and can be set up for integrity alone. AH only proves origin and integrity, IKE agrees the keys, and GRE is a tunnel with no encryption at all.',
             },
             {
               id: 'q-anycast',
