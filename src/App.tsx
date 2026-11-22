@@ -305,6 +305,7 @@ export default function App() {
       activeStep ? stepTitle(activeStep.step, MODULES_BY_ID) : null,
       activePath?.title,
       challengeTitle,
+      challengeRoute?.tab === 'drills' ? 'Drills' : null,
       challengeRoute ? 'Challenges' : null,
       reviewOpen ? 'Review' : null,
       route.section === 'badge' ? 'Badge' : route.section === 'testing' ? 'Testing' : route.section === 'account' ? 'Account' : route.section === 'admin' ? 'Admin' : route.section === 'settings' ? 'Settings' : PAGE_TITLES[route.section],
@@ -491,7 +492,7 @@ export default function App() {
 
         {challengeRoute && (
           <Suspense fallback={loading}>
-            <ChallengesPage challengeId={challengeRoute.challengeId} />
+            <ChallengesPage challengeId={challengeRoute.challengeId} tab={challengeRoute.tab} />
           </Suspense>
         )}
 

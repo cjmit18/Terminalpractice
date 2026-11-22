@@ -174,6 +174,9 @@ test('router: challenge routes round-trip and leave the other sandbox route alon
   assert.deepEqual(parseHash('#/sandbox/challenge'), { section: 'sandbox', challengeId: null });
   assert.deepEqual(parseHash('#/sandbox/challenge/bash-login-shells'), { section: 'sandbox', challengeId: 'bash-login-shells' });
   assert.equal(parseHash('#/sandbox/challenge/a/b'), null);
+  assert.deepEqual(parseHash('#/sandbox/drills'), { section: 'sandbox', challengeId: null, tab: 'drills' });
+  assert.equal(parseHash('#/sandbox/drills/x'), null);
+  assert.equal(routeHref({ section: 'sandbox', challengeId: null, tab: 'drills' }), '#/sandbox/drills');
   assert.equal(parseHash('#/sandbox/other'), null);
   assert.equal(routeHref({ section: 'sandbox', challengeId: null }), '#/sandbox/challenge');
   assert.equal(routeHref({ section: 'sandbox', challengeId: 'a b' }), '#/sandbox/challenge/a%20b');
