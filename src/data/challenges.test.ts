@@ -207,3 +207,17 @@ test('next challenge wraps around the list', () => {
   assert.equal(nextChallenge(CHALLENGES[0].id).id, CHALLENGES[1].id);
   assert.equal(nextChallenge(CHALLENGES[CHALLENGES.length - 1].id).id, CHALLENGES[0].id);
 });
+
+test('Challenges: each one is tagged with exam objectives that exist, for the coverage report', async () => {
+  const { OBJECTIVES_BY_ID } = await import('./examObjectives.ts');
+  for (const c of CHALLENGES) {
+    assert.ok(c.objectives?.length, `${c.id} has no objectives tag`);
+    assert.equal(new Set(c.objectives).size, c.objectives.length, `${c.id} repeats an objective`);
+    for (const id of c.objectives) {
+      const objective = OBJECTIVES_BY_ID.get(id);
+      assert.ok(objective, `${c.id}: unknown objective ${id}`);
+      // A bash challenge practises an LPIC-1 objective; a Windows one a CompTIA domain
+      assert.equal(objective.exam.startsWith('lpic1'), c.shell === 'bash', `${c.id}: ${id} is for ${objective.exam}`);
+    }
+  }
+});
