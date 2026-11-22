@@ -8,6 +8,8 @@ export interface DrillQuestion {
   prompt: string;
   answer: string;
   explanation: string;
+  /** A nudge that does not give the answer away */
+  hint: string;
 }
 
 export interface Drill {

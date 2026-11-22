@@ -91,3 +91,20 @@ test('ports drills: the checker takes the usual ways to answer and refuses near 
   const ntp = transportOf('NTP');
   assert.ok(checkPortAnswer(ntp, 'UDP') && checkPortAnswer(ntp, 'udp') && !checkPortAnswer(ntp, 'tcp') && !checkPortAnswer(ntp, 'both'));
 });
+
+test('ports drills: a hint points the way without giving the answer', () => {
+  for (let seed = 0; seed < 3000; seed++) {
+    const q = generatePortQuestion(seed * 104729 + 3);
+    assert.ok(q.hint.length > 20, q.prompt);
+    if (q.kind === 'port') {
+      for (const port of q.answer.split(/, | and /)) assert.ok(!new RegExp(`\\b${port}\\b`).test(q.hint), `${q.prompt} / ${q.hint}`);
+    } else if (q.kind === 'protocol') {
+      for (const name of q.answer.split(' or ')) {
+        const p = NETPLUS_PORTS.find(x => x.name === name)!;
+        for (const n of [p.name, p.full]) assert.ok(!q.hint.toLowerCase().includes(n.toLowerCase()), `${q.prompt} / ${q.hint}`);
+      }
+    } else {
+      assert.ok(!/\b(only|over) (TCP|UDP)\b|\bboth\b/.test(q.hint), `${q.prompt} / ${q.hint}`);
+    }
+  }
+});
