@@ -2,7 +2,7 @@
 
 Goal: learners find something new every visit, and the content gets a real refresh at least once a month, without big, hard-to-review pushes. Every change below ships as its own small PR.
 
-Status: **started.** Content work runs alongside the login portal and the scan fixes (see [PLAN.md](PLAN.md)), in the order in [Build order](#build-order).
+Status: **started.** Steps 1 (the report), 3 and 6 are done. The current priority is Network+ content; see "Order of work" in [PLAN.md](PLAN.md).
 
 ## 1. Content that varies on its own (built once)
 
@@ -82,9 +82,9 @@ Each step is its own small PR:
 
 1. Coverage report script (done) and the missing content-quality tests.
 2. The "What's new" page.
-3. Generated subnetting drills, which are also the subnetting feature.
+3. Generated subnetting drills, which are also the subnetting feature (done, #83 and #84: the Drills tab on Challenges).
 4. The Monday scheduled task, as described in section 5.
 5. Varied labs, one lab per PR.
-6. Most-missed questions, after the admin dashboard (login portal part 9).
+6. Most-missed questions, after the admin dashboard (login portal part 9) (done, #61 and #62).
 
 Alongside step 1: remove the 15-challenge cap from the tests and add the random challenge rotation, so monthly releases can add challenges.
