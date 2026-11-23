@@ -63,6 +63,7 @@ test('Learning paths: the exam paths keep their ids and stage order', () => {
     'lpic1-102': ['accounts', 'jobs-and-logs', 'networking', 'security', 'exam-102'],
     'aplus-core2': ['cmd-basics', 'disks', 'repair', 'services-network', 'exam-1202'],
     'netsec-windows': ['client-network', 'active-directory', 'group-policy', 'incident-response', 'exam-netsec'],
+    netplus: ['concepts'],
   });
   assert.equal(LEARNING_PATHS[0].id, 'lpic1-101');
 });

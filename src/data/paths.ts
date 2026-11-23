@@ -3159,6 +3159,220 @@ const netsecWindows: LearningPath = {
 };
 
 // ---------------------------------------------------------------------------------------------
+// CompTIA Network+ N10-009
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * One stage per exam domain, built a stage at a time (docs/PLAN.md, "Order of work"). Facts follow the
+ * official N10-009 Exam Objectives, version 4.0; each stage names the objectives it covers.
+ */
+const netplus: LearningPath = {
+  id: 'netplus',
+  track: 'windows',
+  title: 'Network+ foundations',
+  summary: 'The concepts behind every network: the OSI model, IPv4 addressing, and the ports, protocols and traffic types Network+ asks about. More stages follow, one per exam domain.',
+  exam: 'CompTIA Network+ N10-009',
+  audience: 'For people who use networks every day but have not studied how they work, on the way to Network+.',
+  stages: [
+    {
+      id: 'concepts',
+      title: 'Networking concepts',
+      goal: 'Place a problem on the OSI model, read an IPv4 address for what it says, and name the ports, protocols and traffic types the exam lists.',
+      steps: [
+        {
+          kind: 'lesson',
+          id: 'osi-model',
+          objectives: ['n10-009:1.0'],
+          title: 'The OSI model, layer by layer',
+          minutes: 5,
+          blocks: [
+            p(`The Open Systems Interconnection (OSI) model splits networking into seven layers. Each layer does one job and hands its work to the layer next to it. Nobody builds a network straight from the model, but everyone uses it to say where a problem or a device sits: "it is a layer 1 problem" means a cable, a port or a signal.`),
+            table(`Layer`, `What happens there`, [
+              [`7 Application`, `The protocols programs use: HTTP, DNS, SMTP, SSH`],
+              [`6 Presentation`, `Formatting data so both ends read it the same way: character sets, compression, encryption`],
+              [`5 Session`, `Opening, keeping and closing a conversation between two programs`],
+              [`4 Transport`, `TCP and UDP: port numbers, splitting data into segments, delivery checks (TCP)`],
+              [`3 Network`, `IP addresses and routing between networks: routers work here`],
+              [`2 Data link`, `MAC addresses and frames on one local network: switches work here`],
+              [`1 Physical`, `Cables, connectors, radio and the signals on them: hubs and repeaters work here`],
+            ]),
+            tip(`To remember the order from layer 1 up: Please Do Not Throw Sausage Pizza Away (Physical, Data link, Network, Transport, Session, Presentation, Application).`),
+            h(`Encapsulation`),
+            p(`Going down the layers, each one wraps what it gets from above with its own header. The unit of data has a different name at each layer, and exam questions use those names.`),
+            table(`Layer`, `Unit of data`, [
+              [`7, 6, 5`, `Data`],
+              [`4 Transport`, `Segment (TCP) or datagram (UDP)`],
+              [`3 Network`, `Packet`],
+              [`2 Data link`, `Frame`],
+              [`1 Physical`, `Bits`],
+            ]),
+            exam(`Match the device to its layer: a hub repeats bits (layer 1), a switch forwards frames by MAC address (layer 2), and a router forwards packets by IP address (layer 3). A "layer 3 switch" is a switch that can also route.`),
+            p(`Troubleshooting often follows the layers too. Start at the bottom: is the link light on (1), does the switch see the device's MAC address (2), does it have a working IP address and gateway (3), and is the service's port open (4)?`),
+          ],
+        },
+        {
+          kind: 'lesson',
+          id: 'ipv4-addressing',
+          objectives: ['n10-009:1.0'],
+          title: 'IPv4 addresses: private, public and special',
+          minutes: 6,
+          blocks: [
+            p(`An IPv4 address is 32 bits, written as four numbers from 0 to 255. The prefix length after the slash, as in 192.168.1.20/24, says how many of those bits name the network. The rest name the host on it.`),
+            h(`Private addresses (RFC 1918)`),
+            p(`Three ranges are kept for private networks. They are never routed on the internet, so any home or office can use them, and a router translates them (NAT) to a public address on the way out.`),
+            table(`Private range`, `Prefix`, [
+              [`10.0.0.0 to 10.255.255.255`, `10.0.0.0/8`],
+              [`172.16.0.0 to 172.31.255.255`, `172.16.0.0/12`],
+              [`192.168.0.0 to 192.168.255.255`, `192.168.0.0/16`],
+            ]),
+            warn(`The middle range stops at 172.31. An address such as 172.32.0.10 is public.`),
+            h(`Special addresses`),
+            ul(
+              `Loopback, 127.0.0.0/8: traffic to 127.0.0.1 (localhost) never leaves the machine. Use it to test the machine's own network stack.`,
+              `Link-local, 169.254.0.0/16: these addresses only reach hosts on the same link. When ipconfig labels one Autoconfiguration, Windows gave it to itself (APIPA) because it asked for an address and no DHCP server answered. One can also be set by hand, so the label is what tells you DHCP failed.`,
+            ),
+            exam(`A PC that auto-configured a 169.254.x.x address is a DHCP problem, not an IP setting to fix by hand: check the cable, the switch port and the DHCP server, then renew the lease.`),
+            h(`Address classes`),
+            p(`Before CIDR, the first octet set an address's class and with it a fixed network size. Classes are no longer used to route, but the exam still asks about them.`),
+            table(`Class (first octet)`, `Default prefix and use`, [
+              [`A: 1 to 126`, `/8: very large networks (127 is kept for loopback)`],
+              [`B: 128 to 191`, `/16: medium networks`],
+              [`C: 192 to 223`, `/24: small networks`],
+              [`D: 224 to 239`, `Multicast, no prefix`],
+              [`E: 240 to 255`, `Experimental, not used on networks`],
+            ]),
+            h(`CIDR and VLSM`),
+            p(`Classless Inter-Domain Routing (CIDR) drops the fixed classes: any prefix length can be used, and the /n says where the network part ends. Variable Length Subnet Masking (VLSM) uses different prefix lengths inside one network, so a link between two routers gets a /30 while an office floor gets a /24.`),
+            tip(`Practise working out networks, broadcasts, host ranges and masks on Challenges, then Drills, then Subnetting. Every question is new.`),
+          ],
+        },
+        {
+          kind: 'lesson',
+          id: 'ports-and-traffic',
+          objectives: ['n10-009:1.0'],
+          title: 'Ports, IP protocols and traffic types',
+          minutes: 6,
+          blocks: [
+            p(`A port number tells the receiving machine which service a TCP or UDP message is for. The exam lists 20 of them, and they are worth knowing by heart.`),
+            table(`Protocol`, `Port`, [
+              [`FTP`, `20, 21`], [`SSH and SFTP`, `22`], [`Telnet`, `23`], [`SMTP`, `25`], [`DNS`, `53`], [`DHCP`, `67, 68`],
+              [`TFTP`, `69`], [`HTTP`, `80`], [`NTP`, `123`], [`SNMP`, `161, 162`], [`LDAP`, `389`], [`HTTPS`, `443`],
+              [`SMB`, `445`], [`Syslog`, `514`], [`SMTPS`, `587`], [`LDAPS`, `636`], [`SQL Server`, `1433`], [`RDP`, `3389`], [`SIP`, `5060, 5061`],
+            ]),
+            tip(`Drill these on Challenges, then Drills, then Ports and protocols: port to protocol, protocol to port, and TCP or UDP.`),
+            h(`IP protocol types`),
+            p(`Not everything that rides on IP uses ports. The IP header names the protocol inside it:`),
+            ul(
+              `TCP: a connection with delivery checks and ordering, for web, mail, file transfer and remote login.`,
+              `UDP: single messages with no connection, for quick lookups and streams: DNS queries, DHCP, NTP, voice.`,
+              `ICMP: errors and tests, such as ping and the replies traceroute relies on. It has no port numbers.`,
+              `GRE: wraps one packet inside another to make a tunnel between two routers. It does not encrypt.`,
+              `IPsec: secures IP traffic. AH (Authentication Header) proves where a packet came from and that it was not changed, but does not encrypt. ESP (Encapsulating Security Payload) is the one that can encrypt, and it protects integrity too; it can also be set up for integrity alone. IKE (Internet Key Exchange) agrees the keys first.`,
+            ),
+            exam(`If a question asks which IPsec part can keep the data confidential, the answer is ESP. AH never encrypts.`),
+            h(`Traffic types`),
+            table(`Type`, `Who receives it`, [
+              [`Unicast`, `One sender to one receiver: most traffic`],
+              [`Multicast`, `One sender to every member of a group that joined (224.0.0.0 to 239.255.255.255)`],
+              [`Anycast`, `One sender to the nearest of several hosts sharing the same address`],
+              [`Broadcast`, `One sender to every host on the local network (IPv4 only; IPv6 has none)`],
+            ]),
+          ],
+        },
+        {
+          kind: 'quiz',
+          id: 'quiz-concepts',
+          title: 'Checkpoint: networking concepts',
+          passMark: PASS,
+          questions: [
+            {
+              id: 'q-switch-layer',
+              objectives: ['n10-009:1.0'],
+              prompt: 'A switch forwards frames using MAC addresses. At which OSI layer does it work?',
+              choices: ['Layer 1, Physical', 'Layer 2, Data link', 'Layer 3, Network', 'Layer 4, Transport'],
+              answer: 1,
+              explanation: 'MAC addresses and frames belong to layer 2, Data link. A hub works at layer 1 (it repeats bits) and a router at layer 3 (it forwards packets by IP address).',
+            },
+            {
+              id: 'q-packet',
+              objectives: ['n10-009:1.0'],
+              prompt: 'What is the unit of data called at the Network layer (layer 3)?',
+              choices: ['Packet', 'Frame', 'Segment', 'Bit'],
+              answer: 0,
+              explanation: 'Layer 3 carries packets. Frames are layer 2, segments (TCP) and datagrams (UDP) are layer 4, and bits are layer 1.',
+            },
+            {
+              id: 'q-transport-layer',
+              objectives: ['n10-009:1.0'],
+              prompt: 'TCP and UDP, and the port numbers they carry, belong to which OSI layer?',
+              choices: ['Layer 3, Network', 'Layer 5, Session', 'Layer 7, Application', 'Layer 4, Transport'],
+              answer: 3,
+              explanation: 'TCP and UDP are the Transport layer, layer 4. The protocols that use them, such as HTTP or DNS, are layer 7.',
+            },
+            {
+              id: 'q-not-private',
+              objectives: ['n10-009:1.0'],
+              prompt: 'Which of these addresses is NOT in a private (RFC 1918) range?',
+              choices: ['10.200.1.5', '172.16.40.2', '172.32.0.10', '192.168.99.1'],
+              answer: 2,
+              explanation: 'The middle private range is 172.16.0.0/12, which ends at 172.31.255.255. 172.32.0.10 is outside it, so it is public. 10.0.0.0/8 and 192.168.0.0/16 are the other two private ranges.',
+            },
+            {
+              id: 'q-apipa',
+              objectives: ['n10-009:1.0'],
+              prompt: 'A Windows PC set to get its address automatically shows Autoconfiguration IPv4 Address 169.254.33.7. What does that tell you?',
+              choices: ['Someone set a static address by hand', 'It asked for an address and no DHCP server replied', 'It is the loopback address', 'Its ISP gave it a public address'],
+              answer: 1,
+              explanation: '169.254.0.0/16 is link-local, reaching only the same link. Labelled Autoconfiguration, it is APIPA: Windows picked it itself because DHCP did not answer. Check the cable, the switch port and the DHCP server, then renew the lease. Loopback is 127.0.0.0/8.',
+            },
+            {
+              id: 'q-class',
+              objectives: ['n10-009:1.0'],
+              prompt: 'By its first octet, which class is the address 191.45.10.3?',
+              choices: ['Class C', 'Class A', 'Class D', 'Class B'],
+              answer: 3,
+              explanation: 'Class B covers first octets 128 to 191. Class A is 1 to 126, C is 192 to 223 and D (multicast) is 224 to 239.',
+            },
+            {
+              id: 'q-no-ports',
+              objectives: ['n10-009:1.0'],
+              prompt: 'Which of these does not use port numbers at all?',
+              choices: ['DNS', 'SNMP', 'ICMP', 'NTP'],
+              answer: 2,
+              explanation: 'ICMP sits directly on IP, like TCP and UDP, and has no ports; ping uses it. DNS (53), SNMP (161, 162) and NTP (123) all use UDP ports.',
+            },
+            {
+              id: 'q-esp',
+              objectives: ['n10-009:1.0'],
+              prompt: 'Which part of IPsec can encrypt the data it carries?',
+              choices: ['AH', 'GRE', 'IKE', 'ESP'],
+              answer: 3,
+              explanation: 'ESP (Encapsulating Security Payload) is the IPsec protocol that can encrypt; it also protects integrity, and can be set up for integrity alone. AH only proves origin and integrity, IKE agrees the keys, and GRE is a tunnel with no encryption at all.',
+            },
+            {
+              id: 'q-anycast',
+              objectives: ['n10-009:1.0'],
+              prompt: 'Several DNS servers around the world share one address, and each client reaches the nearest. Which traffic type is that?',
+              choices: ['Broadcast', 'Anycast', 'Multicast', 'Unicast'],
+              answer: 1,
+              explanation: 'Anycast: one address on many hosts, delivered to the nearest. Multicast goes to every member of a group, broadcast to every host on the local network, and unicast to one host.',
+            },
+            {
+              id: 'q-hosts-28',
+              objectives: ['n10-009:1.0'],
+              prompt: 'How many usable host addresses does a /28 subnet have?',
+              choices: ['16', '14', '30', '62'],
+              answer: 1,
+              explanation: 'A /28 leaves 4 host bits: 2 to the power 4 is 16 addresses, minus the network and broadcast addresses, is 14. 16 counts those two; 30 and 62 are a /27 and a /26.',
+            },
+          ],
+        },
+      ],
+    },
+  ],
+};
+
+// ---------------------------------------------------------------------------------------------
 // Your first terminal: for people who have never typed a command
 // ---------------------------------------------------------------------------------------------
 
@@ -3243,4 +3457,4 @@ const firstSteps: LearningPath = {
 /** Id of the beginners' path, which the Learn page offers to learners with no progress yet. */
 export const FIRST_STEPS_PATH_ID = firstSteps.id;
 
-export const LEARNING_PATHS: LearningPath[] = [lpic101, lpic102, aplusCore2, netsecWindows, firstSteps];
+export const LEARNING_PATHS: LearningPath[] = [lpic101, lpic102, aplusCore2, netsecWindows, netplus, firstSteps];
