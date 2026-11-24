@@ -55,6 +55,32 @@ test('field guide: Try it in the Sandbox offers the command, and the Reference p
   await expect(commandInput(page)).toHaveValue('wc');
 });
 
+test('the Sandbox header on a narrow screen: the title, description and buttons do not overlap', async ({ page }) => {
+  // 360px is the narrowest common phone. A finished lab shows "Your machine" too: the most buttons the header carries
+  await page.setViewportSize({ width: 360, height: 780 });
+  await page.goto('#/sandbox');
+  await page.evaluate(() => {
+    localStorage.setItem('certsim:progress:v1', JSON.stringify({ 'lpi-101-1-system-architecture': ['hw-lspci', 'hw-lsmod', 'hw-dmesg'] }));
+  });
+  await page.reload();
+  const header = page.locator('header').filter({ has: page.getByRole('heading', { name: 'Sandbox', level: 1 }) });
+  const title = await header.getByRole('heading', { name: 'Sandbox', level: 1 }).boundingBox();
+  const meta = await header.getByText('A practice machine with no tasks.').boundingBox();
+  const buttons = [header.getByRole('link', { name: 'Challenges' }), header.getByRole('button', { name: 'Your machine' }), header.getByRole('button', { name: 'Files' }), header.getByRole('button', { name: 'Reset' })];
+  const overlaps = (a: { x: number; y: number; width: number; height: number }, b: typeof a) =>
+    a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+  for (const button of buttons) {
+    const box = (await button.boundingBox())!;
+    expect(overlaps(title!, box), `the title overlaps ${await button.textContent()}`).toBe(false);
+    expect(overlaps(meta!, box), `the description overlaps ${await button.textContent()}`).toBe(false);
+  }
+  // The title's text fits its box, rather than spilling onto the buttons beside it
+  expect(await header.getByRole('heading', { name: 'Sandbox', level: 1 }).evaluate(h => h.scrollWidth <= h.clientWidth)).toBe(true);
+  // The description reads as a line or two, not one word a line (seen on a phone)
+  expect(meta!.height).toBeLessThan(60);
+  await expectNoHorizontalOverflow(page);
+});
+
 test('sandbox looks: nothing to choose at first; a finished lab, stage and path unlock name, prompt and banner', async ({ page }) => {
   await page.goto('#/sandbox');
   await expect(page.getByRole('button', { name: 'Your machine' })).toHaveCount(0);
