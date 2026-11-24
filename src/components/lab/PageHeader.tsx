@@ -54,8 +54,10 @@ interface PageHeaderProps {
 /** Title and meta on the left, controls on the right. On phones the shell switch gets its own row. */
 export const PageHeader: React.FC<PageHeaderProps> = ({ title, badge, meta, shellSwitch, actions }) => (
   <header className="px-4 sm:px-6 py-3 sm:py-4 border-b border-line shrink-0">
-    <div className="flex items-start justify-between gap-4">
-      <div className="min-w-0">
+    {/* The buttons move below the title when both do not fit on one line, instead of squeezing the title and
+        description into a narrow column on a phone */}
+    <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
+      <div className="min-w-0 flex-1 basis-64">
         <h1 className="text-lg sm:text-2xl font-semibold leading-snug">
           {title}
           {badge && (
@@ -66,7 +68,7 @@ export const PageHeader: React.FC<PageHeaderProps> = ({ title, badge, meta, shel
         </h1>
         <p className="text-sm text-muted mt-0.5">{meta}</p>
       </div>
-      <div className="flex items-center gap-2 shrink-0">
+      <div className="flex flex-wrap items-center gap-2">
         {shellSwitch && <ShellSwitch {...shellSwitch} className="hidden md:flex" />}
         {actions}
       </div>
